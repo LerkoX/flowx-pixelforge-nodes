@@ -1,0 +1,95 @@
+{
+  "name": "vae-decode",
+  "displayName": "VAE 解码",
+  "description": "将采样后的 latent 解码为图像（对应 ComfyUI VAE Decode），输出推理服务端的图像对象 ID，供 Save Image 下载",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference"
+  ],
+  "icon": "🌈",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "vae_ref",
+      "type": "string",
+      "description": "VAE 引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "vae_ref",
+        "description": "由 Checkpoint 加载节点的 vae_ref 输出提供"
+      }
+    },
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "采样后的 latent 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "ksampler",
+        "output": "latent",
+        "description": "由 KSampler 采样器节点输出提供"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "VAE_REF": "{{ Param.vae_ref }}",
+    "LATENT": "{{ Param.latent }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "解码后图像在推理服务的对象 ID"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 240,
+    "height": 110,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker"
+  }
+}

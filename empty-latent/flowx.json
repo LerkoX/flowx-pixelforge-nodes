@@ -1,0 +1,95 @@
+{
+  "name": "empty-latent",
+  "displayName": "空 Latent 图像",
+  "description": "按宽高与 batch 在推理服务端创建空白 latent（对应 ComfyUI Empty Latent Image），输出 latent 对象 ID 供 KSampler 使用",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference"
+  ],
+  "icon": "⬜",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "生成图像宽度（像素），必须为 8 的倍数，SD1.5 常用 512，SDXL 常用 1024",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "生成图像高度（像素），必须为 8 的倍数",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "batch_size",
+      "type": "integer",
+      "description": "批大小，一次生成的图像数量",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "BATCH_SIZE": "{{ Param.batch_size }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "空白 latent 在推理服务的对象 ID"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 230,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 120,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker"
+  }
+}

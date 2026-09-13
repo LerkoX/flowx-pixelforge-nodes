@@ -1,0 +1,90 @@
+{
+  "name": "clip-text-encode",
+  "displayName": "CLIP 文本编码",
+  "description": "将提示词文本编码为 conditioning 张量（驻留推理服务 GPU 内存），输出 cond_id；正向/反向提示词各用一个实例",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference"
+  ],
+  "icon": "📝",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "clip_ref",
+      "type": "string",
+      "description": "CLIP 编码器引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "clip_ref",
+        "description": "由 Checkpoint 加载节点的 clip_ref 输出提供"
+      }
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "description": "提示词文本（正向如 'a cat, masterpiece'，反向如 'lowres, blurry'），超过 77 token 自动截断",
+      "required": true
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "CLIP_REF": "{{ Param.clip_ref }}",
+    "TEXT": "{{ Param.text }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "conditioning",
+      "type": "string",
+      "description": "conditioning 张量在推理服务的对象 ID，供 KSampler 使用"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 250,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker"
+  }
+}

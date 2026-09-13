@@ -1,0 +1,164 @@
+{
+  "name": "ksampler",
+  "displayName": "KSampler 采样器",
+  "description": "扩散采样（对应 ComfyUI KSampler）：消费模型引用、正/反 conditioning、latent，按 seed/steps/cfg/sampler 迭代去噪，输出采样后 latent 对象 ID",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference"
+  ],
+  "icon": "🎲",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "UNet 模型引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model_ref",
+        "description": "由 Checkpoint 加载节点的 model_ref 输出提供"
+      }
+    },
+    {
+      "name": "positive",
+      "type": "string",
+      "description": "正向 conditioning 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由正向 CLIP 文本编码节点输出提供"
+      }
+    },
+    {
+      "name": "negative",
+      "type": "string",
+      "description": "反向 conditioning 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由反向 CLIP 文本编码节点输出提供"
+      }
+    },
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "输入 latent 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "empty-latent",
+        "output": "latent",
+        "description": "由空 Latent 图像节点输出提供"
+      }
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子，-1 表示每次随机；固定值可复现结果",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数，常用 20-30；步数越多细节越丰富但耗时线性增长",
+      "required": false,
+      "default": 20
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "提示词引导强度（CFG scale），常用 7.0；越高越贴合提示词但可能过饱和",
+      "required": false,
+      "default": 7.0
+    },
+    {
+      "name": "sampler_name",
+      "type": "string",
+      "description": "采样器：euler / euler_a / ddim / lms / dpmpp_2m / dpmpp_2m_karras / dpmpp_2m_sde / uni_pc",
+      "required": false,
+      "default": "euler"
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "description": "去噪强度 0.0-1.0，文生图固定 1.0；小于 1 时跳过前部时间步（图生图语义）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "MODEL_REF": "{{ Param.model_ref }}",
+    "POSITIVE": "{{ Param.positive }}",
+    "NEGATIVE": "{{ Param.negative }}",
+    "LATENT": "{{ Param.latent }}",
+    "SEED": "{{ Param.seed }}",
+    "STEPS": "{{ Param.steps }}",
+    "CFG": "{{ Param.cfg }}",
+    "SAMPLER_NAME": "{{ Param.sampler_name }}",
+    "DENOISE": "{{ Param.denoise }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "采样后 latent 在推理服务的对象 ID"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的种子（seed=-1 时为服务端生成的随机值）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker"
+  }
+}

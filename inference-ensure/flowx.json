@@ -1,0 +1,85 @@
+{
+  "name": "inference-ensure",
+  "displayName": "推理服务健康检查",
+  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "infra"
+  ],
+  "icon": "🩺",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100；通常由 workflow 级 Param 提供",
+      "required": true
+    },
+    {
+      "name": "wait_seconds",
+      "type": "integer",
+      "description": "服务未就绪时的最长等待秒数（每 3 秒重试一次健康检查），0 表示只检查一次",
+      "required": false,
+      "default": 60
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，服务未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "WAIT_SECONDS": "{{ Param.wait_seconds }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "已确认可用的推理服务地址"
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "description": "服务健康状态，正常为 ok"
+    },
+    {
+      "name": "gpu_name",
+      "type": "string",
+      "description": "GPU 型号（无 GPU 时为 unknown-gpu）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 230,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 180,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker"
+  }
+}

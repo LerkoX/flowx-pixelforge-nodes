@@ -1,0 +1,95 @@
+{
+  "name": "inference-op",
+  "displayName": "通用算子调用",
+  "description": "调用推理服务能力运行时的任意已注册算子（POST /op）；新算子上线后无需新增节点包即可在 workflow 中使用。低频/长尾能力走此节点，高频能力建议做专属节点",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "generic"
+  ],
+  "icon": "🧩",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "op_name",
+      "type": "string",
+      "description": "算子名（GET /ops 可列出全部已注册算子），如 checkpoint.load / clip.encode / latent.empty / sample / vae.decode",
+      "required": true
+    },
+    {
+      "name": "inputs_json",
+      "type": "string",
+      "description": "算子输入的 JSON 对象；对象端口用 {\"$id\": \"uuid\"} 引用，字面量直接写值。可用 {{ 节点ID.输出 }} 绑定填充，如 {\"clip\": {\"$id\": \"{{ X.clip_ref }}\"}, \"text\": \"a cat\"}",
+      "required": false,
+      "default": "{}"
+    },
+    {
+      "name": "emit_keys",
+      "type": "string",
+      "description": "要单独提升为顶层输出字段的端口名（逗号分隔），供下游节点绑定；为空则只输出 outputs_json",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "OP_NAME": "{{ Param.op_name }}",
+    "INPUTS_JSON": "{{ Param.inputs_json }}",
+    "EMIT_KEYS": "{{ Param.emit_keys }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "outputs_json",
+      "type": "object",
+      "description": "算子全部输出的 JSON 对象（对象端口为 id，字面量端口为值）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 310,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker"
+  }
+}

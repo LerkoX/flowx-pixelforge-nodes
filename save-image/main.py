@@ -26,7 +26,7 @@ def main():
         f.write(data)
     print(f"[save] image={image_id} -> {path} ({len(data)} bytes)", flush=True)
 
-    # 缩略图（JPEG ~256px，base64 供画布组件预览）；失败不阻断主流程
+    # 缩略图（JPEG ~256px，base64 供画布组件内嵌预览）；失败不阻断主流程
     thumb_b64 = ""
     try:
         thumb = get_bytes(url, f"/images/{image_id}?index={index}&thumb=256",
@@ -36,7 +36,18 @@ def main():
     except RuntimeError as e:
         print(f"[save] thumbnail skipped: {e}", flush=True)
 
-    emit(file_path=path, size_bytes=len(data), thumbnail_b64=thumb_b64)
+    # 弹窗大图（JPEG ~1024px，base64 供画布组件点击放大预览）；失败不阻断
+    preview_b64 = ""
+    try:
+        preview = get_bytes(url, f"/images/{image_id}?index={index}&thumb=1024",
+                            tok, timeout=60)
+        preview_b64 = base64.b64encode(preview).decode()
+        print(f"[save] preview {len(preview)} bytes", flush=True)
+    except RuntimeError as e:
+        print(f"[save] preview skipped: {e}", flush=True)
+
+    emit(file_path=path, size_bytes=len(data), thumbnail_b64=thumb_b64,
+         preview_b64=preview_b64)
 
 
 if __name__ == "__main__":

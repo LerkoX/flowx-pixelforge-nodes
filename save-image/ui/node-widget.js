@@ -145,11 +145,77 @@ export default function mount(el, props) {
   const imgWrap = h('div', [
     'flex:1', 'min-height:0', 'display:flex', 'align-items:center', 'justify-content:center',
     'background: rgba(0,0,0,0.25)', 'border-radius: 8px', 'overflow: hidden',
+    'position: relative',
   ].join(';'))
   const placeholder = h('span', 'color:rgba(255,255,255,0.25)', '等待成图…')
   const img = h('img', 'max-width:100%;max-height:100%;object-fit:contain;display:none')
   img.alt = 'generated image'
-  imgWrap.append(placeholder, img)
+  const zoomHint = h('span', [
+    'position:absolute', 'right:6px', 'bottom:6px', 'display:none',
+    'background:rgba(0,0,0,0.55)', 'border:1px solid rgba(255,255,255,0.15)',
+    'border-radius:6px', 'padding:1px 6px', 'font-size:9px',
+    'color:rgba(255,255,255,0.75)', 'pointer-events:none',
+  ].join(';'), '🔍 点击放大')
+  imgWrap.append(placeholder, img, zoomHint)
+
+  // 点击缩略图弹出全屏 lightbox：遮罩挂到 document.body，避免被节点卡片
+  // overflow 裁剪/层级压住。图片优先用 preview_b64（1024px），老执行缺失时
+  // 回退 thumbnail_b64（256px 放大）。
+  let lightbox = null
+  const closeLightbox = () => {
+    if (!lightbox) return
+    document.removeEventListener('keydown', onLightboxKey, true)
+    lightbox.remove()
+    lightbox = null
+  }
+  const onLightboxKey = (e) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      closeLightbox()
+    }
+  }
+  const openLightbox = () => {
+    const o = (cur && cur.outputs) || {}
+    const b64 = o.preview_b64 || o.thumbnail_b64
+    if (!b64) return
+    closeLightbox()
+    const overlay = h('div', [
+      'position:fixed', 'inset:0', 'z-index:9999',
+      'background:rgba(0,0,0,0.82)', 'backdrop-filter:blur(4px)',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'cursor:zoom-out',
+    ].join(';'))
+    const big = h('img', [
+      'max-width:92vw', 'max-height:88vh', 'object-fit:contain',
+      'border-radius:8px', 'box-shadow:0 8px 40px rgba(0,0,0,0.6)',
+      'cursor:default',
+    ].join(';'))
+    big.alt = 'preview'
+    big.src = 'data:image/jpeg;base64,' + b64
+    // 点图片本身不关闭（便于细看/保存），点遮罩才关
+    big.addEventListener('click', (e) => e.stopPropagation())
+    const closeBtn = h('button', [
+      'position:absolute', 'top:14px', 'right:16px', 'width:34px', 'height:34px',
+      'border-radius:50%', 'border:1px solid rgba(255,255,255,0.25)',
+      'background:rgba(255,255,255,0.10)', 'color:rgba(255,255,255,0.85)',
+      'font-size:16px', 'line-height:1', 'cursor:pointer',
+    ].join(';'), '✕')
+    closeBtn.title = '关闭（Esc）'
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeLightbox() })
+    const caption = h('div', [
+      'position:absolute', 'left:0', 'right:0', 'bottom:12px', 'text-align:center',
+      'font-size:10px', 'color:rgba(255,255,255,0.45)', 'pointer-events:none',
+      'padding:0 16px', 'word-break:break-all',
+    ].join(';'), o.file_path || '')
+    overlay.append(big, closeBtn, caption)
+    overlay.addEventListener('click', closeLightbox)
+    document.body.appendChild(overlay)
+    document.addEventListener('keydown', onLightboxKey, true)
+    lightbox = overlay
+  }
+  imgWrap.addEventListener('click', () => {
+    if (img.style.display !== 'none') openLightbox()
+  })
 
   const pathLine = h('div', 'color:rgba(255,255,255,0.4);margin-top:6px;word-break:break-all;font-size:10px;flex-shrink:0')
 
@@ -164,10 +230,16 @@ export default function mount(el, props) {
       img.src = 'data:image/jpeg;base64,' + o.thumbnail_b64
       img.style.display = 'block'
       placeholder.style.display = 'none'
+      zoomHint.style.display = ''
+      imgWrap.style.cursor = 'zoom-in'
+      imgWrap.title = '点击放大查看'
     } else {
       img.style.display = 'none'
       placeholder.style.display = ''
       placeholder.textContent = p.status === 'running' ? '生成中…' : '等待成图…'
+      zoomHint.style.display = 'none'
+      imgWrap.style.cursor = ''
+      imgWrap.title = ''
     }
     pathLine.textContent = o.file_path || ''
     refreshers.forEach((f) => f())
@@ -177,6 +249,9 @@ export default function mount(el, props) {
 
   return {
     update(next) { render(next) },
-    unmount() { el.textContent = '' },
+    unmount() {
+      closeLightbox()
+      el.textContent = ''
+    },
   }
 }

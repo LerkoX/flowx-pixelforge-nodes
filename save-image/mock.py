@@ -18,4 +18,4 @@ path = os.path.join(out_dir, f"{prefix}_mock_{int(time.time())}.png")
 with open(path, "wb") as f:
     f.write(PNG_1PX)
 print(f"[save][mock] image={image_id} -> {path} (1x1 placeholder)")
-emit(file_path=path, size_bytes=len(PNG_1PX), thumbnail_b64="")
+emit(file_path=path, size_bytes=len(PNG_1PX), thumbnail_b64="", preview_b64="")

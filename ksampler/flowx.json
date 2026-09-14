@@ -1,8 +1,8 @@
 {
   "name": "ksampler",
   "displayName": "KSampler 采样器",
-  "description": "扩散采样（对应 ComfyUI KSampler）：消费模型引用、正/反 conditioning、latent，按 seed/steps/cfg/sampler 迭代去噪，输出采样后 latent 对象 ID",
-  "version": "1.0.0",
+  "description": "扩散采样（对应 ComfyUI KSampler）：消费模型引用、正/反 conditioning、latent，按 seed/steps/cfg/sampler 迭代去噪，输出采样后 latent 对象 ID；采样过程中向 FlowX Studio 画布推送逐步实时预览图（需服务端 sample 算子 1.1+）",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -105,6 +105,13 @@
       "description": "去噪强度 0.0-1.0，文生图固定 1.0；小于 1 时跳过前部时间步（图生图语义）",
       "required": false,
       "default": 1.0
+    },
+    {
+      "name": "preview_every",
+      "type": "integer",
+      "description": "实时预览推送间隔（每 N 步推一帧，默认 1；末帧必推）。仅在 Studio 注入 FLOWX_CALLBACK_URL 时生效",
+      "required": false,
+      "default": 1
     },
     {
       "name": "service_token",

@@ -4,6 +4,8 @@
  *   props.params — 当前 config.params 绑定（模板值只读展示）
  *   props.paramSources — 参数绑定来源标注（可选）：workflow=流水线参数(含当前值) / node=上游节点(含显示名与运行时值) / literal=字面值
  *   props.onParamsChange(params) — 全量写回该节点参数（回放态缺省 = 控件只读）
+ *   props.preview — 实时预览帧（可选）：{ image: base64, mime, progress }，
+ *   采样中由推理服务经 Studio 回调逐步推送；瞬态，节点完成即清除，需判空
  */
 
 const STATUS_COLORS = {
@@ -190,6 +192,17 @@ export default function mount(el, props) {
   const statusLabel = h('span', 'color:rgba(255,255,255,0.35);margin-left:auto')
   header.append(dot, title, statusLabel)
 
+  // 实时预览面板（props.preview：采样中由推理服务经 Studio 回调逐步推送，
+  // 瞬态——节点完成即清除；未执行/回放态显示占位框）
+  const previewBox = h('div', 'position:relative;width:100%;aspect-ratio:1/1;border:1px dashed rgba(255,255,255,0.15);border-radius:8px;background:rgba(0,0,0,0.25);overflow:hidden;margin-bottom:6px;display:flex;align-items:center;justify-content:center;box-sizing:border-box')
+  const previewPlaceholder = h('span', 'font-size:10px;color:rgba(255,255,255,0.25);padding:8px;text-align:center', '等待执行…')
+  const previewImg = h('img', 'display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain')
+  previewImg.draggable = false
+  const previewBar = h('div', 'display:none;position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(0,0,0,0.5)')
+  const previewBarFill = h('div', 'height:100%;background:#22d3ee;transition:width .3s ease-out;width:0%')
+  previewBar.append(previewBarFill)
+  previewBox.append(previewPlaceholder, previewImg, previewBar)
+
   const controls = h('div', 'margin-bottom:6px')
   controls.append(
     field('种子 seed（-1 随机）', seedControl),
@@ -202,7 +215,7 @@ export default function mount(el, props) {
   const seedLine = h('div', 'color:#fbbf24;font-weight:600')
   const latentLine = h('div', 'color:rgba(255,255,255,0.45);word-break:break-all')
 
-  el.append(header, controls, seedLine, latentLine)
+  el.append(header, previewBox, controls, seedLine, latentLine)
 
   function render(p) {
     cur = p
@@ -213,6 +226,27 @@ export default function mount(el, props) {
     latentLine.textContent = o.latent
       ? `latent: ${o.latent}`
       : (p.status === 'running' ? '采样中…' : '等待执行…')
+    // 预览面板：有帧显示图像 + 进度条；running 无帧提示等待（推理服务需 ≥1.1）；
+    // 终态无帧时整块隐藏（输出区已展示 seed/latent）
+    const pv = p.preview
+    if (pv && pv.image) {
+      previewBox.style.display = 'flex'
+      previewImg.src = 'data:' + (pv.mime || 'image/jpeg') + ';base64,' + pv.image
+      previewImg.style.display = 'block'
+      previewPlaceholder.style.display = 'none'
+      previewBar.style.display = 'block'
+      previewBarFill.style.width = Math.round((pv.progress || 0) * 100) + '%'
+    } else if (p.status === 'running' || p.status === 'idle') {
+      previewBox.style.display = 'flex'
+      previewImg.style.display = 'none'
+      previewBar.style.display = 'none'
+      previewPlaceholder.style.display = ''
+      previewPlaceholder.textContent = p.status === 'running'
+        ? '采样中，等待预览帧…（需推理服务 ≥1.1）'
+        : '等待执行…'
+    } else {
+      previewBox.style.display = 'none'
+    }
     refreshers.forEach((f) => f())
   }
 

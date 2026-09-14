@@ -156,7 +156,7 @@
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,
-    "height": 380,
+    "height": 660,
     "collapsed": false,
     "apiVersion": 1
   },

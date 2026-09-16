@@ -101,7 +101,7 @@
     },
     {
       "name": "cfg",
-      "type": "number",
+      "type": "float",
       "description": "引导强度",
       "required": false,
       "default": 5.0
@@ -135,6 +135,13 @@
       "default": 7200
     },
     {
+      "name": "decode_chunk_size",
+      "type": "integer",
+      "description": "VAE 分块解码帧数（0=管道默认；显存紧张时设 4~8，SVD 有效）",
+      "required": false,
+      "default": 0
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
@@ -155,6 +162,7 @@
     "STEPS": "{{ Param.steps }}",
     "CFG": "{{ Param.cfg }}",
     "SEED": "{{ Param.seed }}",
+    "DECODE_CHUNK_SIZE": "{{ Param.decode_chunk_size }}",
     "PREVIEW_EVERY": "{{ Param.preview_every }}",
     "POLL_INTERVAL": "{{ Param.poll_interval }}",
     "JOB_TIMEOUT": "{{ Param.job_timeout }}",

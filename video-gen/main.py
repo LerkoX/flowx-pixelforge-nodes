@@ -27,6 +27,7 @@ def main():
         "steps": param("steps", 50, int),
         "cfg": param("cfg", 5.0, float),
         "seed": param("seed", -1, int),
+        "decode_chunk_size": param("decode_chunk_size", 0, int),
     }
     image_id = param("image", "")  # 可选：首帧 IMAGE 对象 ID（图生视频）
     if image_id:

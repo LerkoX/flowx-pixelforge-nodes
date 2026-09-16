@@ -1,0 +1,117 @@
+{
+  "name": "save-video",
+  "displayName": "保存视频",
+  "description": "从推理服务下载生成的 mp4 视频并保存到本地目录（对标 save-image），输出本地文件路径；小体积视频内嵌 base64 供画布组件内嵌播放",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "inference"
+  ],
+  "icon": "📼",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "description": "推理服务端的 VIDEO 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "video-gen",
+        "output": "video",
+        "description": "由视频生成节点输出提供"
+      }
+    },
+    {
+      "name": "filename_prefix",
+      "type": "string",
+      "description": "文件名前缀（自动追加时间戳与 .mp4 后缀），非法字符会被替换为下划线",
+      "required": false,
+      "default": "flowx-video"
+    },
+    {
+      "name": "output_dir",
+      "type": "string",
+      "description": "本地保存目录（支持 ~ 展开），不存在时自动创建",
+      "required": false,
+      "default": "~/flowx-output"
+    },
+    {
+      "name": "embed_max_mb",
+      "type": "integer",
+      "description": "小于该体积（MB）的视频内嵌 base64 供画布播放；0 = 永不内嵌",
+      "required": false,
+      "default": 4
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "VIDEO": "{{ Param.video }}",
+    "FILENAME_PREFIX": "{{ Param.filename_prefix }}",
+    "OUTPUT_DIR": "{{ Param.output_dir }}",
+    "EMBED_MAX_MB": "{{ Param.embed_max_mb }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "file_path",
+      "type": "string",
+      "description": "保存后的本地 mp4 文件路径"
+    },
+    {
+      "name": "size_bytes",
+      "type": "integer",
+      "description": "文件大小（字节）"
+    },
+    {
+      "name": "video_b64",
+      "type": "string",
+      "description": "mp4 的 base64（<= embed_max_mb 时提供，供画布组件 <video> 内嵌播放；否则为空字符串）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker"
+  }
+}

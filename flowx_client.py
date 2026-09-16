@@ -23,12 +23,13 @@ def token():
     return os.environ.get("SERVICE_TOKEN") or os.environ.get("FLOWX_PARAM_SERVICE_TOKEN") or ""
 
 
-def _req(method, base, path, payload=None, tok=None, timeout=1800):
+def _req(method, base, path, payload=None, tok=None, timeout=1800,
+         content_type="application/json"):
+    """payload 为 bytes（已编码）；GET/无 body 时传 None。"""
     url = base.rstrip("/") + path
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    if data:
-        req.add_header("Content-Type", "application/json")
+    req = urllib.request.Request(url, data=payload, method=method)
+    if payload is not None:
+        req.add_header("Content-Type", content_type)
     if tok:
         req.add_header("Authorization", "Bearer " + tok)
     try:
@@ -42,7 +43,14 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800):
 
 
 def post_json(base, path, payload, tok=None, timeout=1800):
-    return json.loads(_req("POST", base, path, payload, tok, timeout))
+    data = json.dumps(payload).encode()
+    return json.loads(_req("POST", base, path, data, tok, timeout))
+
+
+def post_bytes(base, path, data, tok=None, timeout=300,
+               content_type="application/octet-stream"):
+    """上传原始字节（如图片文件），返回解析后的 JSON 响应。"""
+    return json.loads(_req("POST", base, path, data, tok, timeout, content_type))
 
 
 def get_json(base, path, tok=None, timeout=60):

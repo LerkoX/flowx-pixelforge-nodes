@@ -1,0 +1,95 @@
+{
+  "name": "motion-loader",
+  "displayName": "Motion 加载",
+  "description": "把 AnimateDiff 运动模块（MotionAdapter）组合进 SD1.x 底模管道，组装成文生视频管道（AnimateDiffPipeline）；输出 model/clip/vae 引用，下游接 video-gen（文本驱动，无需首帧图）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "video",
+    "animatediff"
+  ],
+  "icon": "🎞️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "python:3.11-slim",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "SD1.x 底模 MODEL 对象引用 ID（AnimateDiff v1.5 系运动模块只兼容 SD1.x UNet）",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model_ref",
+        "description": "由 Checkpoint 加载节点的 model_ref 输出提供（须为 SD1.x 模型）"
+      }
+    },
+    {
+      "name": "motion_name",
+      "type": "string",
+      "description": "运动模块名（位于推理服务 MODELS_DIR/motion/ 下）：diffusers 目录名或 safetensors 文件名（可省略扩展名），如 animatediff-motion-adapter-v1-5-2",
+      "required": true
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "MODEL_REF": "{{ Param.model_ref }}",
+    "MOTION_NAME": "{{ Param.motion_name }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "组合后的 AnimateDiff 模型引用 ID（接 video-gen）"
+    },
+    {
+      "name": "clip_ref",
+      "type": "string",
+      "description": "CLIP 引用 ID（接 CLIP 文本编码节点）"
+    },
+    {
+      "name": "vae_ref",
+      "type": "string",
+      "description": "VAE 引用 ID（备用，video-gen 内部自解码）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 1200,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local"
+  }
+}

@@ -93,7 +93,8 @@
     }
   ],
   "extract": {
-    "type": "codec-block"
+    "type": "codec-block",
+    "maxOutputSize": 6291456
   },
   "mock": {
     "enabled": true,

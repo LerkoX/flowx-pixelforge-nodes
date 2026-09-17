@@ -30,15 +30,10 @@
       }
     },
     {
-      "name": "model_ref",
+      "name": "ckpt_name",
       "type": "string",
-      "description": "SD1.x 底模 MODEL 对象引用 ID（AnimateDiff v1.5 系运动模块只兼容 SD1.x UNet）",
-      "required": true,
-      "source": {
-        "nodeRef": "checkpoint-loader",
-        "output": "model_ref",
-        "description": "由 Checkpoint 加载节点的 model_ref 输出提供（须为 SD1.x 模型）"
-      }
+      "description": "SD1.x 底模名（位于推理服务 MODELS_DIR 下，可省略扩展名，如 v1-5-pruned-emaonly）；AnimateDiff v1.5 系运动模块只兼容 SD1.x",
+      "required": true
     },
     {
       "name": "motion_name",
@@ -56,7 +51,7 @@
   ],
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
-    "MODEL_REF": "{{ Param.model_ref }}",
+    "CKPT_NAME": "{{ Param.ckpt_name }}",
     "MOTION_NAME": "{{ Param.motion_name }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}"
   },
@@ -84,7 +79,7 @@
     "enabled": true,
     "entry": "mock.py"
   },
-  "timeout": 1200,
+  "timeout": 1800,
   "executor": {
     "supportedTypes": [
       "local",

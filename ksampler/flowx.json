@@ -1,8 +1,8 @@
 {
   "name": "ksampler",
   "displayName": "KSampler 采样器",
-  "description": "扩散采样（对应 ComfyUI KSampler）：消费模型引用、正/反 conditioning、latent，按 seed/steps/cfg/sampler 迭代去噪，输出采样后 latent 对象 ID；采样过程中向 FlowX Studio 画布推送逐步实时预览图（需服务端 sample 算子 1.1+）",
-  "version": "1.1.0",
+  "description": "扩散采样（对应 ComfyUI KSampler）：消费模型引用、正/反 conditioning、latent，按 seed/steps/cfg/sampler 迭代去噪，输出采样后 latent 对象 ID；经推理服务异步 job 通道执行，采样中预览帧留在服务端 GET /preview/{job_id}，节点轮询时经 stdout 标记上报地址，Studio 中转拉帧给画布实时渲染（媒体全程 HTTP，不走 base64）",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -14,7 +14,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "python:3.11-slim",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.0.0",
   "parameters": [
     {
       "name": "service_url",
@@ -109,9 +109,23 @@
     {
       "name": "preview_every",
       "type": "integer",
-      "description": "实时预览推送间隔（每 N 步推一帧，默认 1；末帧必推）。仅在 Studio 注入 FLOWX_CALLBACK_URL 时生效",
+      "description": "实时预览帧录制间隔（每 N 步留一帧，默认 1；末帧必留），0 关闭预览。帧留在推理服务 GET /preview/{job_id}，由 Studio 中转拉取",
       "required": false,
       "default": 1
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务轮询间隔秒数（预览地址上报频率随之），默认 2",
+      "required": false,
+      "default": 2
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "采样任务超时秒数，超时自动 interrupt 服务端任务，默认 3600",
+      "required": false,
+      "default": 3600
     },
     {
       "name": "service_token",
@@ -166,6 +180,7 @@
       "local",
       "docker"
     ],
-    "preferredType": "docker"
+    "preferredType": "docker",
+    "bundled": true
   }
 }

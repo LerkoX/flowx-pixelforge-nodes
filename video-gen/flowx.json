@@ -2,7 +2,7 @@
   "name": "video-gen",
   "displayName": "视频生成",
   "description": "文/图生视频（Wan TI2V 系，经推理服务异步任务体系 POST /jobs 执行）：消费模型引用与提示词，可选接首帧图像，输出 VIDEO 对象 ID；运行中画布显示采样进度卡片，任务可被 /interrupt 取消",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "video",
@@ -15,7 +15,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "python:3.11-slim",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.0.0",
   "parameters": [
     {
       "name": "service_url",
@@ -116,7 +116,7 @@
     {
       "name": "preview_every",
       "type": "integer",
-      "description": "每 N 步向画布推一次进度卡片（0=关闭；需 Studio 回调注入）",
+      "description": "每 N 步录一次进度卡片帧（0=关闭）。帧留在推理服务 GET /preview/{job_id}，由 Studio 中转拉取给画布",
       "required": false,
       "default": 5
     },
@@ -200,6 +200,7 @@
       "local",
       "docker"
     ],
-    "preferredType": "docker"
+    "preferredType": "docker",
+    "bundled": true
   }
 }

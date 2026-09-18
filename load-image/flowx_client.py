@@ -85,13 +85,21 @@ def interrupt_job(base, job_id=None, tok=None, timeout=30):
     return post_json(base, "/interrupt", payload, tok, timeout)
 
 
-def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print):
+def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
+             on_poll=None):
     """轮询任务直到终态。done 返回 result dict；failed/cancelled/超时抛异常
-    （超时先尽力 interrupt，避免孤儿任务继续占 GPU）。"""
+    （超时先尽力 interrupt，避免孤儿任务继续占 GPU）。
+    on_poll(view)：每次轮询拿到任务视图后回调（如上报预览帧地址），
+    回调异常静默忽略，不影响任务等待。"""
     t0 = time.time()
     last = ""
     while True:
         v = get_job(base, job_id, tok)
+        if on_poll is not None:
+            try:
+                on_poll(v)
+            except Exception:
+                pass
         st = v.get("status")
         p = v.get("progress") or {}
         line = f"[job {job_id[:8]}] {st} {p.get('current', 0)}/{p.get('total', 0)}"
@@ -122,3 +130,16 @@ def emit(**fields):
     for k, v in fields.items():
         print(f'{k}: "{v}"')
     print("```")
+
+
+def emit_preview(url, progress=None, tok=None):
+    """经 stdout 标记通道向 Studio 上报预览帧地址（媒体本体不走 stdout/base64）：
+    Studio 拦截 FLOWX_PREVIEW 行（不落日志），按 url 经 HTTP 中转拉帧给画布。
+    url 指向推理服务的预览帧端点（如 {service_url}/preview/{job_id}）。"""
+    payload = {"url": url}
+    if progress is not None:
+        payload["progress"] = round(float(progress), 4)
+    if tok:
+        payload["token"] = tok
+    print("FLOWX_PREVIEW " + json.dumps(payload, separators=(",", ":")),
+          flush=True)

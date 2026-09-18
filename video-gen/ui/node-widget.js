@@ -1,8 +1,9 @@
 /**
  * video-gen 画布组件：视频生成参数（prompt/尺寸/帧数/fps/steps/cfg/seed）+ 采样进度。
  * 契约：mount(el, props) => { update(props), unmount() }（ui.apiVersion: 1）
- *   props.preview — 服务端经 Studio 回调推的进度卡片帧（{ image, mime, progress }），
- *   瞬态，节点完成即清除，需判空
+ *   props.preview — 进度卡片帧（{ url, progress }）：服务端把帧留在
+ *   GET /preview/{job_id}，Studio 中转后随 SSE 进度事件刷新 url；
+ *   瞬态，节点完成即清除，需判空；<img src=url> 直出（媒体不经 base64）
  */
 
 const STATUS_COLORS = {
@@ -200,9 +201,9 @@ export default function mount(el, props) {
       ? `video: ${o.video}`
       : (p.status === 'running' ? '视频采样中（分钟级）…' : '等待执行…')
     const pv = p.preview
-    if (pv && pv.image) {
+    if (pv && pv.url) {
       previewBox.style.display = 'flex'
-      previewImg.src = 'data:' + (pv.mime || 'image/jpeg') + ';base64,' + pv.image
+      previewImg.src = pv.url
       previewImg.style.display = 'block'
       previewPlaceholder.style.display = 'none'
       previewBar.style.display = 'block'

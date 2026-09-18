@@ -4,8 +4,9 @@
  *   props.params — 当前 config.params 绑定（模板值只读展示）
  *   props.paramSources — 参数绑定来源标注（可选）：workflow=流水线参数(含当前值) / node=上游节点(含显示名与运行时值) / literal=字面值
  *   props.onParamsChange(params) — 全量写回该节点参数（回放态缺省 = 控件只读）
- *   props.preview — 实时预览帧（可选）：{ image: base64, mime, progress }，
- *   采样中由推理服务经 Studio 回调逐步推送；瞬态，节点完成即清除，需判空
+ *   props.preview — 实时预览帧（可选）：{ url, progress }，采样中由推理服务
+ *   把帧留在 GET /preview/{job_id}，Studio 中转后随 SSE 进度事件刷新 url；
+ *   瞬态，节点完成即清除，需判空；<img src=url> 直出（媒体不经 base64）
  */
 
 const STATUS_COLORS = {
@@ -226,12 +227,12 @@ export default function mount(el, props) {
     latentLine.textContent = o.latent
       ? `latent: ${o.latent}`
       : (p.status === 'running' ? '采样中…' : '等待执行…')
-    // 预览面板：有帧显示图像 + 进度条；running 无帧提示等待（推理服务需 ≥1.1）；
+    // 预览面板：有帧显示图像 + 进度条；running 无帧提示等待（推理服务需 ≥1.2）；
     // 终态无帧时整块隐藏（输出区已展示 seed/latent）
     const pv = p.preview
-    if (pv && pv.image) {
+    if (pv && pv.url) {
       previewBox.style.display = 'flex'
-      previewImg.src = 'data:' + (pv.mime || 'image/jpeg') + ';base64,' + pv.image
+      previewImg.src = pv.url
       previewImg.style.display = 'block'
       previewPlaceholder.style.display = 'none'
       previewBar.style.display = 'block'
@@ -242,7 +243,7 @@ export default function mount(el, props) {
       previewBar.style.display = 'none'
       previewPlaceholder.style.display = ''
       previewPlaceholder.textContent = p.status === 'running'
-        ? '采样中，等待预览帧…（需推理服务 ≥1.1）'
+        ? '采样中，等待预览帧…（需推理服务 ≥1.2）'
         : '等待执行…'
     } else {
       previewBox.style.display = 'none'

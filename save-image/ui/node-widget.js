@@ -277,7 +277,7 @@ export default function mount(el, props) {
   imgWrap.append(placeholder, img, zoomHint)
 
   // 点击缩略图弹出可缩放 lightbox（滚轮/双击/触屏捏合，见 buildImageLightbox）。
-  // 图片优先直读本地文件（file_path，原图无损）；不可用时回退 preview_b64 → thumbnail_b64。
+  // 图片经 /api/v1/media/file 直读本地文件（原图无损），不走 base64。
   let lightbox = null
   const closeLightbox = () => {
     if (!lightbox) return
@@ -293,10 +293,9 @@ export default function mount(el, props) {
   }
   const openLightbox = () => {
     const o = (cur && cur.outputs) || {}
-    if (!o.file_path && !o.preview_b64 && !o.thumbnail_b64) return
+    if (!o.file_path) return
     closeLightbox()
-    const src = o.file_path ? mediaUrl(o.file_path) : ('data:image/jpeg;base64,' + (o.preview_b64 || o.thumbnail_b64))
-    lightbox = buildImageLightbox(src, o.file_path || '', closeLightbox)
+    lightbox = buildImageLightbox(mediaUrl(o.file_path), o.file_path, closeLightbox)
     document.addEventListener('keydown', onLightboxKey, true)
   }
   imgWrap.addEventListener('click', () => {
@@ -307,13 +306,15 @@ export default function mount(el, props) {
 
   el.append(header, controls, imgWrap, pathLine)
 
-  // 直读本地文件失败时（文件不在 server 白名单/远程执行器产物）回退缩略图 base64
-  let imgFallbackB64 = ''
+  // 直读本地文件失败（文件不在 server 媒体白名单/已被清理）→ 占位提示
   img.addEventListener('error', () => {
-    if (imgFallbackB64) {
-      img.src = 'data:image/jpeg;base64,' + imgFallbackB64
-      imgFallbackB64 = ''
-    }
+    img.style.display = 'none'
+    img.removeAttribute('src')
+    placeholder.style.display = ''
+    placeholder.textContent = '已保存（无法在线预览，见下方路径）'
+    zoomHint.style.display = 'none'
+    imgWrap.style.cursor = ''
+    imgWrap.title = ''
   })
 
   function render(p) {
@@ -322,18 +323,9 @@ export default function mount(el, props) {
     statusLabel.textContent = p.status
     const o = p.outputs || {}
     if (o.file_path) {
-      // 优先直读本地文件：原图无损，不占输出通道体积
-      imgFallbackB64 = o.thumbnail_b64 || ''
+      // 直读本地文件：原图无损，不占输出通道体积
       const src = mediaUrl(o.file_path)
       if (img.getAttribute('src') !== src) img.src = src
-      img.style.display = 'block'
-      placeholder.style.display = 'none'
-      zoomHint.style.display = ''
-      imgWrap.style.cursor = 'zoom-in'
-      imgWrap.title = '点击放大查看'
-    } else if (o.thumbnail_b64) {
-      imgFallbackB64 = ''
-      img.src = 'data:image/jpeg;base64,' + o.thumbnail_b64
       img.style.display = 'block'
       placeholder.style.display = 'none'
       zoomHint.style.display = ''

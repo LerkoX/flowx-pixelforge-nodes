@@ -2,8 +2,8 @@
  * save-video 画布组件：mp4 播放器 + 保存路径/体积展示。
  * 契约：mount(el, props) => { update(props), unmount() }（ui.apiVersion: 1）
  * flowx-studio 外壳零改动：渲染权在节点 widget。
- * 视频源优先级：/api/v1/media/file 直读本地文件（无限大小、可拖进度条）
- *   → video_b64 内嵌兜底（远程执行器等文件不在本机的场景）→ 路径文本。
+ * 视频源：/api/v1/media/file 直读本地文件（无体积上限、可拖进度条）。
+ * 不走 base64 内嵌；文件不在 server 媒体白名单内时仅展示保存路径。
  */
 
 const STATUS_COLORS = {
@@ -124,18 +124,12 @@ export default function mount(el, props) {
   const pathLine = h('div', 'color:rgba(255,255,255,0.45);word-break:break-all;font-family:ui-monospace,Menlo,monospace;font-size:10px')
   const sizeLine = h('div', 'color:rgba(255,255,255,0.35);font-size:10px')
 
-  // 直读本地文件失败时（文件不在 server 白名单/远程执行器产物）回退 base64
-  let fallbackB64 = ''
+  // 直读本地文件失败（文件不在 server 媒体白名单/已被清理）→ 仅展示路径
   videoEl.addEventListener('error', () => {
-    if (fallbackB64) {
-      videoEl.src = 'data:video/mp4;base64,' + fallbackB64
-      fallbackB64 = ''
-    } else {
-      videoEl.style.display = 'none'
-      videoEl.removeAttribute('src')
-      placeholder.style.display = ''
-      placeholder.textContent = '已保存（无法在线播放，见下方路径）'
-    }
+    videoEl.style.display = 'none'
+    videoEl.removeAttribute('src')
+    placeholder.style.display = ''
+    placeholder.textContent = '已保存（无法在线播放，见下方路径）'
   })
 
   // 放大播放 lightbox：同步内嵌进度，关闭时回同步并恢复内嵌播放
@@ -180,16 +174,8 @@ export default function mount(el, props) {
     statusLabel.textContent = p.status
     const o = p.outputs || {}
     if (o.file_path) {
-      // 优先直读本地文件：无内嵌体积上限，支持 Range 拖动进度条
-      fallbackB64 = o.video_b64 || ''
+      // 直读本地文件：无内嵌体积上限，支持 Range 拖动进度条
       const src = mediaUrl(o.file_path)
-      if (videoEl.getAttribute('src') !== src) videoEl.src = src
-      videoEl.style.display = 'block'
-      placeholder.style.display = 'none'
-      expandBtn.style.display = ''
-    } else if (o.video_b64) {
-      fallbackB64 = ''
-      const src = 'data:video/mp4;base64,' + o.video_b64
       if (videoEl.getAttribute('src') !== src) videoEl.src = src
       videoEl.style.display = 'block'
       placeholder.style.display = 'none'

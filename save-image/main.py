@@ -1,5 +1,8 @@
-"""save-image：从推理服务下载图像 PNG 保存到本地，并取缩略图供画布预览。"""
-import base64
+"""save-image：从推理服务下载图像 PNG 保存到本地。
+
+画布组件经 Studio /api/v1/media/file 资源接口直读本地文件展示，不再输出
+base64 缩略图——文件须落在 server 媒体白名单目录（默认 ~/flowx-output）内。
+"""
 import os
 import re
 import time
@@ -26,28 +29,7 @@ def main():
         f.write(data)
     print(f"[save] image={image_id} -> {path} ({len(data)} bytes)", flush=True)
 
-    # 缩略图（JPEG ~256px，base64 供画布组件内嵌预览）；失败不阻断主流程
-    thumb_b64 = ""
-    try:
-        thumb = get_bytes(url, f"/images/{image_id}?index={index}&thumb=256",
-                          tok, timeout=60)
-        thumb_b64 = base64.b64encode(thumb).decode()
-        print(f"[save] thumbnail {len(thumb)} bytes", flush=True)
-    except RuntimeError as e:
-        print(f"[save] thumbnail skipped: {e}", flush=True)
-
-    # 弹窗大图（JPEG ~1024px，base64 供画布组件点击放大预览）；失败不阻断
-    preview_b64 = ""
-    try:
-        preview = get_bytes(url, f"/images/{image_id}?index={index}&thumb=1024",
-                            tok, timeout=60)
-        preview_b64 = base64.b64encode(preview).decode()
-        print(f"[save] preview {len(preview)} bytes", flush=True)
-    except RuntimeError as e:
-        print(f"[save] preview skipped: {e}", flush=True)
-
-    emit(file_path=path, size_bytes=len(data), thumbnail_b64=thumb_b64,
-         preview_b64=preview_b64)
+    emit(file_path=path, size_bytes=len(data))
 
 
 if __name__ == "__main__":

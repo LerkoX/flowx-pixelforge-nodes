@@ -1,5 +1,4 @@
 """save-video mock：写入伪 mp4 字节并保存，验证参数注入与输出提取。"""
-import base64
 import os
 import time
 
@@ -17,5 +16,4 @@ path = os.path.join(out_dir, f"{prefix}_mock_{int(time.time())}.mp4")
 with open(path, "wb") as f:
     f.write(FAKE_MP4)
 print(f"[save][mock] video={video_id} -> {path} (fake mp4 placeholder)")
-emit(file_path=path, size_bytes=len(FAKE_MP4),
-     video_b64=base64.b64encode(FAKE_MP4).decode())
+emit(file_path=path, size_bytes=len(FAKE_MP4))

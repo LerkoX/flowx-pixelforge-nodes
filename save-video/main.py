@@ -1,9 +1,9 @@
 """save-video：从推理服务下载视频 mp4 保存到本地目录（对标 save-image）。
 
-小体积视频（<= embed_max_mb）内嵌 base64 输出，供画布组件 <video> 内嵌播放；
-大文件跳过内嵌，仅用 file_path。
+画布组件经 Studio /api/v1/media/file 资源接口直读本地文件播放（无体积上限、
+支持 Range 拖动进度条），不再输出 base64——文件须落在 server 媒体白名单目录
+（默认 ~/flowx-output）内，否则画布仅展示保存路径。
 """
-import base64
 import os
 import re
 import time
@@ -29,15 +29,7 @@ def main():
         f.write(data)
     print(f"[save] video={video_id} -> {path} ({len(data)} bytes)", flush=True)
 
-    # 小体积内嵌 base64 供画布 <video> 播放；失败/超限不阻断主流程
-    video_b64 = ""
-    limit = param("embed_max_mb", 4, int) * 1024 * 1024
-    if len(data) <= limit:
-        video_b64 = base64.b64encode(data).decode()
-    else:
-        print(f"[save] embed skipped: {len(data)} bytes > {limit}", flush=True)
-
-    emit(file_path=path, size_bytes=len(data), video_b64=video_b64)
+    emit(file_path=path, size_bytes=len(data))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 {
   "name": "save-image",
   "displayName": "保存图像",
-  "description": "从推理服务下载解码后的 PNG 图像并保存到本地目录（对应 ComfyUI Save Image），输出本地文件路径",
+  "description": "从推理服务下载图像保存到本地；画布组件经 Studio /api/v1/media/file 资源接口直读展示（不再内嵌 base64）",
   "version": "1.0.0",
   "author": "flowx-team",
   "tags": [
@@ -85,16 +85,6 @@
       "name": "size_bytes",
       "type": "integer",
       "description": "文件大小（字节）"
-    },
-    {
-      "name": "thumbnail_b64",
-      "type": "string",
-      "description": "256px JPEG 缩略图的 base64（供画布组件内嵌预览；服务端不支持时为空字符串）"
-    },
-    {
-      "name": "preview_b64",
-      "type": "string",
-      "description": "1024px JPEG 大图的 base64（供画布组件点击弹窗放大预览；服务端不支持时为空字符串）"
     }
   ],
   "extract": {

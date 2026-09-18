@@ -19,6 +19,7 @@ def main():
     url = param("service_url").rstrip("/")
     tok = token()
     preview_every = param("preview_every", 5, int)
+    output_mode = param("output_mode", "pil")  # pil=采样+解码一体; latent=只出 latent 交下游 vae.decode_video
     inputs = {
         "model": ref(param("model_ref")),
         "prompt": param("prompt"),
@@ -36,17 +37,19 @@ def main():
     image_id = param("image", "")  # 可选：首帧 IMAGE 对象 ID（图生视频）
     if image_id:
         inputs["image"] = ref(image_id)
+    # latent 模式不解码，分块参数无意义（算子未声明的输入会被静默忽略，仅日志不展示）
+    op_name = "video.sample_latent" if output_mode == "latent" else "video.sample"
 
     print(f"[video-gen] {inputs['width']}x{inputs['height']} "
           f"frames={inputs['num_frames']} fps={inputs['fps']} "
           f"steps={inputs['steps']} cfg={inputs['cfg']} seed={inputs['seed']} "
-          f"i2v={'yes' if image_id else 'no'} "
+          f"i2v={'yes' if image_id else 'no'} mode={output_mode} "
           f"preview={'every ' + str(preview_every) + ' steps' if preview_every > 0 else 'off'}",
           flush=True)
 
     t0 = time.time()
-    jid = submit_job(url, {"name": "video.sample", "inputs": inputs}, tok)
-    print(f"[video-gen] job={jid} submitted", flush=True)
+    jid = submit_job(url, {"name": op_name, "inputs": inputs}, tok)
+    print(f"[video-gen] job={jid} submitted ({op_name})", flush=True)
 
     def on_poll(view):
         if preview_every <= 0:
@@ -61,8 +64,14 @@ def main():
                       poll=param("poll_interval", 5, int),
                       on_poll=on_poll)
     outs = result["outputs"]
-    video_id = outs["video"].get("id")
     seed = outs["seed"].get("value")
+    if output_mode == "latent":
+        latent_id = outs["latent"].get("id")
+        print(f"[video-gen] done in {time.time()-t0:.1f}s -> latent={latent_id} seed={seed}",
+              flush=True)
+        emit(latent=latent_id, seed=seed)
+        return
+    video_id = outs["video"].get("id")
     print(f"[video-gen] done in {time.time()-t0:.1f}s -> video={video_id} seed={seed}",
           flush=True)
     emit(video=video_id, seed=seed)

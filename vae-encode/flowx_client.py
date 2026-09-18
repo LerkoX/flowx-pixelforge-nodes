@@ -86,15 +86,33 @@ def interrupt_job(base, job_id=None, tok=None, timeout=30):
 
 
 def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
-             on_poll=None):
+             on_poll=None, max_poll_errors=12):
     """轮询任务直到终态。done 返回 result dict；failed/cancelled/超时抛异常
     （超时先尽力 interrupt，避免孤儿任务继续占 GPU）。
     on_poll(view)：每次轮询拿到任务视图后回调（如上报预览帧地址），
-    回调异常静默忽略，不影响任务等待。"""
+    回调异常静默忽略，不影响任务等待。
+    轮询容错：瞬态网络错误（隧道抖动/超时/连接重置）重试，连续
+    max_poll_errors 次（默认 ≈ 1 分钟窗口）才放弃；HTTP 4xx（如 job
+    不存在）立即失败，不重试。"""
     t0 = time.time()
     last = ""
+    errors = 0
     while True:
-        v = get_job(base, job_id, tok)
+        try:
+            v = get_job(base, job_id, tok)
+            errors = 0
+        except RuntimeError as e:
+            msg = str(e)
+            if "-> HTTP 4" in msg:  # 404 等：job 真不存在，重试无意义
+                raise
+            errors += 1
+            if log:
+                log(f"[job {job_id[:8]}] poll error ({errors}/{max_poll_errors}): {msg}")
+            if errors >= max_poll_errors:
+                raise RuntimeError(
+                    f"job {job_id} poll failed {errors} times in a row, last: {msg}")
+            time.sleep(poll)
+            continue
         if on_poll is not None:
             try:
                 on_poll(v)

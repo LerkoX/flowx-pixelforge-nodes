@@ -11,6 +11,13 @@
     "animatediff"
   ],
   "icon": "🎞️",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 230,
+    "collapsed": false,
+    "apiVersion": 1
+  },
   "language": "python",
   "entry": "main.py",
   "files": [

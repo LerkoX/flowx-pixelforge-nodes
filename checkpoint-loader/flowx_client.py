@@ -41,6 +41,11 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800,
         raise RuntimeError(f"{method} {url} -> HTTP {e.code}: {body}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"{method} {url} failed: {e.reason}")
+    except (TimeoutError, OSError) as e:
+        # 读取响应体阶段的 socket.timeout（TimeoutError）/连接重置不是 URLError，
+        # 隧道卡顿时连接已建立但传输停滞即为此类；同样视为瞬态错误交给上层重试。
+        # （URLError 本身是 OSError 子类，已在上方捕获，此分支只接非 URLError 的）
+        raise RuntimeError(f"{method} {url} failed: {type(e).__name__}: {e}")
 
 
 def post_json(base, path, payload, tok=None, timeout=1800):

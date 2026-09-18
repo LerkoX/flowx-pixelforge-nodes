@@ -38,7 +38,7 @@
     {
       "name": "motion_name",
       "type": "string",
-      "description": "运动模块名（位于推理服务 MODELS_DIR/motion/ 下）：diffusers 目录名或 safetensors 文件名（可省略扩展名），如 animatediff-motion-adapter-v1-5-2",
+      "description": "运动模块名（位于推理服务 MODELS_DIR/motion/ 下）：diffusers 目录名或单文件名（可省略扩展名），如 mm_sd_v15_v2（原始 ckpt，推荐）或 animatediff-motion-adapter-v1-5-2（diffusers 目录）",
       "required": true
     },
     {
@@ -47,13 +47,29 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "服务端组合任务超时（秒），首次组合需读盘数分钟",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
     }
   ],
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
     "CKPT_NAME": "{{ Param.ckpt_name }}",
     "MOTION_NAME": "{{ Param.motion_name }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}"
   },
   "outputs": [
     {

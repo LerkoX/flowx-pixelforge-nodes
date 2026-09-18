@@ -67,11 +67,23 @@ def get_bytes(base, path, tok=None, timeout=300):
     return _req("GET", base, path, None, tok, timeout)
 
 
-def call_op(base, name, inputs, tok=None, timeout=1800):
-    """调能力运行时 POST /op（同步），返回展平的 {端口: id或值}。"""
-    resp = post_json(base, "/op", {"name": name, "inputs": inputs}, tok, timeout)
-    return {k: m.get("id", m.get("value"))
-            for k, m in resp.get("outputs", {}).items()}
+def call_op(base, name, inputs, tok=None, timeout=1800, max_retries=3):
+    """调能力运行时 POST /op（同步），返回展平的 {端口: id或值}。
+    瞬态网络错误重试 max_retries 次：/op 算子多为幂等计算（结果进对象仓库），
+    超时断开时服务端已完成执行，重试仅重算一次，无副作用。"""
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = post_json(base, "/op", {"name": name, "inputs": inputs},
+                             tok, timeout)
+            return {k: m.get("id", m.get("value"))
+                    for k, m in resp.get("outputs", {}).items()}
+        except RuntimeError as e:
+            last_err = e
+            if "-> HTTP 4" in str(e):  # 4xx 是请求本身的问题，重试无意义
+                raise
+            time.sleep(min(5 * attempt, 15))
+    raise last_err
 
 
 def submit_job(base, payload, tok=None, timeout=60):

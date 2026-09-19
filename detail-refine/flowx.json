@@ -1,8 +1,8 @@
 {
   "name": "detail-refine",
   "displayName": "局部重绘",
-  "description": "ADetailer 式局部重绘（对应 ComfyUI 的 ADetailer 链路）：YOLO 检测脸部/手部 → 裁剪放大 → img2img 重绘 → 羽化贴回原图。修复五官扭曲/手指畸形。conditioning 复用主管线，负面 embedding 在重绘中同样生效",
-  "version": "1.0.0",
+  "description": "ADetailer 式局部重绘（对应 ComfyUI 的 ADetailer 链路）：YOLO 检测脸部/手部 → 裁剪放大 → img2img 重绘 → 羽化贴回原图。修复五官扭曲/手指畸形。conditioning 复用主管线，负面 embedding 在重绘中同样生效。自包含节点：server_op.py 运行时自注册到推理服务（需服务端配置 INFERENCE_TOKEN）",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -12,7 +12,8 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
   "image": "lerkobba/flowx-pixelforge-nodes:v1.1.0",
   "parameters": [

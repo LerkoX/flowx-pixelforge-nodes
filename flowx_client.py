@@ -67,6 +67,47 @@ def get_bytes(base, path, tok=None, timeout=300):
     return _req("GET", base, path, None, tok, timeout)
 
 
+def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
+    """节点算子自注册：确保服务端已注册 op_name 且与本地插件文件版本一致，
+    缺失或 hash 不符则经 POST /admin/plugins 上传热加载（服务端需配置
+    INFERENCE_TOKEN 开启 /admin/*，且节点参数 service_token 填入同一令牌）。
+    plugin_path 缺省为节点包内的 server_op.py（与 main.py 同目录）。
+    算子已存在且为核心内置（无 plugin_hash）时视为可用，直接返回。"""
+    import hashlib
+    if plugin_path is None:
+        plugin_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "server_op.py")
+    with open(plugin_path, "rb") as f:
+        content = f.read()
+    digest = hashlib.sha256(content).hexdigest()
+
+    ops = get_json(base, "/ops", tok, timeout=30).get("ops", [])
+    for o in ops:
+        if o.get("name") != op_name:
+            continue
+        if o.get("plugin_hash") is None or o.get("plugin_hash") == digest:
+            return  # 核心内置或插件版本一致：就绪
+        break  # 插件版本不符：走上传覆盖
+
+    payload = {"filename": op_name.replace(".", "_") + ".py",
+               "content": content.decode("utf-8"), "sha256": digest}
+    try:
+        resp = post_json(base, "/admin/plugins", payload, tok, timeout)
+    except RuntimeError as e:
+        if "-> HTTP 404" in str(e):
+            raise RuntimeError(
+                f"算子 '{op_name}' 未注册且服务端 /admin 未开放"
+                f"（INFERENCE_TOKEN 未配置）。请在服务端配置 token 并在节点"
+                f" service_token 参数填入同一值后重试") from e
+        raise
+    registered = resp.get("ops", [])
+    if op_name not in registered:
+        raise RuntimeError(
+            f"插件已上传但算子 '{op_name}' 未注册（插件实际注册了 {registered}）")
+    print(f"[ensure_plugin] {op_name} 自注册成功（{resp.get('plugin')}）",
+          flush=True)
+
+
 def call_op(base, name, inputs, tok=None, timeout=1800, max_retries=3):
     """调能力运行时 POST /op（同步），返回展平的 {端口: id或值}。
     瞬态网络错误重试 max_retries 次：/op 算子多为幂等计算（结果进对象仓库），

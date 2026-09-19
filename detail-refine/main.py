@@ -1,11 +1,14 @@
-"""detail-refine：ADetailer 式局部重绘（脸/手检测 → 裁剪放大 → img2img → 羽化贴回）。"""
-from flowx_client import call_op, emit, param, ref, token
+"""detail-refine：ADetailer 式局部重绘（脸/手检测 → 裁剪放大 → img2img → 羽化贴回）。
+首个自包含节点：server_op.py 随节点包自注册到推理服务（ensure_plugin）。"""
+from flowx_client import call_op, emit, ensure_plugin, param, ref, token
 
 
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
     detector = param("detector", "face")
+
+    ensure_plugin(url, "detail.refine", tok=tok)
 
     out = call_op(url, "detail.refine",
                   {"model": ref(param("model_ref")),

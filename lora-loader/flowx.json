@@ -2,7 +2,7 @@
   "name": "lora-loader",
   "displayName": "LoRA 加载",
   "description": "给 MODEL 挂 LoRA 增量补丁（对应 ComfyUI LoraLoader）：不改底模，补丁在采样时按 strength 启用；多个 LoRA 可串联叠加，各带独立强度",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -58,6 +58,20 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "服务端任务超时（秒）；1.1.0 起走异步 /jobs 通道，sequential offload/隧道环境下挂载补丁可能触发组件搬运，同步 /op 会被掐断",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
     }
   ],
   "env": {

@@ -2,7 +2,7 @@
   "name": "checkpoint-loader",
   "displayName": "Checkpoint 加载",
   "description": "将指定 checkpoint（safetensors/ckpt）加载到推理服务显存中常驻（幂等，已加载则秒回），输出 model/clip/vae 引用供下游节点使用",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -39,6 +39,20 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "服务端加载任务超时（秒），冷加载需读盘数分钟；1.1.0 起走异步 /jobs 通道，避免隧道空闲超时掐断同步连接",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
     }
   ],
   "env": {

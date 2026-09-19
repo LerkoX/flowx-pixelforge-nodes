@@ -1,0 +1,213 @@
+{
+  "name": "detail-refine",
+  "displayName": "局部重绘",
+  "description": "ADetailer 式局部重绘（对应 ComfyUI 的 ADetailer 链路）：YOLO 检测脸部/手部 → 裁剪放大 → img2img 重绘 → 羽化贴回原图。修复五官扭曲/手指畸形。conditioning 复用主管线，负面 embedding 在重绘中同样生效",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference"
+  ],
+  "icon": "🎯",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.0.0",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待重绘的图像对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码节点（或 image-upscale）的 image 输出提供"
+      }
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "模型引用 ID（重绘采样用）",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model_ref",
+        "description": "由 Checkpoint 加载（或 lora-loader）节点的 model_ref 输出提供"
+      }
+    },
+    {
+      "name": "positive",
+      "type": "string",
+      "description": "正向 conditioning 对象 ID（重绘沿用主管线提示词）",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由正向提示词编码节点输出提供"
+      }
+    },
+    {
+      "name": "negative",
+      "type": "string",
+      "description": "反向 conditioning 对象 ID（含 EasyNegative/badhandv4 等负面 embedding）",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由反向提示词编码节点输出提供"
+      }
+    },
+    {
+      "name": "detector",
+      "type": "string",
+      "description": "检测目标：face（脸部）/ hand（手部）；对应服务端 DETECTOR_DIR 下的 <detector>.pt 检测模型",
+      "required": false,
+      "default": "face"
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "description": "重绘强度 0~1：越高改动越大。修脸建议 0.35~0.5，修手建议 0.45~0.6",
+      "required": false,
+      "default": 0.4
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "重绘采样步数",
+      "required": false,
+      "default": 20
+    },
+    {
+      "name": "conf",
+      "type": "float",
+      "description": "检测置信度阈值 0~1，低于此值的目标忽略",
+      "required": false,
+      "default": 0.3
+    },
+    {
+      "name": "padding",
+      "type": "float",
+      "description": "检测框外扩比例（0.4 = 四周各扩 40%），给重绘留上下文",
+      "required": false,
+      "default": 0.4
+    },
+    {
+      "name": "guide_size",
+      "type": "integer",
+      "description": "裁剪区域重绘前放大到的短边像素（SD1.5 建议 512）",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "重绘 CFG",
+      "required": false,
+      "default": 7.0
+    },
+    {
+      "name": "sampler_name",
+      "type": "string",
+      "description": "采样器：euler / euler_a / ddim / lms / dpmpp_2m / dpmpp_2m_karras / dpmpp_2m_sde / uni_pc",
+      "required": false,
+      "default": "euler"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "重绘种子，-1 随机",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "max_targets",
+      "type": "integer",
+      "description": "最多重绘的目标数（按置信度从高到低取）",
+      "required": false,
+      "default": 4
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "description": "贴回时的边缘羽化像素，消除拼接痕",
+      "required": false,
+      "default": 16
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODEL_REF": "{{ Param.model_ref }}",
+    "POSITIVE": "{{ Param.positive }}",
+    "NEGATIVE": "{{ Param.negative }}",
+    "DETECTOR": "{{ Param.detector }}",
+    "DENOISE": "{{ Param.denoise }}",
+    "STEPS": "{{ Param.steps }}",
+    "CONF": "{{ Param.conf }}",
+    "PADDING": "{{ Param.padding }}",
+    "GUIDE_SIZE": "{{ Param.guide_size }}",
+    "CFG": "{{ Param.cfg }}",
+    "SAMPLER_NAME": "{{ Param.sampler_name }}",
+    "SEED": "{{ Param.seed }}",
+    "MAX_TARGETS": "{{ Param.max_targets }}",
+    "FEATHER": "{{ Param.feather }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "局部重绘后的图像对象 ID（接 save-image 或下一级 detail-refine）"
+    },
+    {
+      "name": "count",
+      "type": "string",
+      "description": "实际重绘的目标数量（0 = 未检测到目标，原图透传）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 260,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

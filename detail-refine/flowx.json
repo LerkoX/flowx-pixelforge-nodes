@@ -2,7 +2,7 @@
   "name": "detail-refine",
   "displayName": "局部重绘",
   "description": "ADetailer 式局部重绘（对应 ComfyUI 的 ADetailer 链路）：YOLO 检测脸部/手部 → 裁剪放大 → img2img 重绘 → 羽化贴回原图。修复五官扭曲/手指畸形。conditioning 复用主管线，负面 embedding 在重绘中同样生效。自包含节点：server_op.py 运行时自注册到推理服务（需服务端配置 INFERENCE_TOKEN）",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -15,7 +15,7 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.3.0",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.4.0",
   "parameters": [
     {
       "name": "service_url",
@@ -124,9 +124,16 @@
     {
       "name": "sampler_name",
       "type": "string",
-      "description": "采样器：euler / euler_a / ddim / lms / dpmpp_2m / dpmpp_2m_karras / dpmpp_2m_sde / uni_pc",
+      "description": "采样器（更新公式）：euler / euler_a / ddim / lms / dpmpp_2m / dpmpp_2m_sde / uni_pc（兼容旧名 dpmpp_2m_karras）",
       "required": false,
       "default": "euler"
+    },
+    {
+      "name": "scheduler",
+      "type": "string",
+      "description": "sigma 排布：normal / karras / exponential / beta（euler_a、ddim 仅支持 normal）",
+      "required": false,
+      "default": "normal"
     },
     {
       "name": "seed",
@@ -171,6 +178,7 @@
     "GUIDE_SIZE": "{{ Param.guide_size }}",
     "CFG": "{{ Param.cfg }}",
     "SAMPLER_NAME": "{{ Param.sampler_name }}",
+    "SCHEDULER": "{{ Param.scheduler }}",
     "SEED": "{{ Param.seed }}",
     "MAX_TARGETS": "{{ Param.max_targets }}",
     "FEATHER": "{{ Param.feather }}",

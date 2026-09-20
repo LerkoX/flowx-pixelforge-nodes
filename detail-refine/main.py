@@ -22,6 +22,7 @@ def main():
                    "steps": param("steps", 20, cast=int),
                    "cfg": param("cfg", 7.0, cast=float),
                    "sampler_name": param("sampler_name", "euler"),
+                   "scheduler": param("scheduler", "normal"),
                    "seed": param("seed", -1, cast=int),
                    "guide_size": param("guide_size", 512, cast=int),
                    "max_targets": param("max_targets", 4, cast=int),

@@ -19,6 +19,7 @@ const STATUS_COLORS = {
 }
 
 const SAMPLERS = ['euler', 'euler_a', 'ddim', 'lms', 'dpmpp_2m', 'dpmpp_2m_karras', 'dpmpp_2m_sde', 'uni_pc']
+const SCHEDULERS = ['normal', 'karras', 'exponential', 'beta']
 
 const INPUT_CSS = 'width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:6px;padding:4px 7px;font-size:11px;color:rgba(255,255,255,0.9);outline:none;box-sizing:border-box;font-family:inherit'
 const LABEL_CSS = 'display:block;font-size:9px;color:rgba(255,255,255,0.35);margin-bottom:2px'
@@ -167,26 +168,31 @@ export default function mount(el, props) {
     return wrap
   })()
 
-  // sampler 下拉
-  const samplerControl = (() => {
-    const raw = (cur.params || {}).sampler_name
-    if (isWired(raw)) return wiredControl('sampler_name', raw)
+  // 枚举下拉（sampler / scheduler 共用）
+  const selectControl = (key, options, def) => {
+    const raw = (cur.params || {})[key]
+    if (isWired(raw)) return wiredControl(key, raw)
     const sel = h('select', INPUT_CSS + ';appearance:auto')
-    for (const name of SAMPLERS) {
+    for (const name of options) {
       const opt = h('option', '', name)
       opt.value = name
       sel.appendChild(opt)
     }
-    sel.value = raw !== undefined ? raw : 'euler'
-    sel.addEventListener('change', () => setParam('sampler_name', sel.value))
+    sel.value = raw !== undefined ? raw : def
+    sel.addEventListener('change', () => setParam(key, sel.value))
     refreshers.push(() => {
       sel.disabled = !editable()
       sel.style.opacity = editable() ? '1' : '0.55'
-      const nv = (cur.params || {}).sampler_name
-      sel.value = nv !== undefined ? nv : 'euler'
+      const nv = (cur.params || {})[key]
+      sel.value = nv !== undefined ? nv : def
     })
     return sel
-  })()
+  }
+
+  // sampler 下拉
+  const samplerControl = selectControl('sampler_name', SAMPLERS, 'euler')
+  // scheduler（sigma 排布）下拉
+  const schedulerControl = selectControl('scheduler', SCHEDULERS, 'normal')
 
   const header = h('div', 'display:flex;align-items:center;gap:6px;margin-bottom:6px')
   const dot = h('span', 'width:8px;height:8px;border-radius:50%;flex-shrink:0')
@@ -220,6 +226,7 @@ export default function mount(el, props) {
     field('步数 steps', sliderControl('steps', 1, 50, 1, 20, (v) => String(v))),
     field('引导强度 cfg', sliderControl('cfg', 1, 20, 0.5, 7, (v) => v.toFixed(1))),
     field('采样器 sampler', samplerControl),
+    field('排布 scheduler', schedulerControl),
     field('去噪 denoise', sliderControl('denoise', 0, 1, 0.05, 1, (v) => v.toFixed(2), 34)),
   )
 

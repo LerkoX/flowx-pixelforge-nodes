@@ -46,8 +46,8 @@ def register(registry):
         inputs={"model": "MODEL", "pos": "COND", "neg": "COND", "image": "IMAGE",
                 "detector": "STRING", "conf": "FLOAT", "padding": "FLOAT",
                 "denoise": "FLOAT", "steps": "INT", "cfg": "FLOAT",
-                "sampler_name": "STRING", "seed": "INT", "guide_size": "INT",
-                "max_targets": "INT", "feather": "INT"},
+                "sampler_name": "STRING", "scheduler": "STRING", "seed": "INT",
+                "guide_size": "INT", "max_targets": "INT", "feather": "INT"},
         outputs={"image": "IMAGE", "count": "INT"},
         description="ADetailer 式局部重绘：YOLO 检测（detector=face/hand，模型在 "
                     "DETECTOR_DIR）→ 裁剪外扩 padding → 放大到 guide_size → "
@@ -55,8 +55,8 @@ def register(registry):
                     "conditioning 复用主管线，负面 embedding 同样生效")
     def _op_detail_refine(model, pos, neg, image, detector="face", conf=0.3,
                           padding=0.4, denoise=0.4, steps=20, cfg=7.0,
-                          sampler_name=ops.DEFAULT_SAMPLER, seed=-1,
-                          guide_size=512, max_targets=4, feather=16):
+                          sampler_name=ops.DEFAULT_SAMPLER, scheduler="normal",
+                          seed=-1, guide_size=512, max_targets=4, feather=16):
         yolo = _detector(detector)
         results = yolo.predict(image, conf=conf, verbose=False)
         boxes = results[0].boxes
@@ -89,7 +89,8 @@ def register(registry):
             # img2img 重绘
             lat = ops.vae_encode(pipe, crop_big)["latent"]
             out = ops.sample(model, pos, neg, lat, seed=seed, steps=steps,
-                             cfg=cfg, sampler_name=sampler_name, denoise=denoise)
+                             cfg=cfg, sampler_name=sampler_name,
+                             scheduler=scheduler, denoise=denoise)
             refined = ops.vae_decode(pipe, out["latent"])["image"]
             refined = refined.resize(crop.size, Image.Resampling.LANCZOS)
             # 羽化 mask 贴回（边缘渐变避免拼接痕）

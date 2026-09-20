@@ -26,12 +26,13 @@ def main():
         "steps": param("steps", 20, int),
         "cfg": param("cfg", 7.0, float),
         "sampler_name": param("sampler_name", "euler"),
+        "scheduler": param("scheduler", "normal"),
         "denoise": param("denoise", 1.0, float),
         "preview_every": preview_every,
     }
     print(f"[ksampler] steps={inputs['steps']} cfg={inputs['cfg']} "
-          f"sampler={inputs['sampler_name']} seed={inputs['seed']} "
-          f"denoise={inputs['denoise']}", flush=True)
+          f"sampler={inputs['sampler_name']}+{inputs['scheduler']} "
+          f"seed={inputs['seed']} denoise={inputs['denoise']}", flush=True)
 
     t0 = time.time()
     jid = submit_job(url, {"name": "sample", "inputs": inputs}, tok)

@@ -155,7 +155,8 @@ export default function mount(el, props) {
   const statusLabel = h('span', 'color:rgba(255,255,255,0.35);margin-left:auto')
   header.append(dot, title, statusLabel)
 
-  // 进度面板：running 时显示服务端推来的进度卡片帧 + 进度条
+  // 进度面板：running 时显示服务端推来的进度卡片帧 + 进度条；
+  // 节点完成后保留最后一帧（进度条隐藏），帧源过期由 img onerror 回退占位
   const previewBox = h('div', 'position:relative;width:100%;aspect-ratio:16/9;border:1px dashed rgba(255,255,255,0.15);border-radius:8px;background:rgba(0,0,0,0.25);overflow:hidden;margin-bottom:6px;display:flex;align-items:center;justify-content:center;box-sizing:border-box')
   const previewPlaceholder = h('span', 'font-size:10px;color:rgba(255,255,255,0.25);padding:8px;text-align:center', '等待执行…')
   const previewImg = h('img', 'display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain')
@@ -164,6 +165,15 @@ export default function mount(el, props) {
   const previewBarFill = h('div', 'height:100%;background:#22d3ee;transition:width .3s ease-out;width:0%')
   previewBar.append(previewBarFill)
   previewBox.append(previewPlaceholder, previewImg, previewBar)
+
+  // 帧源是瞬态缓冲（有 TTL）：拉取失败（过期/服务重启）回退占位，不留裂图
+  previewImg.addEventListener('error', () => {
+    previewImg.style.display = 'none'
+    previewImg.removeAttribute('src')
+    previewBar.style.display = 'none'
+    previewPlaceholder.style.display = ''
+    previewPlaceholder.textContent = '预览帧已过期'
+  })
 
   const sizeRow = h('div', 'display:grid;grid-template-columns:1fr 1fr;gap:6px')
   sizeRow.append(
@@ -200,13 +210,14 @@ export default function mount(el, props) {
     videoLine.textContent = o.video
       ? `video: ${o.video}`
       : (p.status === 'running' ? '视频采样中（分钟级）…' : '等待执行…')
+    // 预览面板：有帧显示图像（终态保留最后一帧），进度条仅 running 时显示
     const pv = p.preview
     if (pv && pv.url) {
       previewBox.style.display = 'flex'
       previewImg.src = pv.url
       previewImg.style.display = 'block'
       previewPlaceholder.style.display = 'none'
-      previewBar.style.display = 'block'
+      previewBar.style.display = p.status === 'running' ? 'block' : 'none'
       previewBarFill.style.width = Math.round((pv.progress || 0) * 100) + '%'
     } else if (p.status === 'running' || p.status === 'idle') {
       previewBox.style.display = 'flex'

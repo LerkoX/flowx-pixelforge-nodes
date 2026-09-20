@@ -24,6 +24,7 @@ COPY lora-loader/*.py        /opt/flowx-nodes/lora-loader/
 COPY motion-loader/*.py      /opt/flowx-nodes/motion-loader/
 COPY save-image/*.py         /opt/flowx-nodes/save-image/
 COPY save-video/*.py         /opt/flowx-nodes/save-video/
+COPY sd3-txt2img/*.py        /opt/flowx-nodes/sd3-txt2img/
 COPY vae-decode/*.py         /opt/flowx-nodes/vae-decode/
 COPY vae-encode/*.py         /opt/flowx-nodes/vae-encode/
 COPY video-gen/*.py          /opt/flowx-nodes/video-gen/

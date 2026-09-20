@@ -13,9 +13,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.2.0",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.2.1",
   "parameters": [
     {
       "name": "service_url",

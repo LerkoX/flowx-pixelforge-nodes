@@ -1,5 +1,8 @@
 """sd3-txt2img：SD3.5 文生图（MMDiT 新架构），消费模型引用与提示词，输出 IMAGE 对象 ID。
 
+自包含节点：服务端算子 sd3.txt2img 由 server_op.py 随本节点包自注册
+（ensure_plugin：/ops 比对 hash，缺失/不符自动上传热加载，服务端无需部署）。
+
 经推理服务异步任务通道执行（POST /jobs + 轮询）：分钟~小时级采样不被 HTTP
 空闲超时掐断。16ch latent 无法廉价投影成图，preview_every>0 时服务端留
 进度卡片帧在 GET /preview/{job_id}，本节点轮询时把帧地址经 stdout 标记
@@ -10,13 +13,16 @@
 """
 import time
 
-from flowx_client import (emit, emit_preview, param, ref, submit_job, token,
-                          wait_job)
+from flowx_client import (emit, emit_preview, ensure_plugin, param, ref,
+                          submit_job, token, wait_job)
 
 
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
+
+    ensure_plugin(url, "sd3.txt2img", tok=tok)  # 服务端算子自注册（幂等）
+
     preview_every = param("preview_every", 1, int)
     inputs = {
         "model": ref(param("model_ref")),

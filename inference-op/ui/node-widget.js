@@ -4,6 +4,10 @@
  *   props.params — 当前 config.params 绑定（模板值只读展示）
  *   props.paramSources — 参数绑定来源标注（可选）：workflow=流水线参数(含当前值) / node=上游节点(含显示名与运行时值) / literal=字面值
  *   props.onParamsChange(params) — 全量写回该节点参数（回放态缺省 = 控件只读）
+ *
+ * inputs_json 可读性增强（方案 A）：格式化按钮（pretty-print 多行展示）、
+ * JSON 语法错误红框 + 错误行、字面量摘要区——把 text/seed/steps 等字面量
+ * 从单行 JSON 里提取成高亮只读摘要（长文本如提示词整块换行展示）。
  */
 
 const STATUS_COLORS = {
@@ -125,22 +129,95 @@ export default function mount(el, props) {
     return inp
   }
 
-  const textareaControl = (key, placeholder) => {
-    const raw = (cur.params || {})[key]
-    if (isWired(raw)) return wiredControl(key, raw)
-    const ta = h('textarea', INPUT_CSS + ';font-family:ui-monospace,Menlo,monospace;resize:vertical;min-height:44px')
-    ta.rows = 2
-    ta.value = raw !== undefined ? raw : ''
-    ta.placeholder = placeholder || ''
-    ta.addEventListener('change', () => setParam(key, ta.value))
+  // inputs_json 专用控件（方案 A 可读性增强）：
+  // - 格式化按钮：pretty-print 多行展示（{{ }} 模板在字符串值内，不受影响）
+  // - JSON 语法错误：红框 + 错误行（不阻断写回，仅视觉警告）
+  // - 字面量摘要：解析后把字面量 key 提取成高亮只读摘要行；长文本（提示词等）
+  //   整块换行展示——关键内容不再埋在单行 JSON 里；绑定值（$id/{{ }}）淡显
+  const DIM_CSS = 'color:rgba(165,180,252,0.7);word-break:break-all;font-family:ui-monospace,Menlo,monospace;font-size:9px'
+  const inputsJsonField = () => {
+    // 注意：inputs_json 不做 isWired 整体绑定回退——它结构上是 JSON 文本，
+    // {{ }} 模板合法地出现在字符串值内部（如 {"$id": "{{ X.clip }}"}），
+    // 一律走 JSON 编辑器 + 摘要（模板值在摘要区淡显）；JSON.parse 不受影响。
+    const wrap = h('div', '')
+    const ta = h('textarea', INPUT_CSS + ';font-family:ui-monospace,Menlo,monospace;resize:vertical;min-height:52px')
+    ta.rows = 3
+    ta.value = (cur.params || {}).inputs_json !== undefined ? (cur.params || {}).inputs_json : ''
+    ta.placeholder = '{"key": "value"}'
+    ta.spellcheck = false
+    const btnRow = h('div', 'display:flex;gap:6px;margin-top:3px')
+    const fmtBtn = h('button', 'font-size:10px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:2px 8px;color:rgba(255,255,255,0.75);cursor:pointer', '格式化')
+    const errLine = h('div', 'display:none;font-size:9px;color:#fb7185;margin-top:2px;word-break:break-all')
+    const summary = h('div', 'margin-top:4px')
+    const parse = () => {
+      const v = ta.value.trim()
+      if (!v) return { ok: true, obj: {} }
+      try { return { ok: true, obj: JSON.parse(v) } } catch (e) {
+        return { ok: false, err: String((e && e.message) || e) }
+      }
+    }
+    const chip = (key, valText, valStyle) => {
+      const row = h('div', 'display:flex;gap:6px;font-size:10px;line-height:1.5;padding:2px 6px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:6px;margin-bottom:3px')
+      row.append(h('span', 'color:rgba(52,211,153,0.85);font-family:ui-monospace,Menlo,monospace;flex-shrink:0', key + ':'))
+      row.append(h('span', valStyle || 'color:rgba(255,255,255,0.85);word-break:break-all', valText))
+      return row
+    }
+    const renderSummary = () => {
+      summary.textContent = ''
+      const r = parse()
+      if (!r.ok) {
+        errLine.style.display = 'block'
+        errLine.textContent = '⚠ JSON 语法错误：' + r.err
+        ta.style.borderColor = 'rgba(251,113,133,0.7)'
+        return
+      }
+      errLine.style.display = 'none'
+      ta.style.borderColor = 'rgba(255,255,255,0.14)'
+      const obj = r.obj
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return
+      for (const [k, v] of Object.entries(obj)) {
+        if (v !== null && typeof v === 'object') {
+          summary.append(chip(k, v.$id !== undefined
+            ? '🔗 ' + String(v.$id) : JSON.stringify(v).slice(0, 120), DIM_CSS))
+        } else if (typeof v === 'string' && v.indexOf('{{') >= 0) {
+          summary.append(chip(k, v, DIM_CSS))
+        } else if (typeof v === 'string' && v.length > 24) {
+          // 长文本（提示词等）整块展示
+          const box = h('div', 'font-size:10px;line-height:1.5;padding:3px 6px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.25);border-radius:6px;margin-bottom:3px')
+          box.append(h('span', 'color:rgba(251,191,36,0.9);font-family:ui-monospace,Menlo,monospace', k + ': '))
+          box.append(h('span', 'color:rgba(255,255,255,0.9);word-break:break-word;white-space:pre-wrap', v))
+          summary.append(box)
+        } else {
+          summary.append(chip(k, JSON.stringify(v)))
+        }
+      }
+    }
+    ta.addEventListener('input', renderSummary)
+    ta.addEventListener('change', () => setParam('inputs_json', ta.value))
+    fmtBtn.addEventListener('click', () => {
+      const r = parse()
+      if (!r.ok) {
+        errLine.style.display = 'block'
+        errLine.textContent = '⚠ 无法格式化：' + r.err
+        return
+      }
+      ta.value = JSON.stringify(r.obj, null, 2)
+      if (editable()) setParam('inputs_json', ta.value)
+      renderSummary()
+    })
+    btnRow.append(fmtBtn)
     refreshers.push(() => {
       ta.disabled = !editable()
+      fmtBtn.disabled = !editable()
       ta.style.opacity = editable() ? '1' : '0.55'
-      if (document.activeElement === ta) return
-      const nv = (cur.params || {})[key]
-      ta.value = nv !== undefined ? nv : ''
+      if (document.activeElement !== ta) {
+        const nv = (cur.params || {}).inputs_json
+        ta.value = nv !== undefined ? nv : ''
+      }
+      renderSummary()
     })
-    return ta
+    wrap.append(ta, btnRow, errLine, summary)
+    return field('入参 inputs_json', wrap)
   }
 
   const header = h('div', 'display:flex;align-items:center;gap:6px;margin-bottom:6px')
@@ -152,7 +229,7 @@ export default function mount(el, props) {
   const controls = h('div', 'margin-bottom:6px')
   controls.append(
     field('算子 op_name', textControl('op_name', 'upscale / latent.empty / …', true)),
-    field('入参 inputs_json', textareaControl('inputs_json', '{"key": "value"}')),
+    inputsJsonField(),
     field('输出键 emit_keys（逗号分隔）', textControl('emit_keys', 'latent,image', true)),
   )
 

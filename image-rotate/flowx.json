@@ -36,7 +36,7 @@
     },
     {
       "name": "angle",
-      "type": "number",
+      "type": "float",
       "description": "旋转角度（度，逆时针为正）",
       "required": false,
       "default": 0

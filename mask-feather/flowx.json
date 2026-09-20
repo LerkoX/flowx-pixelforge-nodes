@@ -36,7 +36,7 @@
     },
     {
       "name": "radius",
-      "type": "number",
+      "type": "float",
       "description": "高斯模糊半径（像素，0 不处理）",
       "required": false,
       "default": 8

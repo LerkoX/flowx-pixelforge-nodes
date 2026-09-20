@@ -1,0 +1,183 @@
+{
+  "name": "sd3-sampler",
+  "displayName": "SD3 采样器",
+  "description": "SD3.5 flow matching 采样器（对标 ComfyUI KSampler）：消费模型引用 + 正/反 COND + latent，输出采样后 latent。denoise=1 文生图；denoise<1 接 sd3-vae-encode 做图生图。异步 job + 进度卡片预览。自包含节点：算子 sd3.sample 随包自注册",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd3",
+    "mmdit",
+    "inference"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.3.0",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "SD3.5 模型引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model_ref",
+        "description": "由 Checkpoint 加载节点（SD3.5 目录）的 model_ref 提供"
+      }
+    },
+    {
+      "name": "positive",
+      "type": "string",
+      "description": "正向 COND 引用",
+      "required": true,
+      "source": {
+        "nodeRef": "sd3-clip-encode",
+        "output": "cond",
+        "description": "正向提示词编码节点的 cond 输出"
+      }
+    },
+    {
+      "name": "negative",
+      "type": "string",
+      "description": "反向 COND 引用",
+      "required": true,
+      "source": {
+        "nodeRef": "sd3-clip-encode",
+        "output": "cond",
+        "description": "反向提示词编码节点的 cond 输出"
+      }
+    },
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "输入 latent（文生图接 sd3-empty-latent；图生图接 sd3-vae-encode）",
+      "required": true,
+      "source": {
+        "nodeRef": "sd3-empty-latent",
+        "output": "latent",
+        "description": "空 Latent 节点的 latent 输出"
+      }
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子，-1 随机",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数，默认 28（SD3.5 推荐 28~40）",
+      "required": false,
+      "default": 28
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "引导强度，默认 4.5（SD3.5 常用 3.5~5）",
+      "required": false,
+      "default": 4.5
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "description": "去噪强度：1.0 文生图；<1 图生图（0.4~0.7 常用）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "preview_every",
+      "type": "integer",
+      "description": "每 N 步留一帧进度卡片（0 关闭）",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "采样任务超时（秒）",
+      "required": false,
+      "default": 7200
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "采样后的 16ch LATENT 引用，接 sd3-vae-decode"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的随机种子"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "MODEL_REF": "{{ Param.model_ref }}",
+    "POSITIVE": "{{ Param.positive }}",
+    "NEGATIVE": "{{ Param.negative }}",
+    "LATENT": "{{ Param.latent }}",
+    "SEED": "{{ Param.seed }}",
+    "STEPS": "{{ Param.steps }}",
+    "CFG": "{{ Param.cfg }}",
+    "DENOISE": "{{ Param.denoise }}",
+    "PREVIEW_EVERY": "{{ Param.preview_every }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 7500,
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 460,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
+}

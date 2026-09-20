@@ -1,0 +1,103 @@
+{
+  "name": "sd3-empty-latent",
+  "displayName": "SD3 空 Latent",
+  "description": "SD3.5 空 Latent 画布（16 通道，区别于 SD1.x 的 4 通道）：按宽高/batch 创建零 latent，宽高须 16 的倍数。自包含节点：算子 sd3.latent.empty 随包自注册",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd3",
+    "mmdit",
+    "inference"
+  ],
+  "icon": "🧱",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.3.0",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "宽（16 的倍数；512 为 8GB Pascal 实用值，1024 为模型原生分辨率但耗时数倍）",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "高（16 的倍数），同上",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "batch_size",
+      "type": "integer",
+      "description": "批大小",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "16 通道 LATENT 对象引用，接 sd3-sampler"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "latent 形状信息，供画布观察"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "BATCH_SIZE": "{{ Param.batch_size }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 120,
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 210,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
+}

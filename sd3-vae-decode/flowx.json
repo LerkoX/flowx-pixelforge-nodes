@@ -1,0 +1,98 @@
+{
+  "name": "sd3-vae-decode",
+  "displayName": "SD3 VAE 解码",
+  "description": "SD3.5 VAE 解码：16ch latent → 图像（(latents/scaling)+shift，config 实测读取）。自包含节点：算子 sd3.vae.decode 随包自注册",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd3",
+    "mmdit",
+    "inference"
+  ],
+  "icon": "🖼️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.3.0",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "vae_ref",
+      "type": "string",
+      "description": "VAE 引用 ID（SD3.5 管道视图）",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "vae_ref",
+        "description": "由 Checkpoint 加载节点（SD3.5 目录）的 vae_ref 提供"
+      }
+    },
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "采样后的 16ch LATENT 引用",
+      "required": true,
+      "source": {
+        "nodeRef": "sd3-sampler",
+        "output": "latent",
+        "description": "SD3 采样器的 latent 输出"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "IMAGE 对象引用（接 save-image 保存）"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "VAE_REF": "{{ Param.vae_ref }}",
+    "LATENT": "{{ Param.latent }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 660,
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
+}

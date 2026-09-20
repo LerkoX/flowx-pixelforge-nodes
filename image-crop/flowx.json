@@ -1,0 +1,123 @@
+{
+  "name": "image-crop",
+  "displayName": "裁剪图像",
+  "description": "矩形裁剪图像（对蒙版同样适用——蒙版即灰度图像），纯客户端 PIL 处理",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image"
+  ],
+  "icon": "✂️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "推理服务端的图像对象 ID（图像或蒙版）",
+      "required": true
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "description": "左上角 X（像素）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "description": "左上角 Y（像素）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "裁剪宽度（像素）",
+      "required": true
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "裁剪高度（像素）",
+      "required": true
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMAGE": "{{ Param.image }}",
+    "X": "{{ Param.x }}",
+    "Y": "{{ Param.y }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "处理后图像在推理服务的对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    },
+    {
+      "name": "thumb_b64",
+      "type": "string",
+      "description": "结果缩略图 data URL（JPEG，画布 widget 预览用）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  }
+}

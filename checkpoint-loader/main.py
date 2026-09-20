@@ -12,10 +12,20 @@ def main():
     ckpt = param("ckpt_name")
     tok = token()
 
+    # 性能旋钮（dtype/offload/use_t5）：auto/留空 = 继承服务端进程级环境变量；
+    # 显式指定时作为模型级覆盖透传给 checkpoint.load——同模型不同旋钮组合
+    # 是独立常驻条目（同一 LRU），SD1.5(none) 与 SD3.5(sequential) 可共存
+    inputs = {"ckpt": ckpt}
+    for knob in ("dtype", "offload", "use_t5"):
+        v = param(knob, "auto").strip().lower()
+        if v and v != "auto":
+            inputs[knob] = v
+    knobs = {k: v for k, v in inputs.items() if k != "ckpt"}
+
     t0 = time.time()
     jid = submit_job(url, {"name": "checkpoint.load",
-                           "inputs": {"ckpt": ckpt}}, tok)
-    print(f"[loader] job={jid} submitted (ckpt={ckpt})", flush=True)
+                           "inputs": inputs}, tok)
+    print(f"[loader] job={jid} submitted (ckpt={ckpt}, knobs={knobs or 'auto'})", flush=True)
     result = wait_job(url, jid, tok,
                       timeout=param("job_timeout", 1800, int),
                       poll=param("poll_interval", 5, int))

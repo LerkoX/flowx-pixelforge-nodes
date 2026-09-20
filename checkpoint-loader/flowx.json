@@ -2,7 +2,7 @@
   "name": "checkpoint-loader",
   "displayName": "Checkpoint 加载",
   "description": "将指定 checkpoint（safetensors/ckpt）加载到推理服务显存中常驻（幂等，已加载则秒回），输出 model/clip/vae 引用供下游节点使用",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -39,6 +39,27 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "计算精度旋钮：auto（默认，继承服务端）/fp16/bf16/fp32。Pascal 显卡无 bf16 硬件，实用值是 fp16",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "description": "显存治理旋钮：auto（默认，继承服务端 OFFLOAD_MODE）/none（整模型驻留，最快）/model（子模块级搬移）/sequential（逐层搬移，最省显存最慢）。SD3.5 在 8GB 显存上需 sequential；SD1.x 必须 none/model（sequential 与 clip.encode 不兼容）",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "use_t5",
+      "type": "string",
+      "description": "SD3 T5-XXL 文本编码器开关：auto（默认，继承服务端 SD3_USE_T5）/on/off。仅 SD3.x 模型有效，其他架构忽略",
+      "required": false,
+      "default": "auto"
     },
     {
       "name": "job_timeout",

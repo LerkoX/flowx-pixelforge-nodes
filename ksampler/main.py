@@ -30,9 +30,14 @@ def main():
         "denoise": param("denoise", 1.0, float),
         "preview_every": preview_every,
     }
+    # ControlNet 控制（可选）：绑定 control 时注入，缺省与旧版请求体完全一致
+    control = param("control", "")
+    if control:
+        inputs["control"] = ref(control)
     print(f"[ksampler] steps={inputs['steps']} cfg={inputs['cfg']} "
           f"sampler={inputs['sampler_name']}+{inputs['scheduler']} "
-          f"seed={inputs['seed']} denoise={inputs['denoise']}", flush=True)
+          f"seed={inputs['seed']} denoise={inputs['denoise']} "
+          f"control={'yes' if control else 'no'}", flush=True)
 
     t0 = time.time()
     jid = submit_job(url, {"name": "sample", "inputs": inputs}, tok)

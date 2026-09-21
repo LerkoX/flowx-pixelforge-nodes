@@ -7,6 +7,7 @@ const WIDGET_SPEC = {
     { key: 'positive', label: '正向 conditioning 对象 ID（positive）', kind: 'text', mono: true },
     { key: 'negative', label: '反向 conditioning 对象 ID（negative）', kind: 'text', mono: true },
     { key: 'latent', label: '输入 latent 对象 ID（latent）', kind: 'text', mono: true },
+    { key: 'control', label: 'ControlNet 控制对象 ID（可空）（control）', kind: 'text', mono: true },
     { key: 'seed', label: '随机种子（seed）', kind: 'text', default: -1 },
     { key: 'steps', label: '采样步数（steps）', kind: 'slider', min: 1, max: 150, step: 1, default: 20 },
     { key: 'cfg', label: '提示词引导强度（CFG scale）（cfg）', kind: 'slider', min: 1, max: 30, step: 0.5, default: 7.0 },

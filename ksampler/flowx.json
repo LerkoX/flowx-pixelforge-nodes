@@ -2,7 +2,7 @@
   "name": "ksampler",
   "displayName": "KSampler 采样器",
   "description": "扩散采样（对应 ComfyUI KSampler）：消费模型引用、正/反 conditioning、latent，按 seed/steps/cfg/sampler 迭代去噪，输出采样后 latent 对象 ID；经推理服务异步 job 通道执行，采样中预览帧留在服务端 GET /preview/{job_id}，节点轮询时经 stdout 标记上报地址，Studio 中转拉帧给画布实时渲染（媒体全程 HTTP，不走 base64）",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -69,6 +69,17 @@
         "nodeRef": "empty-latent",
         "output": "latent",
         "description": "由空 Latent 图像节点输出提供"
+      }
+    },
+    {
+      "name": "control",
+      "type": "string",
+      "required": false,
+      "description": "ControlNet 控制对象 ID（可空；由 controlnet-apply 的 control 输出提供）",
+      "source": {
+        "nodeRef": "controlnet-apply",
+        "output": "control",
+        "description": "由 controlnet-apply 的 control 输出提供"
       }
     },
     {
@@ -154,7 +165,8 @@
     "SAMPLER_NAME": "{{ Param.sampler_name }}",
     "SCHEDULER": "{{ Param.scheduler }}",
     "DENOISE": "{{ Param.denoise }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "CONTROL": "{{ Param.control }}"
   },
   "outputs": [
     {

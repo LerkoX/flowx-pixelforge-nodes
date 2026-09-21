@@ -21,6 +21,7 @@ const STATUS_COLORS = {
 const INPUT_CSS = 'width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:6px;padding:4px 7px;font-size:11px;color:rgba(255,255,255,0.9);outline:none;box-sizing:border-box;font-family:inherit'
 const LABEL_CSS = 'display:block;font-size:9px;color:rgba(255,255,255,0.35);margin-bottom:2px'
 const WIRED_CSS = 'font-size:10px;color:rgba(165,180,252,0.75);font-family:ui-monospace,Menlo,monospace;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.22);border-radius:6px;padding:3px 7px;word-break:break-all'
+const BTN_CSS = 'font-size:10px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:2px 8px;color:rgba(255,255,255,0.75);cursor:pointer'
 
 function h(tag, style, text) {
   const n = document.createElement(tag)
@@ -226,6 +227,171 @@ export default function mount(el, props) {
   const statusLabel = h('span', 'color:rgba(255,255,255,0.35);margin-left:auto')
   header.append(dot, title, statusLabel)
 
+  // ---------- 预览/结果区（props.preview：执行中过程帧 + 完成后结果图） ----------
+  // 帧经 Studio preview-frame 中转（同源 cookie 认证），点击放大 overlay。
+  const prevWrap = h('div', 'display:none;margin-bottom:6px')
+  const prevImg = h('img', 'width:100%;border-radius:8px;display:block;cursor:zoom-in;background:rgba(0,0,0,0.3)')
+  prevImg.alt = '预览'
+  let overlay = null
+  prevImg.addEventListener('click', () => {
+    if (!prevImg.src || overlay) return
+    overlay = h('div', 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;cursor:zoom-out')
+    const big = h('img', 'max-width:95vw;max-height:95vh;object-fit:contain')
+    big.src = prevImg.src
+    overlay.append(big)
+    overlay.addEventListener('click', () => { overlay.remove(); overlay = null })
+    document.body.append(overlay)
+  })
+  prevImg.addEventListener('error', () => {
+    // 帧过期（推理侧对象被驱逐/Studio 来源映射过期）→ 隐藏预览区
+    prevWrap.style.display = 'none'
+  })
+  const progOuter = h('div', 'height:4px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden')
+  const progInner = h('div', 'height:100%;background:#22d3ee;width:0%;transition:width .3s')
+  progOuter.append(progInner)
+  const prevRow = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
+  const prevInfo = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);flex:1;word-break:break-all')
+  const stopBtn = h('button', BTN_CSS + ';color:#fb7185;border-color:rgba(251,113,133,0.4)', '■ 中断')
+  stopBtn.title = '中断该节点对应的推理 job（POST interrupt-inference）'
+  stopBtn.addEventListener('click', async () => {
+    if (!cur.execution) { prevInfo.textContent = '无执行实例'; return }
+    stopBtn.disabled = true
+    try {
+      const r = await fetch(`/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/interrupt-inference`, { method: 'POST' })
+      prevInfo.textContent = r.ok ? '已请求中断' : `中断失败 HTTP ${r.status}`
+    } catch (e) {
+      prevInfo.textContent = '中断失败：' + e
+    } finally {
+      stopBtn.disabled = false
+    }
+  })
+  prevRow.append(prevInfo, stopBtn)
+  prevWrap.append(prevImg, progOuter, prevRow)
+
+  // ---------- 算子专属快捷控件（预处理调参 + 即时预览 / 采样预览开关） ----------
+  // 控件值与 inputs_json 双向同步（合并写回，不动其他键）；预览按钮走
+  // op-replay 端点：用上次执行的解析后入参 + 当前 overrides 重放算子，
+  // 结果图经 node_preview 事件自动刷新上方预览区。
+  const opExtras = h('div', 'margin-bottom:6px')
+  const readInput = (k, dflt) => {
+    try {
+      const o = JSON.parse((cur.params || {}).inputs_json || '{}')
+      return o[k] !== undefined ? o[k] : dflt
+    } catch { return dflt }
+  }
+  const mergeInputsJson = (patch) => {
+    let obj = {}
+    try { obj = JSON.parse((cur.params || {}).inputs_json || '{}') } catch { return }
+    Object.assign(obj, patch)
+    setParam('inputs_json', JSON.stringify(obj))
+  }
+  const replayBtn = (getOverrides) => {
+    const btn = h('button', BTN_CSS + ';color:#34d399;border-color:rgba(52,211,153,0.4)', '▶ 预览')
+    btn.title = '用上次执行的输入 + 当前参数重放该算子（秒级），结果直接刷新预览区'
+    const hint = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);margin-left:6px')
+    btn.addEventListener('click', async () => {
+      if (!cur.execution) { hint.textContent = '无执行实例，先运行一次'; return }
+      btn.disabled = true
+      hint.textContent = '重放中…'
+      try {
+        const r = await fetch(`/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/op-replay`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ overrides: getOverrides() }),
+        })
+        if (r.status === 409) {
+          hint.textContent = '需先用当前版本节点执行一次'
+        } else if (!r.ok) {
+          hint.textContent = `失败 HTTP ${r.status}`
+        } else {
+          hint.textContent = ''
+        }
+      } catch (e) {
+        hint.textContent = '失败：' + e
+      } finally {
+        btn.disabled = false
+      }
+    })
+    const row = h('div', 'display:flex;align-items:center;margin-top:4px')
+    row.append(btn, hint)
+    return row
+  }
+  const sliderRow = (label, key, min, max, dflt) => {
+    const wrap = h('div', 'margin-bottom:4px')
+    const val = h('span', 'color:rgba(255,255,255,0.7);font-family:ui-monospace,Menlo,monospace', String(readInput(key, dflt)))
+    const lab = h('label', LABEL_CSS + ';display:flex;justify-content:space-between', '')
+    lab.append(document.createTextNode(label), val)
+    const rng = h('input', 'width:100%;accent-color:#22d3ee')
+    rng.type = 'range'; rng.min = min; rng.max = max; rng.step = 1
+    rng.value = readInput(key, dflt)
+    rng.disabled = !editable()
+    rng.addEventListener('input', () => { val.textContent = rng.value })
+    rng.addEventListener('change', () => mergeInputsJson({ [key]: Number(rng.value) }))
+    wrap.append(lab, rng)
+    refreshers.push(() => {
+      rng.disabled = !editable()
+      const nv = readInput(key, dflt)
+      if (document.activeElement !== rng) { rng.value = nv; val.textContent = String(nv) }
+    })
+    return wrap
+  }
+  const checkRow = (label, key, dflt) => {
+    const wrap = h('label', 'display:flex;align-items:center;gap:6px;font-size:10px;color:rgba(255,255,255,0.75);margin-bottom:4px;cursor:pointer')
+    const cb = h('input', 'accent-color:#22d3ee')
+    cb.type = 'checkbox'
+    cb.checked = Boolean(readInput(key, dflt))
+    cb.disabled = !editable()
+    cb.addEventListener('change', () => mergeInputsJson({ [key]: cb.checked }))
+    wrap.append(cb, document.createTextNode(label))
+    refreshers.push(() => {
+      cb.disabled = !editable()
+      cb.checked = Boolean(readInput(key, dflt))
+    })
+    return wrap
+  }
+  const SAMPLE_OPS = ['sample', 'sd3.sample', 'video.sample', 'video.sample_latent']
+  let extrasFor = null
+  const buildOpExtras = () => {
+    const op = ((cur.params || {}).op_name || '').trim()
+    if (op === extrasFor) return
+    extrasFor = op
+    opExtras.textContent = ''
+    if (op === 'preprocess.canny') {
+      opExtras.append(
+        sliderRow('低阈值 low_threshold', 'low_threshold', 0, 255, 100),
+        sliderRow('高阈值 high_threshold', 'high_threshold', 0, 255, 200),
+        replayBtn(() => ({
+          low_threshold: readInput('low_threshold', 100),
+          high_threshold: readInput('high_threshold', 200),
+        })),
+      )
+    } else if (op === 'preprocess.openpose') {
+      opExtras.append(
+        checkRow('手部 include_hand', 'include_hand', false),
+        checkRow('面部 include_face', 'include_face', false),
+        replayBtn(() => ({
+          include_hand: Boolean(readInput('include_hand', false)),
+          include_face: Boolean(readInput('include_face', false)),
+        })),
+      )
+    } else if (SAMPLE_OPS.indexOf(op) >= 0) {
+      // 实时预览开关：直接映射 inputs_json 的 preview_every（5/0），不复用 checkRow
+      //（checkRow 会以 label 键名写回，产生 __pe_toggle 脏键）
+      const wrap = h('label', 'display:flex;align-items:center;gap:6px;font-size:10px;color:rgba(255,255,255,0.75);margin-bottom:4px;cursor:pointer')
+      const cb = h('input', 'accent-color:#22d3ee')
+      cb.type = 'checkbox'
+      cb.checked = readInput('preview_every', 0) > 0
+      cb.disabled = !editable()
+      cb.addEventListener('change', () => mergeInputsJson({ preview_every: cb.checked ? 5 : 0 }))
+      wrap.append(cb, document.createTextNode('实时预览（preview_every=5）'))
+      refreshers.push(() => {
+        cb.disabled = !editable()
+        cb.checked = readInput('preview_every', 0) > 0
+      })
+      opExtras.append(wrap)
+    }
+  }
+
   const controls = h('div', 'margin-bottom:6px')
   controls.append(
     field('算子 op_name', textControl('op_name', 'upscale / latent.empty / …', true)),
@@ -235,15 +401,37 @@ export default function mount(el, props) {
 
   const outBox = h('div', 'color:rgba(255,255,255,0.45);word-break:break-all')
 
-  el.append(header, controls, outBox)
+  el.append(header, prevWrap, controls, opExtras, outBox)
 
+  let lastPreviewUrl = ''
   function render(p) {
     cur = p
     dot.style.background = STATUS_COLORS[p.status] || STATUS_COLORS.idle
     statusLabel.textContent = p.status
+    // 预览/结果区：preview.url 变化（SSE node_preview 带新时间戳）时刷新；
+    // progress<1 显示进度条与中断按钮，完成（1.0）后保留最后一帧即结果图
+    const pv = p.preview
+    if (pv && pv.url) {
+      prevWrap.style.display = 'block'
+      if (pv.url !== lastPreviewUrl) {
+        lastPreviewUrl = pv.url
+        prevImg.src = pv.url
+      }
+      const prog = typeof pv.progress === 'number' ? pv.progress : null
+      const running = p.status === 'running' && (prog === null || prog < 1)
+      progOuter.style.display = running ? 'block' : 'none'
+      stopBtn.style.display = running ? 'inline-block' : 'none'
+      if (prog !== null) progInner.style.width = Math.round(prog * 100) + '%'
+      if (!prevInfo.textContent || running) {
+        prevInfo.textContent = prog !== null ? `进度 ${Math.round(prog * 100)}%` : ''
+      }
+    } else {
+      prevWrap.style.display = 'none'
+      lastPreviewUrl = ''
+    }
     const o = p.outputs || {}
     outBox.textContent = ''
-    const entries = Object.entries(o)
+    const entries = Object.entries(o).filter(([k]) => !k.startsWith('__'))
     if (entries.length === 0) {
       outBox.textContent = '等待执行…'
     } else {
@@ -253,6 +441,7 @@ export default function mount(el, props) {
         outBox.append(row)
       }
     }
+    buildOpExtras()
     refreshers.forEach((f) => f())
   }
 

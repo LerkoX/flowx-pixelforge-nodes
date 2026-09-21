@@ -167,14 +167,20 @@ def emit(**fields):
     print("```")
 
 
-def emit_preview(url, progress=None, tok=None):
+def emit_preview(url, progress=None, tok=None, base=None, job_id=None):
     """经 stdout 标记通道向 Studio 上报预览帧地址（媒体本体不走 stdout/base64）：
     Studio 拦截 FLOWX_PREVIEW 行（不落日志），按 url 经 HTTP 中转拉帧给画布。
-    url 指向推理服务的预览帧端点（如 {service_url}/preview/{job_id}）。"""
+    url 指向推理服务的预览帧端点（如 {service_url}/preview/{job_id}）。
+    base/job_id 供 Studio 记录服务基地址与推理 job（节点级中断、
+    op-replay 重放预览用）；旧版 Studio 忽略多余字段。"""
     payload = {"url": url}
     if progress is not None:
         payload["progress"] = round(float(progress), 4)
     if tok:
         payload["token"] = tok
+    if base:
+        payload["base"] = base
+    if job_id:
+        payload["job_id"] = job_id
     print("FLOWX_PREVIEW " + json.dumps(payload, separators=(",", ":")),
           flush=True)

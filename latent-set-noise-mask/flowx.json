@@ -1,0 +1,97 @@
+{
+  "name": "latent-set-noise-mask",
+  "displayName": "Latent 噪点蒙版",
+  "description": "给 latent 包裹 noise_mask（局部重绘/inpaint 核心）：mask 为灰度图（白=重绘区域），内部 resize 到 latent 尺寸；配 vae-encode + sample(denoise<1) 做 inpaint",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "latent",
+    "inpaint"
+  ],
+  "icon": "🎭",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "LATENT 对象 ID（通常为原图 vae-encode 结果）",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-encode",
+        "output": "latent",
+        "description": "由 vae-encode 的 latent 输出提供"
+      }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "蒙版 IMAGE 对象 ID（白=重绘区域）",
+      "required": true,
+      "source": {
+        "nodeRef": "mask-from-image",
+        "output": "mask",
+        "description": "由 mask-from-image 的 mask 输出提供"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "LATENT": "{{ Param.latent }}",
+    "MASK": "{{ Param.mask }}"
+  },
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "带 noise_mask 的 LATENT 对象 ID，供采样节点（denoise<1）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

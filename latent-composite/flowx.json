@@ -1,0 +1,120 @@
+{
+  "name": "latent-composite",
+  "displayName": "Latent 合成",
+  "description": "把 src latent 贴入 dst 的 (x,y) 处（图像像素坐标），越界自动裁剪；feather>0（图像像素）边缘线性羽化。带 noise_mask 的 latent 会被拒绝（先 composite 再 set_noise_mask）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "latent"
+  ],
+  "icon": "🧩",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "dst",
+      "type": "string",
+      "description": "底图 LATENT 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "empty-latent",
+        "output": "latent",
+        "description": "由 empty-latent 的 latent 输出提供"
+      }
+    },
+    {
+      "name": "src",
+      "type": "string",
+      "description": "贴入 LATENT 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "empty-latent",
+        "output": "latent",
+        "description": "由 empty-latent 的 latent 输出提供"
+      }
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "description": "贴入位置 x（图像像素）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "description": "贴入位置 y（图像像素）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "description": "边缘羽化（图像像素，0=硬边）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "DST": "{{ Param.dst }}",
+    "SRC": "{{ Param.src }}",
+    "X": "{{ Param.x }}",
+    "Y": "{{ Param.y }}",
+    "FEATHER": "{{ Param.feather }}"
+  },
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "合成后 LATENT 对象 ID"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

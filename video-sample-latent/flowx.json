@@ -1,0 +1,181 @@
+{
+  "name": "video-sample-latent",
+  "displayName": "视频采样（latent）",
+  "description": "SVD 视频采样只出 latent 不解码，输出 3D latent 供 vae-decode-video 接力；分钟级任务。preview_every>0 时画布实时预览采样帧",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "svd"
+  ],
+  "icon": "🎬",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "视频模型 MODEL 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "motion-loader",
+        "output": "model_ref",
+        "description": "由 motion-loader 的 model_ref 输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "首帧 IMAGE 对象 ID（图生视频；文生视频留空）",
+      "required": false,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image 的 image 输出提供"
+      }
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "正向提示词（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "neg_prompt",
+      "type": "string",
+      "description": "负向提示词（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "宽（默认 832）",
+      "required": false,
+      "default": 832
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "高（默认 480）",
+      "required": false,
+      "default": 480
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "帧数（默认 121；验收可用 14 提速）",
+      "required": false,
+      "default": 121
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率（默认 24）",
+      "required": false,
+      "default": 24
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数（默认 50）",
+      "required": false,
+      "default": 50
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "引导强度（默认 5.0）",
+      "required": false,
+      "default": 5.0
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子（-1=随机）",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "preview_every",
+      "type": "integer",
+      "description": "每 N 步上报预览帧（0=关）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "MODEL": "{{ Param.model }}",
+    "IMAGE": "{{ Param.image }}",
+    "PROMPT": "{{ Param.prompt }}",
+    "NEG_PROMPT": "{{ Param.neg_prompt }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "NUM_FRAMES": "{{ Param.num_frames }}",
+    "FPS": "{{ Param.fps }}",
+    "STEPS": "{{ Param.steps }}",
+    "CFG": "{{ Param.cfg }}",
+    "SEED": "{{ Param.seed }}",
+    "PREVIEW_EVERY": "{{ Param.preview_every }}"
+  },
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "3D LATENT 对象 ID，供 vae-decode-video"
+    },
+    {
+      "name": "seed",
+      "type": "string",
+      "description": "实际使用的种子"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 7200,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

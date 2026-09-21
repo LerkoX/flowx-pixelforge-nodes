@@ -1,0 +1,116 @@
+{
+  "name": "latent-upscale",
+  "displayName": "Latent 放大",
+  "description": "latent 空间插值放大：按 scale 倍率（默认 2.0）或目标 width/height（图像像素）；method 支持 bicubic/bilinear/nearest。hires.fix 潜空间路径核心件（放大后接 sample 低 denoise 精修）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "latent"
+  ],
+  "icon": "🔍",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "LATENT 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "empty-latent",
+        "output": "latent",
+        "description": "由 empty-latent 的 latent 输出提供"
+      }
+    },
+    {
+      "name": "scale",
+      "type": "float",
+      "description": "放大倍率（默认 2.0；width/height>0 时忽略）",
+      "required": false,
+      "default": 2.0
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "目标宽（图像像素，0=按 scale）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "目标高（图像像素，0=按 scale）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "method",
+      "type": "string",
+      "description": "插值方法 bicubic/bilinear/nearest",
+      "required": false,
+      "default": "bicubic"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "LATENT": "{{ Param.latent }}",
+    "SCALE": "{{ Param.scale }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "METHOD": "{{ Param.method }}"
+  },
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "放大后 LATENT 对象 ID"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

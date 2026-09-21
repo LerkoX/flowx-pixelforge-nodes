@@ -1,0 +1,128 @@
+{
+  "name": "vae-decode-video",
+  "displayName": "VAE 视频解码",
+  "description": "3D latent → VIDEO（视频 VAE 解码）：force_fp32 防 Pascal fp16 解码过曝/亮度漂移；decode_chunk_size 分块控制显存峰值（SVD 有效）。与 video-sample-latent 接力：采样与解码解耦，decode 精度/分块成为流水线可调参数",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "vae"
+  ],
+  "icon": "🎞️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "VAE 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "motion-loader",
+        "output": "vae_ref",
+        "description": "由 motion-loader 的 vae_ref 输出提供"
+      }
+    },
+    {
+      "name": "latents",
+      "type": "string",
+      "description": "3D LATENT 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "video-sample-latent",
+        "output": "latent",
+        "description": "由 video-sample-latent 的 latent 输出提供"
+      }
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "帧数（0=自动按 latent 推断）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "decode_chunk_size",
+      "type": "integer",
+      "description": "分块帧数（控制显存峰值，默认 14）",
+      "required": false,
+      "default": 14
+    },
+    {
+      "name": "force_fp32",
+      "type": "boolean",
+      "description": "fp32 解码（防 Pascal fp16 过曝，默认开）",
+      "required": false,
+      "default": true
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "输出视频帧率（默认 24）",
+      "required": false,
+      "default": 24
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "VAE": "{{ Param.vae }}",
+    "LATENTS": "{{ Param.latents }}",
+    "NUM_FRAMES": "{{ Param.num_frames }}",
+    "DECODE_CHUNK_SIZE": "{{ Param.decode_chunk_size }}",
+    "FORCE_FP32": "{{ Param.force_fp32 }}",
+    "FPS": "{{ Param.fps }}"
+  },
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "VIDEO 对象 ID，供 save-video 保存"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

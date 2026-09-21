@@ -1,0 +1,21 @@
+const WIDGET_SPEC = {
+  icon: '🎬',
+  title: '视频采样（latent）',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true },
+    { key: 'model', label: 'model（视频模型 MODEL）', kind: 'text', mono: true },
+    { key: 'image', label: '首帧 image（图生视频，可空）', kind: 'text', mono: true },
+    { key: 'prompt', label: '正向提示词 prompt', kind: 'textarea' },
+    { key: 'neg_prompt', label: '负向提示词 neg_prompt', kind: 'textarea' },
+    { key: 'width', label: '宽 width', kind: 'slider', min: 256, max: 1024, step: 32, default: 832 },
+    { key: 'height', label: '高 height', kind: 'slider', min: 256, max: 1024, step: 32, default: 480 },
+    { key: 'num_frames', label: '帧数 num_frames', kind: 'slider', min: 8, max: 121, step: 1, default: 121 },
+    { key: 'fps', label: '帧率 fps', kind: 'slider', min: 8, max: 60, step: 1, default: 24 },
+    { key: 'steps', label: '步数 steps', kind: 'slider', min: 1, max: 150, step: 1, default: 50 },
+    { key: 'cfg', label: '引导 cfg', kind: 'slider', min: 1, max: 30, step: 0.5, default: 5.0 },
+    { key: 'seed', label: '种子 seed（-1=随机）', kind: 'text', default: -1 },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true },
+  ],
+  previewEveryKey: 'preview_every',
+  note: '只采样不解码（分钟级）；输出 3D latent → vae-decode-video',
+}

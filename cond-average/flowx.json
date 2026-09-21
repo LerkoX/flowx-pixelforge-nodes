@@ -1,0 +1,104 @@
+{
+  "name": "cond-average",
+  "displayName": "Conditioning 平均",
+  "description": "两段 conditioning 按权重加权平均（对标 ComfyUI ConditioningAverage）：out = a*weight + b*(1-weight)；序列长度不同时短者补零。暂不支持 SD3 dict 形式 COND",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "conditioning"
+  ],
+  "icon": "⚖️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "cond_a",
+      "type": "string",
+      "description": "COND 对象 ID（权重 weight 侧）",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由 clip-text-encode 的 conditioning 输出提供"
+      }
+    },
+    {
+      "name": "cond_b",
+      "type": "string",
+      "description": "COND 对象 ID（权重 1-weight 侧）",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由 clip-text-encode 的 conditioning 输出提供"
+      }
+    },
+    {
+      "name": "weight",
+      "type": "float",
+      "description": "cond_a 权重（0-1，默认 0.5）",
+      "required": false,
+      "default": 0.5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "COND_A": "{{ Param.cond_a }}",
+    "COND_B": "{{ Param.cond_b }}",
+    "WEIGHT": "{{ Param.weight }}"
+  },
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "加权平均后 COND 对象 ID"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

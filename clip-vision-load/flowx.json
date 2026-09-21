@@ -1,0 +1,77 @@
+{
+  "name": "clip-vision-load",
+  "displayName": "CLIP Vision 加载",
+  "description": "加载 CLIP 图像编码器（IPAdapter 的参考图编码器）。模型放服务端 /models/clip_vision/ 下（diffusers 格式目录）。fp16 CPU 常驻，编码时临时上 GPU。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "ipadapter"
+  ],
+  "icon": "👁️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "timeout": 600,
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务 Bearer Token（服务未开鉴权可留空）",
+      "required": false
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "description": "编码器目录名（/models/clip_vision 下），如 CLIP-ViT-H-14"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "NAME": "{{ Param.name }}"
+  },
+  "outputs": [
+    {
+      "name": "clip_vision",
+      "type": "string",
+      "description": "CLIP_VISION 对象 ID"
+    }
+  ]
+}

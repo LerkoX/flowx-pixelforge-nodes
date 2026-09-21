@@ -1,0 +1,77 @@
+{
+  "name": "ipadapter-load",
+  "displayName": "IPAdapter 加载",
+  "description": "加载 IPAdapter 权重（/models/ipadapter 下 safetensors/bin）。标准版（ip-adapter_sd15）/plus 版（ip-adapter-plus_sd15）按权重键自动判别。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "ipadapter"
+  ],
+  "icon": "🧩",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "timeout": 600,
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务 Bearer Token（服务未开鉴权可留空）",
+      "required": false
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "description": "权重文件名（去扩展名），如 ip-adapter_sd15"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "NAME": "{{ Param.name }}"
+  },
+  "outputs": [
+    {
+      "name": "ipadapter",
+      "type": "string",
+      "description": "IPADAPTER 对象 ID"
+    }
+  ]
+}

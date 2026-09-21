@@ -1,0 +1,142 @@
+{
+  "name": "ipadapter-apply",
+  "displayName": "IPAdapter 应用",
+  "description": "参考图驱动生成：image 编码成图像条件注入采样（风格/内容/构图迁移）。weight 常用 0.5~1.0；start/end_percent 限定注入步区间（默认全程）。仅支持 SD1.x/SDXL 底模，可与 ControlNet/LoRA 叠加。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "ipadapter"
+  ],
+  "icon": "🎨",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "timeout": 600,
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 700,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务 Bearer Token（服务未开鉴权可留空）",
+      "required": false
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": true,
+      "description": "MODEL 对象 ID",
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model_ref",
+        "description": "由 checkpoint-loader 的 model_ref 输出提供"
+      }
+    },
+    {
+      "name": "ipadapter",
+      "type": "string",
+      "required": true,
+      "description": "IPADAPTER 对象 ID",
+      "source": {
+        "nodeRef": "ipadapter-load",
+        "output": "ipadapter",
+        "description": "由 ipadapter-load 的 ipadapter 输出提供"
+      }
+    },
+    {
+      "name": "clip_vision",
+      "type": "string",
+      "required": true,
+      "description": "CLIP_VISION 对象 ID",
+      "source": {
+        "nodeRef": "clip-vision-load",
+        "output": "clip_vision",
+        "description": "由 clip-vision-load 的 clip_vision 输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "参考图（IMAGE 对象 ID）",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image/vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "weight",
+      "type": "float",
+      "required": false,
+      "default": 0.8,
+      "description": "注入强度（0~2，常用 0.5~1.0）"
+    },
+    {
+      "name": "start_percent",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "注入起始步比例（0~1）"
+    },
+    {
+      "name": "end_percent",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "注入结束步比例（0~1）"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "MODEL": "{{ Param.model }}",
+    "IPADAPTER": "{{ Param.ipadapter }}",
+    "CLIP_VISION": "{{ Param.clip_vision }}",
+    "IMAGE": "{{ Param.image }}",
+    "WEIGHT": "{{ Param.weight }}",
+    "START_PERCENT": "{{ Param.start_percent }}",
+    "END_PERCENT": "{{ Param.end_percent }}"
+  },
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "注入 IPAdapter 的 MODEL 对象 ID（接 ksampler）"
+    }
+  ]
+}

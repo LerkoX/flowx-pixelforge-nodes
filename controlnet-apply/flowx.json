@@ -1,0 +1,113 @@
+{
+  "name": "controlnet-apply",
+  "displayName": "ControlNet 应用",
+  "description": "ControlNetModel + hint 图（边缘/姿态等线稿，预处理器产出）捆绑为 CONTROL；strength=残差强度（默认 1.0，0 ≡ 关闭）；start/end_percent 为生效步窗口（默认全程）。暂不与 cond.set_area 组合",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "controlnet"
+  ],
+  "icon": "🎛️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "control_net",
+      "type": "string",
+      "description": "CONTROL_NET 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "controlnet-load",
+        "output": "control_net",
+        "description": "由 ControlNet 加载节点输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "hint 图对象 ID（canny/openpose 线稿）",
+      "required": true,
+      "source": {
+        "nodeRef": "preprocess-canny",
+        "output": "image",
+        "description": "由预处理器节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "strength",
+      "type": "float",
+      "description": "残差强度（默认 1.0，0 ≡ 关闭）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "start_percent",
+      "type": "float",
+      "description": "生效起点（采样进度百分比 0-1，默认 0）",
+      "required": false,
+      "default": 0.0
+    },
+    {
+      "name": "end_percent",
+      "type": "float",
+      "description": "生效终点（采样进度百分比 0-1，默认 1）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "CONTROL_NET": "{{ Param.control_net }}",
+    "IMAGE": "{{ Param.image }}",
+    "STRENGTH": "{{ Param.strength }}",
+    "START_PERCENT": "{{ Param.start_percent }}",
+    "END_PERCENT": "{{ Param.end_percent }}"
+  },
+  "outputs": [
+    {
+      "name": "control",
+      "type": "string",
+      "description": "CONTROL 对象 ID，供采样节点 control 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0"
+}

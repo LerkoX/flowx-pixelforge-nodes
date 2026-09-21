@@ -1,0 +1,97 @@
+{
+  "name": "upscale-model-apply",
+  "displayName": "模型放大",
+  "description": "UPSCALE_MODEL + 图像 → 放大图（倍数为模型自带 scale）；tile=0 整图（默认，显存够时最快），>0 分块（overlap 16px 消接缝，大分辨率防爆显存）。服务端插件 upscale_ops.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "upscale"
+  ],
+  "icon": "🔍",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "upscale_model",
+      "type": "string",
+      "description": "UPSCALE_MODEL 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "upscale-model-load",
+        "output": "upscale_model",
+        "description": "由放大模型加载节点输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待放大图对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "tile",
+      "type": "integer",
+      "description": "分块大小（0=整图；>0 分块+16px overlap）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "UPSCALE_MODEL": "{{ Param.upscale_model }}",
+    "IMAGE": "{{ Param.image }}",
+    "TILE": "{{ Param.tile }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "放大后图像对象 ID（尺寸 = 输入 × 模型 scale）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0"
+}

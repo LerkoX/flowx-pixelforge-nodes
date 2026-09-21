@@ -1,0 +1,80 @@
+{
+  "name": "vae-load",
+  "displayName": "VAE 加载（外挂）",
+  "description": "单独加载 VAE 组件（MODELS_DIR 下 safetensors 单文件或 diffusers 组件目录），输出可直接喂 vae-decode/vae-encode 替代管道内置 VAE（外挂 vae-ft-mse 等提升解码质量）；dtype=auto 默认 fp32，进模型 LRU 常驻管理",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "vae"
+  ],
+  "icon": "🌈",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "description": "VAE 模型名（MODELS_DIR 下，可省略扩展名），如 vae-ft-mse-840000-ema-pruned",
+      "required": true
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "精度 auto/fp16/fp32，auto 默认 fp32",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "NAME": "{{ Param.name }}",
+    "DTYPE": "{{ Param.dtype }}"
+  },
+  "outputs": [
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "VAE 对象 ID，供 vae-decode/vae-encode 的 vae 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0"
+}

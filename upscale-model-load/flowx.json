@@ -1,0 +1,72 @@
+{
+  "name": "upscale-model-load",
+  "displayName": "放大模型加载",
+  "description": "加载放大模型（RealESRGAN/SwinIR 等 .pth/.safetensors，spandrel 自动识别架构与倍数），输出 UPSCALE_MODEL 句柄供 upscale-model-apply；服务端插件 upscale_ops.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "upscale"
+  ],
+  "icon": "📦",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "description": "放大模型名（MODELS_DIR 下，可省略扩展名），如 RealESRGAN_x4plus",
+      "required": true
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "NAME": "{{ Param.name }}"
+  },
+  "outputs": [
+    {
+      "name": "upscale_model",
+      "type": "string",
+      "description": "UPSCALE_MODEL 对象 ID（含 scale/dtype），供 upscale-model-apply"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0"
+}

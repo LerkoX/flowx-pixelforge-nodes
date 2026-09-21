@@ -1,0 +1,94 @@
+{
+  "name": "preprocess-openpose",
+  "displayName": "OpenPose 姿态提取",
+  "description": "controlnet_aux OpenposeDetector 姿态骨架提取：全身骨架（默认），可选手部/面部细节；产出骨架叠加图，供 ControlNet openpose 控制采样作 hint（姿态复刻/指定姿势出图）。服务端插件 preprocess_ops.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "preprocess",
+    "controlnet"
+  ],
+  "icon": "🦴",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "人物图对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码/load-image 等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "include_hand",
+      "type": "boolean",
+      "description": "手部骨架（默认 false）",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "include_face",
+      "type": "boolean",
+      "description": "面部特征点（默认 false）",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMAGE": "{{ Param.image }}",
+    "INCLUDE_HAND": "{{ Param.include_hand }}",
+    "INCLUDE_FACE": "{{ Param.include_face }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "骨架叠加图对象 ID（黑底彩线 RGB），供 controlnet-apply 的 image 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0"
+}

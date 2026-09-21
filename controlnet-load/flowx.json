@@ -1,0 +1,80 @@
+{
+  "name": "controlnet-load",
+  "displayName": "ControlNet 加载",
+  "description": "加载 ControlNet 组件（MODELS_DIR 下 control_v11* 等 safetensors 单文件或 diffusers 组件目录），输出 CONTROL_NET 句柄经 controlnet-apply 捆绑 hint 图后喂采样节点 control 端口；dtype=auto 默认 fp16，进模型 LRU 常驻管理",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "controlnet"
+  ],
+  "icon": "🕸️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "description": "ControlNet 模型名（MODELS_DIR 下，可省略扩展名），如 control_v11p_sd15_canny_fp16",
+      "required": true
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "精度 auto/fp16/bf16/fp32，auto 默认 fp16",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "NAME": "{{ Param.name }}",
+    "DTYPE": "{{ Param.dtype }}"
+  },
+  "outputs": [
+    {
+      "name": "control_net",
+      "type": "string",
+      "description": "CONTROL_NET 对象 ID，供 controlnet-apply 的 control_net 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.5.0"
+}

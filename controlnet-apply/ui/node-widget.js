@@ -20,12 +20,15 @@
  *     { key, label, kind:'slider', min, max, step, default } 滑块（写回字符串，执行器侧 cast）
  *     { key, label, kind:'check', default }                  复选框（写回 'true'/'false'）
  *     { key, label, kind:'select', options:[], default }     固定下拉
- *     { key, label, kind:'model', modelType }                模型名下拉（Studio 代理
- *       POST /api/v1/inference/models-files 拉推理端 /models/files，按 kind 过滤）
- *   replay[]      （可选）▶预览按钮：op-replay 重放，overrides 从这些字段当前值收集
- *                 （slider 转 Number、check 转 Boolean、其余字符串）
+ *     { key, label, kind:'model', modelType }                模型名下拉（经通用代理
+ *       POST /api/v1/service-proxy 调第三方服务 GET /models/files，按 kind 过滤；
+ *       API 路径语义由本节点生态自持）
+ *   replay[]      （可选）▶预览按钮：经节点级通用代理重放算子（POST /op），
+ *                 overrides 从这些字段当前值收集（slider 转 Number、check 转 Boolean）；
+ *                 依赖 outputs 的 __op_name/__inputs_resolved
  *   compareInput  （可选）'image' 等输入键名：完成后显示前后对比滑块
- *                 （输入图经 GET .../input-image?key= 代理，结果图 = 预览区最终帧）
+ *                 （原图对象 id 从 outputs.__inputs_resolved 解析，经节点级通用代理
+ *                 GET /images/{id} 拉取，结果图 = 预览区最终帧）
  *   previewEveryKey （可选）'preview_every'：显示"实时预览"开关（采样类节点）
  *   note          （可选）输出说明行
  */
@@ -246,7 +249,7 @@ function createNodeWidget(spec) {
           const r = await fetch('/api/v1/inference/models-files', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ service_url: url, service_token: tok }),
+            body: JSON.stringify({ service_url: url, service_token: tok, method: 'GET', path: '/models/files' }),
           })
           if (!r.ok) throw new Error('HTTP ' + r.status)
           const data = await r.json()
@@ -312,15 +315,32 @@ function createNodeWidget(spec) {
     const progOuter = h('div', 'height:4px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden')
     const progInner = h('div', 'height:100%;background:#22d3ee;width:0%;transition:width .3s')
     progOuter.append(progInner)
+    // ---- 节点级通用代理助手：第三方 API 路径语义由本节点生态自持 ----
+    const nodeProxyUrl = (path, method) =>
+      `/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/service-proxy?path=${encodeURIComponent(path)}&method=${method || 'GET'}`
+    const resolvedInputs = () => {
+      const raw = cur.outputs && cur.outputs.__inputs_resolved
+      if (!raw) return null
+      try { return typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return null }
+    }
+    let replayImgUrl = ''    // ▶预览重放结果帧：覆盖 preview/对比区显示，直到新 preview 帧到达
+    let replayBasePvUrl = '' // 重放时的 preview url（用于检测新帧到达）
+
     const prevRow = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
     const prevInfo = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);flex:1;word-break:break-all')
     const stopBtn = h('button', BTN_CSS + ';color:#fb7185;border-color:rgba(251,113,133,0.4)', '■ 中断')
-    stopBtn.title = '中断该节点对应的推理 job（POST interrupt-inference）'
+    stopBtn.title = '中断该节点在第三方服务上的运行中任务（经节点级通用代理 POST /interrupt）'
     stopBtn.addEventListener('click', async () => {
       if (!cur.execution) { prevInfo.textContent = '无执行实例'; return }
+      const jobId = cur.preview && cur.preview.jobId
+      if (!jobId) { prevInfo.textContent = '节点未上报任务标识（旧节点包），无法中断'; return }
       stopBtn.disabled = true
       try {
-        const r = await fetch(`/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/interrupt-inference`, { method: 'POST' })
+        const r = await fetch(nodeProxyUrl('/interrupt', 'POST'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_id: jobId }),
+        })
         prevInfo.textContent = r.ok ? '已请求中断' : `中断失败 HTTP ${r.status}`
       } catch (e) {
         prevInfo.textContent = '中断失败：' + e
@@ -367,15 +387,24 @@ function createNodeWidget(spec) {
       box.addEventListener('click', move)
       let cmpLoadedFor = ''
       refreshers.push(() => {
-        // 结果帧 = 预览区最终帧（progress 1.0）；输入图经 input-image 代理
+        // 结果帧 = 预览区最终帧（progress 1.0）或重放结果；原图对象 id 从
+        // outputs.__inputs_resolved 解析，经节点级通用代理拉取
         const pv = cur.preview
-        const done = pv && pv.url && (typeof pv.progress !== 'number' || pv.progress >= 1)
+        const effectiveUrl = replayImgUrl || (pv && pv.url)
+        const done = effectiveUrl && (replayImgUrl || typeof pv.progress !== 'number' || pv.progress >= 1)
         if (!done || !cur.execution) { cmpWrap.style.display = 'none'; cmpLoadedFor = ''; return }
-        if (cmpLoadedFor === pv.url) { cmpWrap.style.display = 'block'; return }
-        cmpLoadedFor = pv.url
-        afterImg.src = pv.url
-        const id = cur.execution.id
-        beforeImg.src = `/api/v1/executions/${id}/nodes/${encodeURIComponent(cur.nodeId)}/input-image?key=${encodeURIComponent(spec.compareInput)}`
+        if (cmpLoadedFor === effectiveUrl) { cmpWrap.style.display = 'block'; return }
+        const resolved = resolvedInputs()
+        const ref = resolved && resolved[spec.compareInput]
+        const inId = ref && (typeof ref === 'string' ? ref : (ref.$id || ref.id || ''))
+        if (!inId) {
+          cmpWrap.style.display = 'none'
+          cmpLoadedFor = ''
+          return
+        }
+        cmpLoadedFor = effectiveUrl
+        afterImg.src = effectiveUrl
+        beforeImg.src = nodeProxyUrl('/images/' + inId, 'GET')
         beforeImg.onerror = () => { cmpHint.textContent = '原图加载失败（对象已驱逐或未执行过）' }
         afterImg.onload = () => {
           // 结果与原图尺寸不同（如放大 4x）：beforeImg 按 box 宽度缩放即可对比构图/细节
@@ -404,17 +433,39 @@ function createNodeWidget(spec) {
       }
       btn.addEventListener('click', async () => {
         if (!cur.execution) { hint.textContent = '无执行实例，先运行一次'; return }
+        const op = cur.outputs && cur.outputs.__op_name
+        const resolved = resolvedInputs()
+        if (!op || !resolved) { hint.textContent = '需先用当前版本节点执行一次'; return }
         btn.disabled = true
         hint.textContent = '重放中…'
         try {
-          const r = await fetch(`/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/op-replay`, {
+          const r = await fetch(nodeProxyUrl('/op', 'POST'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ overrides: overrides() }),
+            body: JSON.stringify({ name: op, inputs: { ...resolved, ...overrides() } }),
           })
-          if (r.status === 409) hint.textContent = '需先用当前版本节点执行一次'
-          else if (!r.ok) hint.textContent = `失败 HTTP ${r.status}`
-          else hint.textContent = ''
+          if (!r.ok) {
+            hint.textContent = r.status === 409 ? '需先用当前版本节点执行一次' : `失败 HTTP ${r.status}`
+          } else {
+            const resp = await r.json()
+            const outs = ((resp.data || resp).outputs) || {}
+            let imgId = ''
+            for (const k of Object.keys(outs)) {
+              const m = outs[k]
+              if (m && m.type === 'IMAGE' && m.id) { imgId = m.id; break }
+            }
+            if (imgId) {
+              replayBasePvUrl = (cur.preview && cur.preview.url) || ''
+              replayImgUrl = nodeProxyUrl('/images/' + imgId, 'GET') + '&t=' + Date.now()
+              prevImg.src = replayImgUrl
+              prevWrap.style.display = 'block'
+              cmpLoadedFor = '' // 强制对比区以重放结果帧重载
+              refreshers.forEach((fn) => fn())
+              hint.textContent = ''
+            } else {
+              hint.textContent = '重放完成（无图像输出）'
+            }
+          }
         } catch (e) {
           hint.textContent = '失败：' + e
         } finally {
@@ -460,9 +511,12 @@ function createNodeWidget(spec) {
       const pv = p.preview
       if (pv && pv.url) {
         prevWrap.style.display = 'block'
-        if (pv.url !== lastPreviewUrl) {
-          lastPreviewUrl = pv.url
-          prevImg.src = pv.url
+        // 新一轮 preview 帧（url 变化）到达时解除重放结果覆盖
+        if (replayImgUrl && pv.url !== replayBasePvUrl) { replayImgUrl = ''; replayBasePvUrl = '' }
+        const effective = replayImgUrl || pv.url
+        if (effective !== lastPreviewUrl) {
+          lastPreviewUrl = effective
+          prevImg.src = effective
         }
         const prog = typeof pv.progress === 'number' ? pv.progress : null
         const running = p.status === 'running' && (prog === null || prog < 1)

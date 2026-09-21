@@ -251,13 +251,28 @@ export default function mount(el, props) {
   progOuter.append(progInner)
   const prevRow = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
   const prevInfo = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);flex:1;word-break:break-all')
+  // ---- 节点级通用代理助手：第三方 API 路径语义由本节点生态自持 ----
+  const nodeProxyUrl = (path, method) =>
+    `/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/service-proxy?path=${encodeURIComponent(path)}&method=${method || 'GET'}`
+  const resolvedInputs = () => {
+    const raw = cur.outputs && cur.outputs.__inputs_resolved
+    if (!raw) return null
+    try { return typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return null }
+  }
+
   const stopBtn = h('button', BTN_CSS + ';color:#fb7185;border-color:rgba(251,113,133,0.4)', '■ 中断')
-  stopBtn.title = '中断该节点对应的推理 job（POST interrupt-inference）'
+  stopBtn.title = '中断该节点在第三方服务上的运行中任务（经节点级通用代理 POST /interrupt）'
   stopBtn.addEventListener('click', async () => {
     if (!cur.execution) { prevInfo.textContent = '无执行实例'; return }
+    const jobId = cur.preview && cur.preview.jobId
+    if (!jobId) { prevInfo.textContent = '节点未上报任务标识（旧节点包），无法中断'; return }
     stopBtn.disabled = true
     try {
-      const r = await fetch(`/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/interrupt-inference`, { method: 'POST' })
+      const r = await fetch(nodeProxyUrl('/interrupt', 'POST'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId }),
+      })
       prevInfo.textContent = r.ok ? '已请求中断' : `中断失败 HTTP ${r.status}`
     } catch (e) {
       prevInfo.textContent = '中断失败：' + e
@@ -269,9 +284,9 @@ export default function mount(el, props) {
   prevWrap.append(prevImg, progOuter, prevRow)
 
   // ---------- 算子专属快捷控件（预处理调参 + 即时预览 / 采样预览开关） ----------
-  // 控件值与 inputs_json 双向同步（合并写回，不动其他键）；预览按钮走
-  // op-replay 端点：用上次执行的解析后入参 + 当前 overrides 重放算子，
-  // 结果图经 node_preview 事件自动刷新上方预览区。
+  // 控件值与 inputs_json 双向同步（合并写回，不动其他键）；预览按钮经节点级
+  // 通用代理 POST /op：用上次执行的解析后入参（outputs.__inputs_resolved）
+  // + 当前 overrides 重放算子，结果图直接刷新上方预览区。
   const opExtras = h('div', 'margin-bottom:6px')
   const readInput = (k, dflt) => {
     try {
@@ -291,20 +306,34 @@ export default function mount(el, props) {
     const hint = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);margin-left:6px')
     btn.addEventListener('click', async () => {
       if (!cur.execution) { hint.textContent = '无执行实例，先运行一次'; return }
+      const op = cur.outputs && cur.outputs.__op_name
+      const resolved = resolvedInputs()
+      if (!op || !resolved) { hint.textContent = '需先用当前版本节点执行一次'; return }
       btn.disabled = true
       hint.textContent = '重放中…'
       try {
-        const r = await fetch(`/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/op-replay`, {
+        const r = await fetch(nodeProxyUrl('/op', 'POST'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ overrides: getOverrides() }),
+          body: JSON.stringify({ name: op, inputs: { ...resolved, ...getOverrides() } }),
         })
-        if (r.status === 409) {
-          hint.textContent = '需先用当前版本节点执行一次'
-        } else if (!r.ok) {
-          hint.textContent = `失败 HTTP ${r.status}`
+        if (!r.ok) {
+          hint.textContent = r.status === 409 ? '需先用当前版本节点执行一次' : `失败 HTTP ${r.status}`
         } else {
-          hint.textContent = ''
+          const resp = await r.json()
+          const outs = ((resp.data || resp).outputs) || {}
+          let imgId = ''
+          for (const k of Object.keys(outs)) {
+            const m = outs[k]
+            if (m && m.type === 'IMAGE' && m.id) { imgId = m.id; break }
+          }
+          if (imgId) {
+            prevImg.src = nodeProxyUrl('/images/' + imgId, 'GET') + '&t=' + Date.now()
+            prevWrap.style.display = 'block'
+            hint.textContent = ''
+          } else {
+            hint.textContent = '重放完成（无图像输出）'
+          }
         }
       } catch (e) {
         hint.textContent = '失败：' + e

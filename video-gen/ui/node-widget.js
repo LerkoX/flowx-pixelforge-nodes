@@ -359,6 +359,7 @@ function createNodeWidget(spec) {
         const nv = readParam(f.key, f.default)
         if (document.activeElement !== rng) { rng.value = nv; val.textContent = String(nv) }
       })
+      wrap.append(lab, rng)
       return wrap
     }
 
@@ -481,7 +482,8 @@ function createNodeWidget(spec) {
     }
 
     const controlOf = (f) => {
-      if (f.kind === 'slider') return field(f.label, sliderControl(f))
+      // slider 的 label 内嵌在控件里（右侧带当前值），外层不再重复加 label
+      if (f.kind === 'slider') return field('', sliderControl(f))
       if (f.kind === 'check') return field('', checkControl(f))
       if (f.kind === 'select') return field(f.label, selectControl(f))
       if (f.kind === 'model') return field(f.label, modelControl(f))

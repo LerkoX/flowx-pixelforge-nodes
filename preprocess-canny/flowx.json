@@ -1,8 +1,8 @@
 {
   "name": "preprocess-canny",
   "displayName": "Canny 线稿提取",
-  "description": "从输入图像提取 canny 风格线稿（黑底白线），供 ControlNet canny 控制采样作 hint；实现先生成线稿再按线稿出图的两段式流水线。服务端算子 preprocess.canny 随节点包自注册（自包含节点）",
-  "version": "1.0.0",
+  "description": "真 cv2.Canny 边缘检测：输入图像 → 黑底白线线稿，供 ControlNet canny 控制采样作 hint；实现先生成线稿再按线稿出图的两段式流水线。注意：算子 preprocess.canny 的服务端实现以推理服务 plugins/preprocess_ops.py 为唯一来源，本节点包不自注册实现，仅校验存在性并调用",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,8 +13,7 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py",
-    "server_op.py"
+    "flowx_client.py"
   ],
   "parameters": [
     {
@@ -40,18 +39,18 @@
       }
     },
     {
-      "name": "passes",
+      "name": "low_threshold",
       "type": "integer",
-      "description": "FIND_EDGES 滤波次数：1 次边缘较细且噪声少，2 次（默认）线条更粗更明显，ControlNet 约束更强",
+      "description": "cv2.Canny 双阈值下限（默认 100）：调低 → 弱边缘也被保留，线稿更密；调高 → 只留强边缘，线稿更干净",
       "required": false,
-      "default": 2
+      "default": 100
     },
     {
-      "name": "cutoff",
+      "name": "high_threshold",
       "type": "integer",
-      "description": "autocontrast 截断百分比：0 保留全部灰阶，1（默认）裁掉 1% 极值提亮线条",
+      "description": "cv2.Canny 双阈值上限（默认 200）：与 low_threshold 联动控制边缘强度，一般保持 2:1 比例",
       "required": false,
-      "default": 1
+      "default": 200
     },
     {
       "name": "service_token",
@@ -64,8 +63,8 @@
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
     "IMAGE": "{{ Param.image }}",
-    "PASSES": "{{ Param.passes }}",
-    "CUTOFF": "{{ Param.cutoff }}",
+    "LOW_THRESHOLD": "{{ Param.low_threshold }}",
+    "HIGH_THRESHOLD": "{{ Param.high_threshold }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}"
   },
   "outputs": [

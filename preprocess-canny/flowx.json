@@ -1,0 +1,92 @@
+{
+  "name": "preprocess-canny",
+  "displayName": "Canny 线稿提取",
+  "description": "从输入图像提取 canny 风格线稿（黑底白线），供 ControlNet canny 控制采样作 hint；实现先生成线稿再按线稿出图的两段式流水线。服务端算子 preprocess.canny 随节点包自注册（自包含节点）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "preprocess",
+    "controlnet"
+  ],
+  "icon": "✏️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待提取线稿的图像对象 ID（上游生成图，如 sd3-vae-decode / vae-decode 的 image 输出）",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "passes",
+      "type": "integer",
+      "description": "FIND_EDGES 滤波次数：1 次边缘较细且噪声少，2 次（默认）线条更粗更明显，ControlNet 约束更强",
+      "required": false,
+      "default": 2
+    },
+    {
+      "name": "cutoff",
+      "type": "integer",
+      "description": "autocontrast 截断百分比：0 保留全部灰阶，1（默认）裁掉 1% 极值提亮线条",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "IMAGE": "{{ Param.image }}",
+    "PASSES": "{{ Param.passes }}",
+    "CUTOFF": "{{ Param.cutoff }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "线稿图在推理服务的对象 ID（黑底白线 RGB），供 controlnet.apply 的 image 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  }
+}

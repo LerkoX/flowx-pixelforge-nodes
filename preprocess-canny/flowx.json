@@ -2,7 +2,7 @@
   "name": "preprocess-canny",
   "displayName": "Canny 线稿提取",
   "description": "真 cv2.Canny 边缘检测：输入图像 → 黑底白线线稿，供 ControlNet canny 控制采样作 hint；实现先生成线稿再按线稿出图的两段式流水线。注意：算子 preprocess.canny 的服务端实现以推理服务 plugins/preprocess_ops.py 为唯一来源，本节点包不自注册实现，仅校验存在性并调用",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "executor_base.py"
   ],
   "parameters": [
     {

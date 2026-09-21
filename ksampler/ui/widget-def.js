@@ -1,0 +1,23 @@
+const WIDGET_SPEC = {
+  icon: '🎲',
+  title: 'KSampler 采样器',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true },
+    { key: 'model_ref', label: 'UNet 模型引用 ID（model_ref）', kind: 'text', mono: true },
+    { key: 'positive', label: '正向 conditioning 对象 ID（positive）', kind: 'text', mono: true },
+    { key: 'negative', label: '反向 conditioning 对象 ID（negative）', kind: 'text', mono: true },
+    { key: 'latent', label: '输入 latent 对象 ID（latent）', kind: 'text', mono: true },
+    { key: 'seed', label: '随机种子（seed）', kind: 'text', default: -1 },
+    { key: 'steps', label: '采样步数（steps）', kind: 'slider', min: 1, max: 150, step: 1, default: 20 },
+    { key: 'cfg', label: '提示词引导强度（CFG scale）（cfg）', kind: 'slider', min: 1, max: 30, step: 0.5, default: 7.0 },
+    { key: 'sampler_name', label: '采样器（更新公式）：euler / euler_（sampler_name）', kind: 'select', options: ['euler', 'euler_a', 'ddim', 'lms', 'dpmpp_2m', 'dpmpp_2m_sde', 'uni_pc'], default: 'euler' },
+    { key: 'scheduler', label: 'sigma 排布：normal / karras（scheduler）', kind: 'select', options: ['normal', 'karras', 'exponential', 'beta'], default: 'normal' },
+    { key: 'denoise', label: '去噪强度 0.0-1.0（denoise）', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
+    { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 1 },
+    { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 2 },
+    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600 },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true },
+  ],
+  previewEveryKey: 'preview_every',
+  note: '扩散采样',
+}

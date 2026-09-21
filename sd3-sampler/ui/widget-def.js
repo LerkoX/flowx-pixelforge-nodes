@@ -1,0 +1,21 @@
+const WIDGET_SPEC = {
+  icon: '🌊',
+  title: 'SD3 采样器',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true },
+    { key: 'model_ref', label: 'SD3.5 模型引用 ID（model_ref）', kind: 'text', mono: true },
+    { key: 'positive', label: '正向 COND 引用（positive）', kind: 'text', mono: true },
+    { key: 'negative', label: '反向 COND 引用（negative）', kind: 'text', mono: true },
+    { key: 'latent', label: '输入 latent（latent）', kind: 'text', mono: true },
+    { key: 'seed', label: '随机种子（seed）', kind: 'text', default: -1 },
+    { key: 'steps', label: '采样步数（steps）', kind: 'slider', min: 1, max: 150, step: 1, default: 28 },
+    { key: 'cfg', label: '引导强度（cfg）', kind: 'slider', min: 1, max: 30, step: 0.5, default: 4.5 },
+    { key: 'denoise', label: '去噪强度：1.0 文生图（denoise）', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
+    { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 1 },
+    { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },
+    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200 },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true },
+  ],
+  previewEveryKey: 'preview_every',
+  note: 'SD3.5 flow matching 采样器',
+}

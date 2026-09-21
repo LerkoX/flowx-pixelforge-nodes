@@ -282,11 +282,30 @@ function createNodeWidget(spec) {
       return wrap
     }
 
+    const textareaControl = (f) => {
+      const raw = (cur.params || {})[f.key]
+      if (isWired(raw)) return wiredControl(f.key, raw)
+      const inp = h('textarea', INPUT_CSS + ';min-height:56px;resize:vertical;line-height:1.5')
+      inp.value = raw !== undefined ? raw : (f.default !== undefined ? String(f.default) : '')
+      inp.placeholder = f.placeholder || ''
+      inp.spellcheck = false
+      inp.addEventListener('change', () => setParam(f.key, inp.value))
+      refreshers.push(() => {
+        inp.disabled = !editable()
+        inp.style.opacity = editable() ? '1' : '0.55'
+        if (document.activeElement === inp) return
+        const nv = (cur.params || {})[f.key]
+        inp.value = nv !== undefined ? nv : (f.default !== undefined ? String(f.default) : '')
+      })
+      return inp
+    }
+
     const controlOf = (f) => {
       if (f.kind === 'slider') return field(f.label, sliderControl(f))
       if (f.kind === 'check') return field('', checkControl(f))
       if (f.kind === 'select') return field(f.label, selectControl(f))
       if (f.kind === 'model') return field(f.label, modelControl(f))
+      if (f.kind === 'textarea') return field(f.label, textareaControl(f))
       return field(f.label, textControl(f))
     }
 
@@ -326,14 +345,23 @@ function createNodeWidget(spec) {
     let replayImgUrl = ''    // ▶预览重放结果帧：覆盖 preview/对比区显示，直到新 preview 帧到达
     let replayBasePvUrl = '' // 重放时的 preview url（用于检测新帧到达）
 
+    // 当前任务标识：优先 preview.jobId（executor-base 上报）；老节点包只在
+    // preview url 里携带（{base}/preview/{job_id}），作解析回退
+    const currentJobId = () => {
+      const pv = cur.preview || {}
+      if (pv.jobId) return pv.jobId
+      const m = /\/preview\/([A-Za-z0-9_-]+)/.exec(pv.url || '')
+      return m ? m[1] : ''
+    }
+
     const prevRow = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
     const prevInfo = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);flex:1;word-break:break-all')
     const stopBtn = h('button', BTN_CSS + ';color:#fb7185;border-color:rgba(251,113,133,0.4)', '■ 中断')
     stopBtn.title = '中断该节点在第三方服务上的运行中任务（经节点级通用代理 POST /interrupt）'
     stopBtn.addEventListener('click', async () => {
       if (!cur.execution) { prevInfo.textContent = '无执行实例'; return }
-      const jobId = cur.preview && cur.preview.jobId
-      if (!jobId) { prevInfo.textContent = '节点未上报任务标识（旧节点包），无法中断'; return }
+      const jobId = currentJobId()
+      if (!jobId) { prevInfo.textContent = '节点未上报任务标识，无法中断'; return }
       stopBtn.disabled = true
       try {
         const r = await fetch(nodeProxyUrl('/interrupt', 'POST'), {
@@ -527,8 +555,20 @@ function createNodeWidget(spec) {
           prevInfo.textContent = prog !== null ? `进度 ${Math.round(prog * 100)}%` : ''
         }
       } else {
-        prevWrap.style.display = 'none'
-        lastPreviewUrl = ''
+        // 无 preview 帧信号的老执行器：回退展示 emit 的 thumb_b64 结果缩略图
+        const thumb = (p.outputs || {}).thumb_b64
+        if (thumb && typeof thumb === 'string' && thumb.startsWith('data:')) {
+          prevWrap.style.display = 'block'
+          progOuter.style.display = 'none'
+          stopBtn.style.display = 'none'
+          if (thumb !== lastPreviewUrl) {
+            lastPreviewUrl = thumb
+            prevImg.src = thumb
+          }
+        } else {
+          prevWrap.style.display = 'none'
+          lastPreviewUrl = ''
+        }
       }
       const o = p.outputs || {}
       outBox.textContent = ''

@@ -2,7 +2,7 @@ const WIDGET_SPEC = {
   icon: '🎬',
   title: '视频生成',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true },
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
     { key: 'model_ref', label: '视频模型引用 ID（model_ref）', kind: 'text', mono: true },
     { key: 'prompt', label: '正向提示词（视频内容/运动描述）（prompt）', kind: 'text', mono: true },
     { key: 'negative_prompt', label: '反向提示词（negative_prompt）', kind: 'text', mono: true },
@@ -19,7 +19,7 @@ const WIDGET_SPEC = {
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200 },
     { key: 'decode_chunk_size', label: 'VAE 分块解码帧数（decode_chunk_size）', kind: 'text', default: 0 },
     { key: 'output_mode', label: '输出模式：pil=采样+解码一体输出 VIDEO（output_mode）', kind: 'text', default: 'pil' },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
   previewEveryKey: 'preview_every',
   note: '文/图生视频',

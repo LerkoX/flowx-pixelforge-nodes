@@ -2,7 +2,7 @@ const WIDGET_SPEC = {
   icon: '🎯',
   title: '局部重绘',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true },
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
     { key: 'image', label: '待重绘的图像对象 ID（image）', kind: 'text', mono: true },
     { key: 'model_ref', label: '模型引用 ID（重绘采样用）（model_ref）', kind: 'text', mono: true },
     { key: 'positive', label: '正向 conditioning 对象 ID（positive）', kind: 'text', mono: true },
@@ -19,7 +19,7 @@ const WIDGET_SPEC = {
     { key: 'seed', label: '重绘种子（seed）', kind: 'text', default: -1 },
     { key: 'max_targets', label: '最多重绘的目标数（按置信度从高到低取）（max_targets）', kind: 'text', default: 4 },
     { key: 'feather', label: '贴回时的边缘羽化像素（feather）', kind: 'text', default: 16 },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
   note: 'ADetailer 式局部重绘',
 }

@@ -23,6 +23,8 @@
  *     { key, label, kind:'model', modelType }                模型名下拉（经通用代理
  *       POST /api/v1/service-proxy 调第三方服务 GET /models/files，按 kind 过滤；
  *       API 路径语义由本节点生态自持）
+ *     任意 field 可加 advanced:true → 收进默认折叠的「⚙ 连接/高级」区
+ *     （service_url/service_token 等连接参数建议 advanced，保持节点紧凑）
  *   replay[]      （可选）▶预览按钮：经节点级通用代理重放算子（POST /op），
  *                 overrides 从这些字段当前值收集（slider 转 Number、check 转 Boolean）；
  *                 依赖 outputs 的 __op_name/__inputs_resolved
@@ -30,6 +32,13 @@
  *                 （原图对象 id 从 outputs.__inputs_resolved 解析，经节点级通用代理
  *                 GET /images/{id} 拉取，结果图 = 预览区最终帧）
  *   previewEveryKey （可选）'preview_every'：显示"实时预览"开关（采样类节点）
+ *   mediaImageParam  （可选）参数键名（如 'image_path'）：直读本地图片显示
+ *                    （Studio 同源媒体端点 /api/v1/media/file，点击进可缩放 lightbox）；
+ *                    绑定态（{{ }}）显示占位提示
+ *   mediaImageOutput （可选）输出键名（如 'file_path'）：显示落盘结果图
+ *                    （同上媒体端点 + lightbox）
+ *   mediaVideoOutput （可选）输出键名（如 'file_path'）：内嵌 <video> 播放
+ *                    落盘视频 + ⛶ 放大 lightbox（含全屏按钮）
  *   note          （可选）输出说明行
  */
 
@@ -54,6 +63,177 @@ function h(tag, style, text) {
 }
 
 const isWired = (v) => typeof v === 'string' && v.indexOf('{{') >= 0
+
+// Studio 本地媒体文件端点（同源，浏览器自动携带认证）；读取 FlowX 所在机器
+// 的本地文件（目录白名单由 Studio 配置），用于 load-image 源图预览与
+// save-image/save-video 落盘结果展示
+const mediaUrl = (p) => '/api/v1/media/file?path=' + encodeURIComponent(p)
+
+// 可缩放图片 lightbox：滚轮缩放、双击 1x↔3x、触屏双指捏合缩放、放大后
+// 单指/鼠标拖动平移。点遮罩空白 / ✕ / Esc 关闭；缩放或拖动手势后的抬起
+// 不会误触发关闭。返回已挂到 document.body 的 overlay 元素。
+function buildImageLightbox(src, caption, onClose) {
+  const overlay = h('div', [
+    'position:fixed', 'inset:0', 'z-index:9999',
+    'background:rgba(0,0,0,0.85)', 'backdrop-filter:blur(4px)',
+    'display:flex', 'align-items:center', 'justify-content:center',
+    'cursor:zoom-out', 'touch-action:none', 'user-select:none', '-webkit-user-select:none',
+  ].join(';'))
+  const big = h('img', [
+    'max-width:92vw', 'max-height:88vh', 'object-fit:contain',
+    'border-radius:8px', 'box-shadow:0 8px 40px rgba(0,0,0,0.6)',
+    'cursor:default', 'touch-action:none',
+    'transform-origin:center', 'will-change:transform',
+  ].join(';'))
+  big.alt = 'preview'
+  big.draggable = false
+  big.src = src
+
+  // 缩放/平移状态（Pointer Events 统一处理鼠标与触屏）
+  let scale = 1, tx = 0, ty = 0
+  const pointers = new Map()
+  let pinch0 = null
+  let gesture = false // 本触点序列发生过缩放/拖动 → 抑制随后的 click 关闭
+  const apply = () => { big.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')' }
+  const clampScale = (s) => Math.min(10, Math.max(1, s))
+  const distOf = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
+  const midOf = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+
+  overlay.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pointers.size === 1) gesture = false
+    try { overlay.setPointerCapture(e.pointerId) } catch (_) {}
+    if (pointers.size === 2) {
+      const pts = [...pointers.values()]
+      const m = midOf(pts[0], pts[1])
+      pinch0 = { dist: Math.max(distOf(pts[0], pts[1]), 1), scale: scale, mx: m.x, my: m.y, tx: tx, ty: ty }
+    }
+    e.preventDefault()
+  })
+  overlay.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return
+    const prev = pointers.get(e.pointerId)
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pointers.size === 2 && pinch0) {
+      // 双指捏合：按初始间距比例缩放，随中点平移
+      const pts = [...pointers.values()]
+      const m = midOf(pts[0], pts[1])
+      scale = clampScale(pinch0.scale * distOf(pts[0], pts[1]) / pinch0.dist)
+      tx = pinch0.tx + (m.x - pinch0.mx)
+      ty = pinch0.ty + (m.y - pinch0.my)
+      if (scale <= 1) { scale = 1; tx = 0; ty = 0 }
+      gesture = true
+      apply()
+    } else if (pointers.size === 1 && scale > 1) {
+      // 放大后单指/鼠标拖动平移
+      const dx = e.clientX - prev.x
+      const dy = e.clientY - prev.y
+      if (Math.abs(dx) + Math.abs(dy) > 2) gesture = true
+      tx += dx
+      ty += dy
+      apply()
+    }
+    e.preventDefault()
+  })
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId)
+    if (pointers.size < 2) pinch0 = null
+  }
+  overlay.addEventListener('pointerup', endPointer)
+  overlay.addEventListener('pointercancel', endPointer)
+  overlay.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    scale = clampScale(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15))
+    if (scale <= 1) { scale = 1; tx = 0; ty = 0 }
+    apply()
+  }, { passive: false })
+  overlay.addEventListener('dblclick', (e) => {
+    e.preventDefault()
+    if (scale > 1) { scale = 1; tx = 0; ty = 0 } else { scale = 3 }
+    apply()
+  })
+
+  const closeBtn = h('button', [
+    'position:absolute', 'top:14px', 'right:16px', 'width:34px', 'height:34px',
+    'border-radius:50%', 'border:1px solid rgba(255,255,255,0.25)',
+    'background:rgba(255,255,255,0.10)', 'color:rgba(255,255,255,0.85)',
+    'font-size:16px', 'line-height:1', 'cursor:pointer', 'z-index:2',
+  ].join(';'), '✕')
+  closeBtn.title = '关闭（Esc）'
+  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); onClose && onClose() })
+  const hint = h('div', [
+    'position:absolute', 'top:16px', 'left:16px', 'font-size:10px',
+    'color:rgba(255,255,255,0.4)', 'pointer-events:none',
+  ].join(';'), '滚轮 / 双指捏合缩放 · 双击 1x↔3x · 放大后拖动平移')
+  overlay.append(big, closeBtn, hint)
+  if (caption) {
+    overlay.append(h('div', [
+      'position:absolute', 'left:0', 'right:0', 'bottom:12px', 'text-align:center',
+      'font-size:10px', 'color:rgba(255,255,255,0.45)', 'pointer-events:none',
+      'padding:0 16px', 'word-break:break-all',
+    ].join(';'), caption))
+  }
+  // 点图片本身不关闭（便于细看/保存），点遮罩空白才关
+  big.addEventListener('click', (e) => e.stopPropagation())
+  overlay.addEventListener('click', () => {
+    if (gesture) { gesture = false; return }
+    onClose && onClose()
+  })
+  document.body.appendChild(overlay)
+  return overlay
+}
+
+// 视频放大播放 lightbox：大尺寸 <video> + 显式全屏按钮（requestFullscreen，
+// iOS Safari 回退 webkitEnterFullscreen；原生控制条也自带全屏入口）。
+// startTime 同步自内嵌播放器；onClose 回调负责进度回同步。返回 { overlay, video }。
+function buildVideoLightbox(src, caption, startTime, onClose) {
+  const overlay = h('div', [
+    'position:fixed', 'inset:0', 'z-index:9999',
+    'background:rgba(0,0,0,0.88)', 'backdrop-filter:blur(4px)',
+    'display:flex', 'align-items:center', 'justify-content:center',
+  ].join(';'))
+  const big = h('video', [
+    'max-width:94vw', 'max-height:86vh', 'background:#000',
+    'border-radius:8px', 'box-shadow:0 8px 40px rgba(0,0,0,0.6)',
+  ].join(';'))
+  big.controls = true
+  big.loop = true
+  big.playsInline = true
+  big.src = src
+  big.addEventListener('click', (e) => e.stopPropagation())
+
+  const LB_BTN_CSS = [
+    'position:absolute', 'width:34px', 'height:34px',
+    'border-radius:50%', 'border:1px solid rgba(255,255,255,0.25)',
+    'background:rgba(255,255,255,0.10)', 'color:rgba(255,255,255,0.85)',
+    'font-size:16px', 'line-height:1', 'cursor:pointer', 'z-index:2',
+  ].join(';')
+  const closeBtn = h('button', LB_BTN_CSS + ';top:14px;right:16px', '✕')
+  closeBtn.title = '关闭（Esc）'
+  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); onClose && onClose() })
+  const fsBtn = h('button', LB_BTN_CSS + ';top:14px;right:58px', '⛶')
+  fsBtn.title = '全屏播放'
+  fsBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (big.requestFullscreen) big.requestFullscreen().catch(() => {})
+    else if (big.webkitEnterFullscreen) big.webkitEnterFullscreen() // iOS Safari
+    else if (overlay.requestFullscreen) overlay.requestFullscreen().catch(() => {})
+  })
+  overlay.append(big, closeBtn, fsBtn)
+  if (caption) {
+    overlay.append(h('div', [
+      'position:absolute', 'left:0', 'right:0', 'bottom:10px', 'text-align:center',
+      'font-size:10px', 'color:rgba(255,255,255,0.45)', 'pointer-events:none',
+      'padding:0 16px', 'word-break:break-all',
+    ].join(';'), caption))
+  }
+  overlay.addEventListener('click', () => onClose && onClose())
+  document.body.appendChild(overlay)
+  try { big.currentTime = startTime || 0 } catch (_) {}
+  big.play().catch(() => {})
+  return { overlay, video: big }
+}
 
 function createNodeWidget(spec) {
   return function mount(el, props) {
@@ -521,14 +701,72 @@ function createNodeWidget(spec) {
       peRow.append(wrap)
     }
 
-    // ---- 参数控件区 ----
+    // ---- 参数控件区（advanced:true 的字段收进折叠区，保持节点紧凑）----
     const controls = h('div', 'margin-bottom:6px')
-    for (const f of spec.fields || []) controls.append(controlOf(f))
+    const advBox = h('div', 'display:none;margin:2px 0 6px;padding:5px 6px;border:1px solid rgba(255,255,255,0.08);border-radius:6px')
+    let advCount = 0
+    for (const f of spec.fields || []) {
+      const c = controlOf(f)
+      if (f.advanced) { advBox.append(c); advCount++ } else controls.append(c)
+    }
+    if (advCount) {
+      const advToggle = h('button', BTN_CSS + ';width:100%;text-align:left;margin:2px 0 4px', `⚙ 连接/高级（${advCount}）▸`)
+      let advOpen = false
+      advToggle.addEventListener('click', () => {
+        advOpen = !advOpen
+        advBox.style.display = advOpen ? 'block' : 'none'
+        advToggle.textContent = `⚙ 连接/高级（${advCount}）${advOpen ? '▾' : '▸'}`
+      })
+      controls.append(advToggle, advBox)
+    }
+
+    // ---- 本地媒体显示区（可选 spec.mediaImageParam / mediaImageOutput / mediaVideoOutput）----
+    // 直读 FlowX 所在机器的本地文件（Studio 同源媒体端点），图片点击进可缩放
+    // lightbox，视频内嵌播放 + ⛶ 放大。与 preview 帧互补：preview 是执行过程
+    // 帧（推理服务内存缓冲，易失），本区是落盘结果/参数源文件（持久）。
+    const mediaBox = h('div', 'display:none;position:relative;margin-bottom:4px;border-radius:8px;overflow:hidden;background:rgba(0,0,0,0.3)')
+    const mediaImg = h('img', 'display:none;width:100%;border-radius:8px;cursor:zoom-in')
+    const mediaVideo = h('video', 'display:none;width:100%;background:#000;border-radius:8px')
+    mediaVideo.controls = true
+    mediaVideo.loop = true
+    mediaVideo.muted = true
+    mediaVideo.playsInline = true
+    const mediaExpand = h('button', BTN_CSS + ';position:absolute;top:6px;right:6px;display:none', '⛶')
+    mediaExpand.title = '放大播放'
+    const mediaPlaceholder = h('div', 'padding:14px 8px;text-align:center;font-size:10px;color:rgba(255,255,255,0.3)')
+    mediaBox.append(mediaImg, mediaVideo, mediaPlaceholder, mediaExpand)
+    const mediaPath = h('div', 'color:rgba(255,255,255,0.4);margin-bottom:6px;word-break:break-all;font-size:10px')
+
+    let lightboxEl = null
+    const closeLightbox = () => { if (lightboxEl) { lightboxEl.remove(); lightboxEl = null } }
+    const onEsc = (e) => { if (e.key === 'Escape') closeLightbox() }
+    if (spec.mediaImageParam || spec.mediaImageOutput || spec.mediaVideoOutput) {
+      document.addEventListener('keydown', onEsc)
+      mediaImg.addEventListener('click', () => {
+        if (!mediaImg.src || mediaImg.style.display === 'none') return
+        closeLightbox()
+        lightboxEl = buildImageLightbox(mediaImg.src, mediaPath.textContent, closeLightbox)
+      })
+      mediaExpand.addEventListener('click', () => {
+        if (!mediaVideo.src) return
+        const t = mediaVideo.currentTime
+        const lb = buildVideoLightbox(mediaVideo.src, mediaPath.textContent, t, () => {
+          try { mediaVideo.currentTime = lb.video.currentTime } catch (_) {}
+          closeLightbox()
+        })
+        lightboxEl = lb.overlay
+      })
+      mediaImg.addEventListener('error', () => {
+        mediaImg.style.display = 'none'
+        mediaPlaceholder.style.display = 'block'
+        mediaPlaceholder.textContent = '文件不可读（路径失效或不在媒体白名单）'
+      })
+    }
 
     // ---- 输出区 ----
     const outBox = h('div', 'color:rgba(255,255,255,0.45);word-break:break-all')
 
-    el.append(header, prevWrap, cmpWrap, controls, replayRow, peRow, outBox)
+    el.append(header, prevWrap, cmpWrap, controls, mediaBox, mediaPath, replayRow, peRow, outBox)
     if (spec.note) el.append(h('div', 'font-size:9px;color:rgba(255,255,255,0.3);margin-top:4px', spec.note))
 
     let lastPreviewUrl = ''
@@ -571,6 +809,38 @@ function createNodeWidget(spec) {
         }
       }
       const o = p.outputs || {}
+      // 本地媒体显示：参数源文件（load-image 类）或落盘结果（save-* 类）
+      if (spec.mediaImageParam || spec.mediaImageOutput || spec.mediaVideoOutput) {
+        const isVideo = !!spec.mediaVideoOutput
+        const fromParam = !!spec.mediaImageParam
+        const path = fromParam
+          ? String((p.params || {})[spec.mediaImageParam] || '')
+          : String(o[spec.mediaImageOutput || spec.mediaVideoOutput] || '')
+        const wired = fromParam && isWired(path)
+        if (path && !wired) {
+          const src = mediaUrl(path)
+          mediaBox.style.display = 'block'
+          mediaPlaceholder.style.display = 'none'
+          mediaImg.style.display = isVideo ? 'none' : 'block'
+          mediaVideo.style.display = isVideo ? 'block' : 'none'
+          mediaExpand.style.display = isVideo ? 'inline-block' : 'none'
+          const el2 = isVideo ? mediaVideo : mediaImg
+          if (el2.dataset.path !== path) { el2.src = src; el2.dataset.path = path }
+          mediaPath.textContent = path + (o.size_bytes ? `（${(Number(o.size_bytes) / 1024).toFixed(0)}KB）` : '')
+        } else if (fromParam) {
+          // 无路径或绑定态：占位提示
+          mediaBox.style.display = 'block'
+          mediaImg.style.display = 'none'
+          mediaVideo.style.display = 'none'
+          mediaExpand.style.display = 'none'
+          mediaPlaceholder.style.display = 'block'
+          mediaPlaceholder.textContent = wired ? '图片路径由绑定提供，执行后可见' : '未设置图片路径'
+          mediaPath.textContent = ''
+        } else {
+          mediaBox.style.display = 'none'
+          mediaPath.textContent = ''
+        }
+      }
       outBox.textContent = ''
       const entries = Object.entries(o).filter(([k]) => !k.startsWith('__'))
       if (entries.length === 0) {
@@ -587,7 +857,7 @@ function createNodeWidget(spec) {
 
     return {
       update(next) { render(next) },
-      unmount() { el.textContent = '' },
+      unmount() { closeLightbox(); document.removeEventListener('keydown', onEsc); el.textContent = '' },
     }
   }
 }
@@ -597,11 +867,11 @@ const WIDGET_SPEC = {
   icon: '🦴',
   title: 'OpenPose 姿态提取',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true },
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
     { key: 'image', label: 'image（人物图）', kind: 'text', mono: true },
     { key: 'include_hand', label: '手部骨架 include_hand', kind: 'check', default: false },
     { key: 'include_face', label: '面部特征 include_face', kind: 'check', default: false },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
   replay: ['include_hand', 'include_face'],
   note: '输出骨架图 → controlnet-apply 的 hint（配 openpose ControlNet）',

@@ -2,7 +2,7 @@
   "name": "load-image",
   "displayName": "加载图像",
   "description": "读取 FlowX 侧本地图片并上传到推理服务（对应 ComfyUI Load Image），输出图像对象 ID，供 VAE 编码（图生图）等下游节点使用",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",

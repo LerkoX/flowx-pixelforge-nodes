@@ -2,7 +2,7 @@
   "name": "save-video",
   "displayName": "保存视频",
   "description": "从推理服务下载视频 mp4 保存到本地目录；画布组件经 Studio /api/v1/media/file 资源接口直读播放（不再内嵌 base64）。仅本地执行器运行：保存文件须落在 Studio 宿主机的媒体白名单目录（默认 ~/flowx-output），容器内保存对画布不可见。",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "video",

@@ -2,7 +2,7 @@ const WIDGET_SPEC = {
   icon: '🎲',
   title: 'KSampler 采样器',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true },
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
     { key: 'model_ref', label: 'UNet 模型引用 ID（model_ref）', kind: 'text', mono: true },
     { key: 'positive', label: '正向 conditioning 对象 ID（positive）', kind: 'text', mono: true },
     { key: 'negative', label: '反向 conditioning 对象 ID（negative）', kind: 'text', mono: true },
@@ -16,7 +16,7 @@ const WIDGET_SPEC = {
     { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 1 },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 2 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600 },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
   previewEveryKey: 'preview_every',
   note: '扩散采样',

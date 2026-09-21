@@ -119,6 +119,8 @@ def field_of(node: str, p: dict) -> dict:
     f['kind'] = 'text'
     if name in MONO_NAMES or name.endswith('_ref'):
         f['mono'] = True
+    if name in ('service_url', 'service_token'):
+        f['advanced'] = True  # 连接参数收进折叠区，保持节点紧凑
     if p.get('default') not in (None, ''):
         f['default'] = p['default']
     return f

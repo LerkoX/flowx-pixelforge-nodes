@@ -1,0 +1,86 @@
+{
+  "name": "model-unload",
+  "displayName": "显存卸载（Unload Model）",
+  "description": "卸载推理服务里常驻显存的模型（对标 ComfyUI 的 unload/free）：target 留空 = 全部卸载，否则按模型名匹配（可省略扩展名，支持 vae:/cn:/motion 组合管）。典型用法：视频/大模型段跑完先卸载，再跑图像采样 —— 8GB 卡上视频模型与图像模型同池常驻会把采样压到分钟级/步（dev-plan §21）。输出 unloaded/resident 两个清单",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "infra"
+  ],
+  "icon": "🧹",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "target",
+      "type": "string",
+      "description": "要卸载的模型名（MODELS_DIR 下可省略扩展名；支持 vae:/cn: 组件与 motion 组合管）；留空 = 全部卸载",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "TARGET": "{{ Param.target }}"
+  },
+  "outputs": [
+    {
+      "name": "unloaded",
+      "type": "string",
+      "description": "本次实际卸载的缓存键清单（逗号分隔，(none) = 没匹配到）"
+    },
+    {
+      "name": "resident",
+      "type": "string",
+      "description": "卸载后仍在常驻的模型清单（(empty) = 已清空）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 200,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.2"
+}

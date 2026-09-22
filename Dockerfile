@@ -1,6 +1,6 @@
 # FlowX PixelForge 节点共享镜像（镜像节点，executor.bundled）
 #
-# 48 个节点结构一致（main.py + 共享 flowx_client.py，纯 HTTP 调推理服务），
+# 49 个节点结构一致（main.py + 共享 flowx_client.py，纯 HTTP 调推理服务），
 # 共用一个镜像：每个节点的代码放在 /opt/flowx-nodes/<name>/，
 # Studio 展开器按节点名 cd 到对应目录直接运行，不从 Studio 拉取任何文件。
 # ui/ 资产（浏览器加载）与 mock.py（本地沙箱用）不进镜像。
@@ -48,6 +48,7 @@ COPY ipadapter-load/*.py             /opt/flowx-nodes/ipadapter-load/
 COPY latent-composite/*.py           /opt/flowx-nodes/latent-composite/
 COPY latent-set-noise-mask/*.py      /opt/flowx-nodes/latent-set-noise-mask/
 COPY latent-upscale/*.py             /opt/flowx-nodes/latent-upscale/
+COPY model-unload/*.py               /opt/flowx-nodes/model-unload/
 COPY preprocess-canny/*.py           /opt/flowx-nodes/preprocess-canny/
 COPY preprocess-openpose/*.py        /opt/flowx-nodes/preprocess-openpose/
 COPY upscale-model-apply/*.py        /opt/flowx-nodes/upscale-model-apply/

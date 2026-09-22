@@ -140,5 +140,5 @@
       "description": "注入 IPAdapter 的 MODEL 对象 ID（接 ksampler）"
     }
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.1"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.2"
 }

@@ -1,8 +1,8 @@
 {
   "name": "inference-ensure",
   "displayName": "推理服务健康检查",
-  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用",
-  "version": "1.0.0",
+  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用。min_vram_mb>0 时兼作显存闸门：可用显存不足则在 wait_seconds 内等待重试，超时明确失败（避免流水线退化到分钟级/步，dev-plan §21）",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -15,7 +15,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.1",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.2",
   "parameters": [
     {
       "name": "service_url",
@@ -31,6 +31,13 @@
       "default": 60
     },
     {
+      "name": "min_vram_mb",
+      "type": "integer",
+      "description": "显存闸门：要求服务可用显存至少这么多 MB（0=不检查）；不足时按 wait_seconds 等待重试",
+      "required": false,
+      "default": 0
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，服务未启用鉴权时留空",
@@ -41,7 +48,8 @@
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
     "WAIT_SECONDS": "{{ Param.wait_seconds }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "MIN_VRAM_MB": "{{ Param.min_vram_mb }}"
   },
   "outputs": [
     {
@@ -58,6 +66,26 @@
       "name": "gpu_name",
       "type": "string",
       "description": "GPU 型号（无 GPU 时为 unknown-gpu）"
+    },
+    {
+      "name": "vram_free_mb",
+      "type": "string",
+      "description": "服务可用显存（MB，无 GPU 时为空）"
+    },
+    {
+      "name": "vram_total_mb",
+      "type": "string",
+      "description": "服务显存总量（MB，无 GPU 时为空）"
+    },
+    {
+      "name": "resident_models",
+      "type": "string",
+      "description": "当前常驻显存的模型清单（逗号分隔）"
+    },
+    {
+      "name": "offload_mode",
+      "type": "string",
+      "description": "服务端显存治理档位 none/model/sequential"
     }
   ],
   "extract": {

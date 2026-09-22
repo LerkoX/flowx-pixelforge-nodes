@@ -1,8 +1,8 @@
 {
   "name": "clip-text-encode",
   "displayName": "CLIP 文本编码",
-  "description": "将提示词文本编码为 conditioning 张量（驻留推理服务 GPU 内存），输出 cond_id；正向/反向提示词各用一个实例",
-  "version": "1.0.0",
+  "description": "将提示词文本编码为 conditioning（驻留推理服务 GPU 内存），输出 cond_id；正向/反向提示词各用一个实例。按底模架构分派：SD1.x 单编码器；SDXL 双 text encoder + pooled（采样时自动注入 added_cond_kwargs），此时 width/height 指定“原始尺寸”供 time_ids 使用",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -14,7 +14,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.3",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.4",
   "parameters": [
     {
       "name": "service_url",
@@ -45,6 +45,27 @@
       "required": true
     },
     {
+      "name": "width",
+      "type": "integer",
+      "description": "SDXL 原始宽度（像素，8 的倍数）：影响 time_ids 的 orig/target 尺寸。0 = auto（由采样 latent 尺寸推导）；SD1.x 忽略此参数",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "SDXL 原始高度（像素，8 的倍数），语义同 width；0 = auto",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "clip_skip",
+      "type": "integer",
+      "description": "跳过末 n 层文本编码（负值，如 SDXL 常用 -2）；0 = 默认（penultimate 层）",
+      "required": false,
+      "default": 0
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
@@ -56,6 +77,9 @@
     "SERVICE_URL": "{{ Param.service_url }}",
     "CLIP_REF": "{{ Param.clip_ref }}",
     "TEXT": "{{ Param.text }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "CLIP_SKIP": "{{ Param.clip_skip }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}"
   },
   "outputs": [

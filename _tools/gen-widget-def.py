@@ -48,6 +48,8 @@ SLIDER = {
     'mask-grow': {'radius': (-64, 64, 1)},
     'empty-latent': {'width': (256, 1920, 64), 'height': (256, 1920, 64), 'batch_size': (1, 8, 1)},
     'sd3-empty-latent': {'width': (256, 1920, 64), 'height': (256, 1920, 64), 'batch_size': (1, 8, 1)},
+    'clip-text-encode': {'width': (0, 2048, 64), 'height': (0, 2048, 64),
+                          'clip_skip': (-4, 0, 1)},
     'image-rotate': {'angle': (-180, 180, 1)},
 }
 SAMPLER_NAMES = ['euler', 'euler_a', 'ddim', 'lms', 'dpmpp_2m', 'dpmpp_2m_sde', 'uni_pc']

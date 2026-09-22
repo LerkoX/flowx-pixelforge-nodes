@@ -3,6 +3,7 @@ const WIDGET_SPEC = {
   title: 'LoRA 加载',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
+    { key: 'service_url_host', label: '画布侧服务地址（service_url_host）', kind: 'text', mono: true , advanced: true},
     { key: 'model_ref', label: '底模 MODEL 对象引用 ID（model_ref）', kind: 'text', mono: true },
     { key: 'lora_name', label: 'LoRA 文件名（lora_name）', kind: 'model', modelType: 'lora' },
     { key: 'strength', label: 'LoRA 强度（strength）', kind: 'text', default: 1.0 },

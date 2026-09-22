@@ -51,6 +51,13 @@
       }
     },
     {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：模型列表查询、预览帧/重放/中断中转都由 Studio 发请求，用的是 Studio 的网络视角。docker 节点的 service_url 只能填容器内网地址（如 http://172.17.0.1:8100），Studio（手机/外网侧）取不到——此时把本参数绑成 Studio 可达地址（通常绑 {{ Param.service_url }} 公网隧道），否则画布上没有模型下拉数据、也看不到实时预览。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "推理服务 Bearer Token（服务未开鉴权可留空）",
@@ -124,6 +131,7 @@
   ],
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
     "MODEL": "{{ Param.model }}",
     "IPADAPTER": "{{ Param.ipadapter }}",
@@ -140,5 +148,5 @@
       "description": "注入 IPAdapter 的 MODEL 对象 ID（接 ksampler）"
     }
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.4"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.5"
 }

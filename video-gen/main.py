@@ -11,12 +11,13 @@ POST /interrupt。
 """
 import time
 
-from flowx_client import (emit, emit_preview, param, ref, submit_job, token,
-                          wait_job)
+from flowx_client import (emit, emit_preview, host_base, param, ref, submit_job,
+                          token, wait_job)
 
 
 def main():
     url = param("service_url").rstrip("/")
+    pbase = host_base(url)  # 画布预览帧由 Studio 取，必须宿主机可达
     tok = token()
     preview_every = param("preview_every", 5, int)
     output_mode = param("output_mode", "pil")  # pil=采样+解码一体; latent=只出 latent 交下游 vae.decode_video
@@ -57,7 +58,8 @@ def main():
         p = view.get("progress") or {}
         cur, tot = p.get("current", 0), p.get("total", 0)
         if cur > 0 and tot > 0:
-            emit_preview(f"{url}/preview/{jid}", cur / tot, tok)
+            emit_preview(f"{pbase}/preview/{jid}", cur / tot, tok,
+                         base=pbase, job_id=jid)
 
     result = wait_job(url, jid, tok,
                       timeout=param("job_timeout", 7200, int),

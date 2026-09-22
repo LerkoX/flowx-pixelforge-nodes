@@ -28,8 +28,8 @@
 """
 import json
 
-from flowx_client import (emit_preview, get_json, param, submit_job, token,
-                          wait_job)
+from flowx_client import (emit_preview, get_json, host_base, param, submit_job,
+                          token, wait_job)
 
 
 def check_op_exists(url, tok, op_name):
@@ -60,13 +60,17 @@ def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
     except (TypeError, ValueError):
         pass
 
+    # 画布预览帧由 Studio 拉取：URL 必须用 Studio 宿主机可达的基地址
+    # （docker 节点的 service_url 是容器内网地址，Studio 取不到）
+    pbase = host_base(url)
+
     def on_poll(v):
         if not want_preview:
             return
         p = v.get("progress") or {}
         cur, tot = p.get("current", 0), p.get("total", 0)
         prog = (cur / tot) if tot else None
-        emit_preview(f"{url}/preview/{jid}", prog, tok, base=url, job_id=jid)
+        emit_preview(f"{pbase}/preview/{jid}", prog, tok, base=pbase, job_id=jid)
 
     result = wait_job(url, jid, tok, timeout=timeout, poll=2.0, on_poll=on_poll)
     outputs = (result or {}).get("outputs", {})
@@ -76,8 +80,8 @@ def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
     # 完成帧兜底：IMAGE 输出上报最终图（无采样过程的算子也能出结果图）
     for k, m in outputs.items():
         if m.get("type") == "IMAGE" and m.get("id"):
-            emit_preview(f"{url}/images/{m['id']}", 1.0, tok,
-                         base=url, job_id=jid)
+            emit_preview(f"{pbase}/images/{m['id']}", 1.0, tok,
+                         base=pbase, job_id=jid)
 
     print("```flowx-yaml")
     print(f"outputs_json: {json.dumps(flat, ensure_ascii=False)}")

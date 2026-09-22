@@ -22,7 +22,9 @@
  *     { key, label, kind:'select', options:[], default }     固定下拉
  *     { key, label, kind:'model', modelType }                模型名下拉（经通用代理
  *       POST /api/v1/service-proxy 调第三方服务 GET /models/files，按 kind 过滤；
- *       API 路径语义由本节点生态自持）
+ *       API 路径语义由本节点生态自持）。基地址优先取同节点的 service_url_host
+ *       （Studio 宿主机可达，docker 节点的 service_url 是容器内网地址取不到），
+ *       未配置时回退 service_url
  *     任意 field 可加 advanced:true → 收进默认折叠的「⚙ 连接/高级」区
  *     （service_url/service_token 等连接参数建议 advanced，保持节点紧凑）
  *   replay[]      （可选）▶预览按钮：经节点级通用代理重放算子（POST /op），
@@ -420,26 +422,25 @@ function createNodeWidget(spec) {
       const load = async () => {
         hint.textContent = '模型列表加载中…'
         hint.style.color = 'rgba(255,255,255,0.35)'
-        const url = resolveParam('service_url')
+        // 这次查询由 Studio 宿主机发起（不是节点自己）：docker 节点的
+        // service_url 是容器内网地址（如 172.17.0.1:8100），Studio 取不到，
+        // 所以优先用 service_url_host（画布侧可达地址，通常绑公网隧道）
+        const host = resolveParam('service_url_host')
+        const url = (host && !isWired(host)) ? host : resolveParam('service_url')
         const tok = resolveParam('service_token') || ''
         if (!url || isWired(url)) {
-          hint.textContent = 'service_url 未解析（绑定无当前值），无法拉取模型列表'
+          hint.textContent = 'service_url / service_url_host 未解析（绑定无当前值），无法拉取模型列表'
           return
         }
         try {
-          const r = await fetch('/api/v1/inference/models-files', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ service_url: url, service_token: tok, method: 'GET', path: '/models/files' }),
-          })
-          if (!r.ok) throw new Error('HTTP ' + r.status)
-          const data = await r.json()
-          const files = ((data.data || data).files || []).filter((x) => x.kind === f.modelType)
+          const data = await serviceProxy(url, tok, '/models/files', 'GET')
+          const files = (((data && data.data) || data || {}).files || []).filter((x) => x.kind === f.modelType)
           setOptions(files.map((x) => x.name))
-          hint.textContent = files.length ? `${files.length} 个可选` : `无 kind=${f.modelType} 的模型`
+          const via = url.replace(/^https?:\/\//, '')
+          hint.textContent = files.length ? `${files.length} 个可选 · ${via}` : `无 kind=${f.modelType} 的模型 · ${via}`
           loaded = true
         } catch (e) {
-          hint.textContent = '列表加载失败：' + e + '（可手动输入）'
+          hint.textContent = '列表加载失败：' + e + '（可手动输入；docker 节点请把 service_url_host 绑成 Studio 可达地址）'
           hint.style.color = 'rgba(251,113,133,0.8)'
         }
       }
@@ -516,6 +517,28 @@ function createNodeWidget(spec) {
     const progOuter = h('div', 'height:4px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden')
     const progInner = h('div', 'height:100%;background:#22d3ee;width:0%;transition:width .3s')
     progOuter.append(progInner)
+    // ---- 设计期通用代理助手：base 由调用方显式给定（Studio 只做认证转发，
+    // 不认识对端 API 形态）；第三方 API 路径语义由本节点生态自持
+    const serviceProxy = async (base, tok, path, method, payload) => {
+      const r = await fetch('/api/v1/service-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_url: base, service_token: tok || '',
+          method: method || 'GET', path,
+          body: payload === undefined ? null : payload, timeout_sec: 30,
+        }),
+      })
+      const text = await r.text()
+      let data = null
+      try { data = JSON.parse(text) } catch { /* 上游非 JSON 响应 */ }
+      if (!r.ok) {
+        const detail = (data && (data.message || data.detail || data.error)) || text.slice(0, 160)
+        throw new Error('HTTP ' + r.status + (detail ? '：' + detail : ''))
+      }
+      return data
+    }
+
     // ---- 节点级通用代理助手：第三方 API 路径语义由本节点生态自持 ----
     const nodeProxyUrl = (path, method) =>
       `/api/v1/executions/${cur.execution.id}/nodes/${encodeURIComponent(cur.nodeId)}/service-proxy?path=${encodeURIComponent(path)}&method=${method || 'GET'}`
@@ -870,6 +893,7 @@ const WIDGET_SPEC = {
   title: 'VAE 加载（外挂）',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
+    { key: 'service_url_host', label: '画布侧服务地址（service_url_host）', kind: 'text', mono: true , advanced: true},
     { key: 'name', label: 'VAE 模型', kind: 'model', modelType: 'vae' },
     { key: 'dtype', label: '精度 dtype', kind: 'select', options: ['auto', 'fp16', 'fp32'], default: 'auto' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},

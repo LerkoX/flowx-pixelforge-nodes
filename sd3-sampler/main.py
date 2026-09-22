@@ -7,12 +7,13 @@ denoise=1 文生图；denoise<1 接 sd3-vae-encode 的 latent 做图生图。
 """
 import time
 
-from flowx_client import (emit, emit_preview, ensure_plugin, param, ref,
-                          submit_job, token, wait_job)
+from flowx_client import (emit, emit_preview, ensure_plugin, host_base, param,
+                          ref, submit_job, token, wait_job)
 
 
 def main():
     url = param("service_url").rstrip("/")
+    pbase = host_base(url)  # 画布预览帧由 Studio 取，必须宿主机可达
     tok = token()
 
     ensure_plugin(url, "sd3.sample", tok=tok)
@@ -44,7 +45,8 @@ def main():
         p = view.get("progress") or {}
         cur, tot = p.get("current", 0), p.get("total", 0)
         if cur > 0 and tot > 0:
-            emit_preview(f"{url}/preview/{jid}", cur / tot, tok)
+            emit_preview(f"{pbase}/preview/{jid}", cur / tot, tok,
+                         base=pbase, job_id=jid)
 
     result = wait_job(url, jid, tok,
                       timeout=param("job_timeout", 7200, int),

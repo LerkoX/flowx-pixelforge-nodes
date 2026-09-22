@@ -41,6 +41,26 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
   （值 `http://172.17.0.1:8100`，docker bridge 网关）；
 - local 节点绑 `{{ Param.service_url }}`（公网隧道，因为 Studio 在手机上，只能走隧道）。
 
+### 反向：画布侧读取要 `service_url_host`
+
+有一类请求**不是节点自己发起的，而是 Studio 宿主机发起的**：模型名下拉（设计期代理
+`/api/v1/service-proxy`）、实时预览帧（`/preview-frame` 中转拉帧）、▶预览重放/中断
+（节点级代理 `/service-proxy`）。这些请求走的是 **Studio 的网络视角**，而 docker 节点的
+`service_url` 是容器内网地址——Studio 根本连不上（症状：预览帧 502
+`context deadline exceeded`、模型下拉 502）。
+
+所以 `service_url_host` 是**必需的第三地址**（声明在 26 个有画布侧读取的节点里，
+留空则回退 `service_url`）：
+
+- docker 节点：`service_url`（容器内）+ `service_url_host: "{{ Param.service_url }}"`
+  （Studio 侧走隧道）
+- local 节点：两者相同，不填即可
+- 节点侧用 `flowx_client.host_base(url)` 构造预览帧 URL 与上报 base；widget 侧优先读
+  `service_url_host`
+
+`check-bundle.py` 的校验 I 守住这条：有画布侧读取的节点必须声明该参数，
+且直接上报预览帧的节点必须经 `host_base()` 构造 URL。
+
 ## Pillow：离线 wheel
 
 远端 docker 宿主**没有外网**（`pip install` 报 `Network is unreachable`），故把

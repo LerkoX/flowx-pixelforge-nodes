@@ -9,12 +9,13 @@ preview_every=0 关闭预览（进度仍经 job 轮询上报）。
 """
 import time
 
-from flowx_client import (emit, emit_preview, param, ref, submit_job, token,
-                          wait_job)
+from flowx_client import (emit, emit_preview, host_base, param, ref, submit_job,
+                          token, wait_job)
 
 
 def main():
     url = param("service_url").rstrip("/")
+    pbase = host_base(url)  # 画布预览帧由 Studio 取，必须宿主机可达
     tok = token()
     preview_every = param("preview_every", 1, int)
     inputs = {
@@ -51,7 +52,8 @@ def main():
         p = view.get("progress") or {}
         cur, tot = p.get("current", 0), p.get("total", 0)
         if cur > 0 and tot > 0:
-            emit_preview(f"{url}/preview/{jid}", cur / tot, tok)
+            emit_preview(f"{pbase}/preview/{jid}", cur / tot, tok,
+                         base=pbase, job_id=jid)
 
     result = wait_job(url, jid, tok,
                       timeout=param("job_timeout", 3600, int),

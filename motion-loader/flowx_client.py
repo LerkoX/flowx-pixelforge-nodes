@@ -208,10 +208,26 @@ def emit(**fields):
     print("```")
 
 
+def host_base(url):
+    """Studio 宿主机侧可达的服务基地址（画布预览帧/重放/中断中转都由 Studio
+    发起 HTTP 请求，用的是 Studio 自己的网络视角）。
+
+    容器内可达 ≠ Studio 可达：docker 节点跑在远端宿主上，`service_url` 只能填
+    docker bridge 网关（如 http://172.17.0.1:8100），而 Studio 在手机/外网侧
+    只能走公网隧道——此时必须由 workflow 给节点绑 `service_url_host`
+    （如 {{ Param.service_url }}），否则画布取不到预览帧。
+
+    未配置时退回 url（local 节点或 Studio 与推理服务同网段的部署下二者相同）。"""
+    host = (os.environ.get("SERVICE_URL_HOST")
+            or os.environ.get("FLOWX_PARAM_SERVICE_URL_HOST") or "")
+    return host.rstrip("/") or url
+
+
 def emit_preview(url, progress=None, tok=None, base=None, job_id=None):
     """经 stdout 标记通道向 Studio 上报预览帧地址（媒体本体不走 stdout/base64）：
     Studio 拦截 FLOWX_PREVIEW 行（不落日志），按 url 经 HTTP 中转拉帧给画布。
-    url 指向推理服务的预览帧端点（如 {service_url}/preview/{job_id}）。
+    url 指向推理服务的预览帧端点（应经 host_base() 构造，如
+    {host_base}/preview/{job_id}）。
     base/job_id 供 Studio 记录服务基地址与推理 job（节点级中断、
     op-replay 重放预览用）；旧版 Studio 忽略多余字段。"""
     payload = {"url": url}

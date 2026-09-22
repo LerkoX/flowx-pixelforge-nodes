@@ -8,6 +8,10 @@ cd "$(dirname "$0")"
 TAG="lerkobba/flowx-pixelforge-nodes:v$(tr -d '[:space:]' < BUNDLE_VERSION)"
 echo "==> building $TAG"
 docker build -t "$TAG" .
-echo "==> pushing $TAG"
-docker push "$TAG"
+if [ "${SKIP_PUSH:-0}" = "1" ]; then
+  echo "==> skip push (SKIP_PUSH=1；远端 daemon 本地构建即可，Studio 直接用它)"
+else
+  echo "==> pushing $TAG"
+  docker push "$TAG"
+fi
 echo "==> done: $TAG"

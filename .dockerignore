@@ -1,0 +1,13 @@
+# 构建上下文只保留节点代码（Dockerfile 只 COPY <dir>/*.py，这里顺手把无关内容挡在传输外）
+__pycache__/
+**/__pycache__/
+*.pyc
+# 浏览器侧 widget 资产与本地 mock/测试：不进镜像
+*/ui/
+*/mock.py
+_tools/
+_widget-template/
+test-tier1-nodes.py
+check-bundle.py
+sync-flowx-json.py
+build-image.sh

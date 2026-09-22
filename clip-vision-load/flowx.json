@@ -17,7 +17,8 @@
   ],
   "executor": {
     "supportedTypes": [
-      "local"
+      "local",
+      "docker"
     ],
     "preferredType": "local",
     "bundled": true
@@ -73,5 +74,6 @@
       "type": "string",
       "description": "CLIP_VISION 对象 ID"
     }
-  ]
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.0"
 }

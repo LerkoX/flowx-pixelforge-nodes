@@ -117,8 +117,11 @@
   "timeout": 300,
   "executor": {
     "supportedTypes": [
-      "local"
+      "local",
+      "docker"
     ],
-    "preferredType": "local"
-  }
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.1"
 }

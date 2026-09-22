@@ -24,12 +24,33 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 
 | 类 | 节点 | 声明 | 说明 |
 | --- | --- | --- | --- |
-| A 推理服务客户端 | 37 个（`checkpoint-loader`、`vae-load`、`controlnet-*`、`preprocess-*`、`image-upscale`、`detail-refine` …） | `supportedTypes: [local, docker]`，`bundled: true` + `image` | 只经 HTTP 调推理服务，镜像内 `python main.py` 即可跑（无第三方 pip 依赖，纯 stdlib） |
-| B 读写宿主文件 | `save-image`、`save-video`、`load-image` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到这些文件 ⇒ **只能 local** |
-| C Studio 侧图像/蒙版 | `image-rotate/flip/crop/composite`、`mask-*`（9 个） | `supportedTypes: [local]` | 需要 Pillow，而镜像刻意不带 Pillow（省体积）；处理的是 Studio 本地图 ⇒ local-only |
+| A 推理服务客户端 | 37 个（`checkpoint-loader`、`vae-load`、`controlnet-*`、`preprocess-*`、`image-upscale`、`detail-refine` …） | `supportedTypes: [local, docker]`，`preferredType: docker`，`bundled: true` + `image` | 只经 HTTP 调推理服务，镜像内 `python main.py` 即可跑（纯 stdlib） |
+| B Studio 侧图像/蒙版（PIL） | `image-rotate/flip/crop/composite`、`mask-*`（9 个） | 同上 | **图片本体经服务对象仓库传递**（`get_bytes /images/{id}` → PIL 计算 → `post_bytes /images`），不碰本地文件 ⇒ 进镜像 + 装 Pillow（离线 wheel，见下） |
+| C 读写宿主文件 | `save-image`、`save-video`、`load-image` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到 ⇒ **只能 local** |
 | — | `_common`/`_tools`/`_widget-template` | — | 非节点目录，不进镜像 |
 
-`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 B+C 这份名单，改分类时两处一起改。
+`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 C 这份名单（`save-image`、`save-video`、`load-image`），改分类时两处一起改。
+
+## docker 节点的服务地址必须用内网
+
+容器内**访问不了公网隧道地址**（cpolar 不回环到自己的宿主机，实测 `5.tcp.cpolar.top:12073`
+在容器里超时，`172.17.0.1:8100` 返回 200）。所以：
+
+- workflow 里给 docker 节点的 `service_url` 绑 `{{ Param.service_url_internal }}`
+  （值 `http://172.17.0.1:8100`，docker bridge 网关）；
+- local 节点绑 `{{ Param.service_url }}`（公网隧道，因为 Studio 在手机上，只能走隧道）。
+
+## Pillow：离线 wheel
+
+远端 docker 宿主**没有外网**（`pip install` 报 `Network is unreachable`），故把
+manylinux cp311 wheel 放在 `_wheels/` 随构建上下文带进去离线安装：
+
+```bash
+pip download Pillow==12.3.0 --only-binary=:all: --no-deps \
+  --platform manylinux_2_28_x86_64 --python-version 3.11 --implementation cp --abi cp311 -d _wheels
+```
+
+升级 Pillow 时重跑上面这条并同步 Dockerfile 的版本号即可（只有这 9 个 PIL 节点用它）。
 
 ## 加/改一个节点包（发布流程）
 

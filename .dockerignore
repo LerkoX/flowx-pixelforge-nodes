@@ -11,3 +11,6 @@ test-tier1-nodes.py
 check-bundle.py
 sync-flowx-json.py
 build-image.sh
+
+# 保留 _wheels（离线安装 Pillow 用）；仅排除 wheel 之外的杂物
+_wheels/*.tar.gz

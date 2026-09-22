@@ -1,6 +1,6 @@
 # FlowX PixelForge 节点共享镜像（镜像节点，executor.bundled）
 #
-# 40 个节点结构一致（main.py + 共享 flowx_client.py，纯 HTTP 调推理服务），
+# 48 个节点结构一致（main.py + 共享 flowx_client.py，纯 HTTP 调推理服务），
 # 共用一个镜像：每个节点的代码放在 /opt/flowx-nodes/<name>/，
 # Studio 展开器按节点名 cd 到对应目录直接运行，不从 Studio 拉取任何文件。
 # ui/ 资产（浏览器加载）与 mock.py（本地沙箱用）不进镜像。
@@ -55,6 +55,23 @@ COPY upscale-model-load/*.py         /opt/flowx-nodes/upscale-model-load/
 COPY vae-decode-video/*.py           /opt/flowx-nodes/vae-decode-video/
 COPY vae-load/*.py                   /opt/flowx-nodes/vae-load/
 COPY video-sample-latent/*.py        /opt/flowx-nodes/video-sample-latent/
+
+# --- Studio 侧图像/蒙版（PIL；图片本体经服务对象仓库传递，不在本地文件系统上） ---
+COPY image-composite/*.py                /opt/flowx-nodes/image-composite/
+COPY image-crop/*.py                     /opt/flowx-nodes/image-crop/
+COPY image-flip/*.py                     /opt/flowx-nodes/image-flip/
+COPY image-rotate/*.py                   /opt/flowx-nodes/image-rotate/
+COPY mask-feather/*.py                   /opt/flowx-nodes/mask-feather/
+COPY mask-from-image/*.py                /opt/flowx-nodes/mask-from-image/
+COPY mask-grow/*.py                      /opt/flowx-nodes/mask-grow/
+COPY mask-invert/*.py                    /opt/flowx-nodes/mask-invert/
+COPY mask-to-image/*.py                  /opt/flowx-nodes/mask-to-image/
+
+# Pillow 仅这 9 个节点需要（其余节点纯 stdlib）。远端 docker 宿主无外网，
+# 故把 manylinux cp311 wheel 随上下文带进去离线安装（_wheels/，见 README）。
+COPY _wheels/*.whl /tmp/wheels/
+RUN pip install --no-cache-dir --no-index --find-links=/tmp/wheels Pillow==12.3.0 \
+ && rm -rf /tmp/wheels
 
 # 冒烟自检：所有节点目录必须存在且含 main.py
 RUN set -e; for d in /opt/flowx-nodes/*/; do test -f "$d/main.py" || { echo "missing main.py in $d"; exit 1; }; done

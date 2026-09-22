@@ -24,11 +24,7 @@ import sys
 
 # 仅本地运行的节点：代码仍在仓库里（save-image/save-video 的 .py 也进了镜像，
 # 但执行器必须 local；图像/蒙版节点因镜像内无 Pillow 连分发也不做）
-LOCAL_ONLY = {
-    "save-image", "save-video", "load-image",
-    "image-rotate", "image-flip", "image-crop", "image-composite",
-    "mask-from-image", "mask-to-image", "mask-grow", "mask-feather", "mask-invert",
-}
+LOCAL_ONLY = {"save-image", "save-video", "load-image"}
 
 
 def in_image_dirs(root: pathlib.Path) -> dict[str, str]:

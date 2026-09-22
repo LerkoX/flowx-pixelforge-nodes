@@ -74,10 +74,10 @@
       "local",
       "docker"
     ],
-    "preferredType": "local",
+    "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.0",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.1",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

@@ -62,7 +62,7 @@ cd nodes
 python3 sync-flowx-json.py
 python3 check-bundle.py
 # 3. bump 版本
-echo -n 1.6.1 > BUNDLE_VERSION && python3 sync-flowx-json.py && python3 check-bundle.py
+echo -n 1.6.3 > BUNDLE_VERSION && python3 sync-flowx-json.py && python3 check-bundle.py
 # 4. 构建（Docker Desktop 在本机时直接跑；远端 daemon 用 DOCKER_HOST 指向它）
 DOCKER_HOST=tcp://<daemon>:2375 SKIP_PUSH=1 ./build-image.sh
 # 5. 镜像内启动探针（可选但推荐）
@@ -77,3 +77,20 @@ flowx-studio node import --type folder --path nodes/<name> --overwrite
 带/不带 `ensure_plugin`、`emit_preview` 是否带 `base`/`job_id`）。调用 `ensure_plugin`
 的节点都自带该函数，不影响运行；但若后续要统一升级客户端（如新增协议字段），
 需要按目录逐个同步，或改为构建期注入单一副本。
+
+## 共享件单一事实源（`_common/` → 各节点目录）
+
+`flowx_client.py` 曾分裂成 **3 个变体**（有无 `ensure_plugin`、`emit_preview` 新旧签名），
+改一次协议字段要逐目录改、极易漂移。现在：
+
+- 唯一事实源 = `_common/flowx_client.py`（超集：含 `ensure_plugin` + 新版
+  `emit_preview(url, progress, tok, base, job_id)`）与 `_common/executor_base.py`；
+- 各节点目录里的副本由 `_tools/sync-common.py` 生成（`--check` 只校验不改）；
+- `check-bundle.py` 把"副本 == _common"作为**发布门槛**（漂移即非 0 退出），
+  与 Dockerfile 清单校验收在同一道关卡里。
+
+```bash
+python3 nodes/_tools/sync-common.py          # 分发共享件
+python3 nodes/_tools/sync-common.py --check  # 只校验漂移
+python3 nodes/check-bundle.py                # 清单 + 共享件双重校验（发布门槛）
+```

@@ -86,7 +86,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.2",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.3",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

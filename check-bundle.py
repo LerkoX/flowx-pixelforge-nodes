@@ -11,6 +11,8 @@
   C. 写了 image 或 bundled=true ⇒ 必须在 COPY 清单里（不许"假装在镜像里"）
   D. 在 COPY 清单里且不属于 LOCAL_ONLY ⇒ image 必须等于当前 tag 且 bundled=true
   E. LOCAL_ONLY 节点 ⇒ 声明里不许出现 docker/image/bundled（本地专用，不伪装可 docker）
+  F. 各节点目录里的共享件（flowx_client.py / executor_base.py）必须与 _common/ 一致
+     （唯一事实源；曾分裂成 3 个变体导致改协议要逐目录改）
 
 用法：python3 nodes/check-bundle.py [--quiet]
 退出码：0 一致；1 有不一致（逐条打印人话）。
@@ -80,6 +82,13 @@ def main() -> int:
                 problems.append(f"{name}: 在镜像里但 image={image!r}，应为 {tag}（跑 sync-flowx-json.py 同步）")
             if not bundled:
                 problems.append(f"{name}: 在镜像里但未声明 executor.bundled=true")
+
+    # F. 共享件漂移（_common/ 是唯一事实源）
+    import subprocess
+    r = subprocess.run([sys.executable, str(root / "_tools" / "sync-common.py"), "--check"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        problems.append(r.stdout.strip() or "共享件漂移")
 
     if problems:
         print(f"✗ 清单不一致（{len(problems)} 处）：", file=sys.stderr)

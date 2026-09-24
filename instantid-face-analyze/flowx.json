@@ -1,0 +1,107 @@
+{
+  "name": "instantid-face-analyze",
+  "displayName": "InstantID 人脸分析",
+  "description": "insightface（antelopev2，CPU）人脸检测 + 512 维身份特征提取 + 5 关键点控制图生成，InstantID 身份保持生成的前置。服务端插件 instantid_ops.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sdxl",
+    "instantid",
+    "face"
+  ],
+  "icon": "🙂",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧中转由 Studio 发请求，用的是 Studio 的网络视角。docker 节点的 service_url 只能填容器内网地址（如 http://172.17.0.1:8100），Studio（手机/外网侧）取不到——此时把本参数绑成 Studio 可达地址（通常绑 {{ Param.service_url }} 公网隧道）。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "参考人脸照片对象 ID（清晰正脸最佳；多人照默认取最大脸）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "face_index",
+      "type": "int",
+      "description": "选脸序号：-1=最大脸（默认，官方语义），0..N-1=按面积降序第 N 张",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMAGE": "{{ Param.image }}",
+    "FACE_INDEX": "{{ Param.face_index }}"
+  },
+  "outputs": [
+    {
+      "name": "face",
+      "type": "string",
+      "description": "FACE 对象 ID（512 维身份特征 + 关键点图），供 instantid-apply 的 face 输入"
+    },
+    {
+      "name": "kps",
+      "type": "string",
+      "description": "关键点控制图对象 ID（黑底五色点，供预览核对识别是否正确）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.5",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 640,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

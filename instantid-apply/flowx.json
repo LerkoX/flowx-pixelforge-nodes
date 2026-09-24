@@ -1,0 +1,180 @@
+{
+  "name": "instantid-apply",
+  "displayName": "InstantID 应用",
+  "description": "InstantID 身份保持生成（SDXL 专用）：人脸身份特征经 IPAdapter 注入 UNet（weight），关键点图经 InstantID ControlNet 控制面部位置/姿态（cn_strength）；输出 model/control 接采样节点。ipadapter 用 instantid-ip-adapter.bin，controlnet 用 instantid-controlnet。服务端插件 instantid_ops.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sdxl",
+    "instantid",
+    "face"
+  ],
+  "icon": "🪪",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧中转由 Studio 发请求。docker 节点的 service_url 是容器内网地址时，把本参数绑成 Studio 可达地址（通常绑 {{ Param.service_url }}）。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "SDXL 底模对象 ID（checkpoint-loader 输出；InstantID 仅支持 SDXL）",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model",
+        "description": "由 checkpoint-loader（SDXL）的 model 输出提供"
+      }
+    },
+    {
+      "name": "ipadapter",
+      "type": "string",
+      "description": "InstantID IPAdapter 权重对象 ID（ipadapter-load，文件名 instantid-ip-adapter）",
+      "required": true,
+      "source": {
+        "nodeRef": "ipadapter-load",
+        "output": "ipadapter"
+      }
+    },
+    {
+      "name": "controlnet",
+      "type": "string",
+      "description": "InstantID ControlNet 对象 ID（controlnet-load，目录 instantid-controlnet）",
+      "required": true,
+      "source": {
+        "nodeRef": "controlnet-load",
+        "output": "control_net"
+      }
+    },
+    {
+      "name": "face",
+      "type": "string",
+      "description": "FACE 对象 ID（instantid-face-analyze 输出）",
+      "required": true,
+      "source": {
+        "nodeRef": "instantid-face-analyze",
+        "output": "face"
+      }
+    },
+    {
+      "name": "weight",
+      "type": "float",
+      "description": "身份强度（IPAdapter 注入，官方默认 0.8；0=关闭身份条件）",
+      "required": false,
+      "default": 0.8
+    },
+    {
+      "name": "cn_strength",
+      "type": "float",
+      "description": "关键点控制强度（InstantID ControlNet，官方默认 0.8；0=关闭姿态控制）",
+      "required": false,
+      "default": 0.8
+    },
+    {
+      "name": "start_percent",
+      "type": "float",
+      "description": "IPA 身份注入生效起点（步数比例，默认 0）",
+      "required": false,
+      "default": 0.0
+    },
+    {
+      "name": "end_percent",
+      "type": "float",
+      "description": "IPA 身份注入生效终点（步数比例，默认 1）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "cn_start_percent",
+      "type": "float",
+      "description": "CN 姿态控制生效起点（步数比例，默认 0）",
+      "required": false,
+      "default": 0.0
+    },
+    {
+      "name": "cn_end_percent",
+      "type": "float",
+      "description": "CN 姿态控制生效终点（步数比例，默认 1）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "MODEL": "{{ Param.model }}",
+    "IPADAPTER": "{{ Param.ipadapter }}",
+    "CONTROLNET": "{{ Param.controlnet }}",
+    "FACE": "{{ Param.face }}",
+    "WEIGHT": "{{ Param.weight }}",
+    "CN_STRENGTH": "{{ Param.cn_strength }}",
+    "START_PERCENT": "{{ Param.start_percent }}",
+    "END_PERCENT": "{{ Param.end_percent }}",
+    "CN_START_PERCENT": "{{ Param.cn_start_percent }}",
+    "CN_END_PERCENT": "{{ Param.cn_end_percent }}"
+  },
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "注入人脸身份的 MODEL（接采样节点 model 端口）"
+    },
+    {
+      "name": "control",
+      "type": "string",
+      "description": "关键点姿态 CONTROL（接采样节点 control 端口）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.5",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 780,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

@@ -42,6 +42,10 @@
  *   mediaVideoOutput （可选）输出键名（如 'file_path'）：内嵌 <video> 播放
  *                    落盘视频 + ⛶ 放大 lightbox（含全屏按钮）
  *   note          （可选）输出说明行
+ *
+ * 布局顺序（固定，图像预览置顶）：状态行 → 过程/结果预览帧 → 前后对比 →
+ *   本地图片/视频（含路径说明行）→ ▶重放按钮 → 实时预览开关 → 参数控件 →
+ *   输出。未启用的块 display:none 不占位。
  */
 
 const STATUS_COLORS = {
@@ -791,7 +795,11 @@ function createNodeWidget(spec) {
     // ---- 输出区 ----
     const outBox = h('div', 'color:rgba(255,255,255,0.45);word-break:break-all')
 
-    el.append(header, prevWrap, cmpWrap, controls, mediaBox, mediaPath, replayRow, peRow, outBox)
+    // 布局顺序：状态行 → 图像相关区（过程/结果预览帧、前后对比、本地图片/视频、
+    // ▶重放、实时预览开关）→ 参数控件 → 输出。图像预览一律置顶，手机窄画布上
+    // 不必往下滚就能看到结果；无预览/无媒体/无重放的节点这些块是 display:none，
+    // 不占位也不改变观感。
+    el.append(header, prevWrap, cmpWrap, mediaBox, mediaPath, replayRow, peRow, controls, outBox)
     if (spec.note) el.append(h('div', 'font-size:9px;color:rgba(255,255,255,0.3);margin-top:4px', spec.note))
 
     let lastPreviewUrl = ''

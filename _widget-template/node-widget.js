@@ -208,6 +208,7 @@ export default function mount(el, props) {
   const infoLine = document.createElement('div')
   infoLine.style.cssText = 'color:rgba(255,255,255,0.45);word-break:break-all;font-size:10px;flex-shrink:0'
 
+  // 布局顺序（与 _common/widget-base.js 一致，图像预览置顶）：状态行 → 结果预览 → 说明行
   el.append(header, imgWrap, infoLine)
 
   function render(p) {

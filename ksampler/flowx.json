@@ -202,7 +202,7 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "timeout": 3600,
+  "timeout": 10800,
   "executor": {
     "supportedTypes": [
       "local",

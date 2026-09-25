@@ -56,7 +56,7 @@ def main():
                          base=pbase, job_id=jid)
 
     result = wait_job(url, jid, tok,
-                      timeout=param("job_timeout", 3600, int),
+                      timeout=param("job_timeout", 7200, int),
                       poll=param("poll_interval", 2, int),
                       on_poll=on_poll)
     outs = result["outputs"]

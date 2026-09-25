@@ -48,7 +48,7 @@
     },
     {
       "name": "face_index",
-      "type": "int",
+      "type": "integer",
       "description": "选脸序号：-1=最大脸（默认，官方语义），0..N-1=按面积降序第 N 张",
       "required": false,
       "default": -1
@@ -96,7 +96,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.5",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.6",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

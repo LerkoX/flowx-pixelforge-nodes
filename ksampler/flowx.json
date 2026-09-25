@@ -14,7 +14,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.5",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.6",
   "parameters": [
     {
       "name": "service_url",
@@ -148,9 +148,9 @@
     {
       "name": "job_timeout",
       "type": "integer",
-      "description": "采样任务超时秒数，超时自动 interrupt 服务端任务，默认 3600",
+      "description": "采样任务超时秒数，超时自动 interrupt 服务端任务，默认 3600（默认 7200s=2h，8GB 卡 SDXL 1024/25 步+CN 实测 ~75min）",
       "required": false,
-      "default": 3600
+      "default": 7200
     },
     {
       "name": "service_token",

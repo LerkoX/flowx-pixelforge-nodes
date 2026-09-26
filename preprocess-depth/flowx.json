@@ -48,7 +48,7 @@
     },
     {
       "name": "detect_resolution",
-      "type": "number",
+      "type": "integer",
       "description": "检测内部短边分辨率（默认 512；细节不足可调高，最高 1024）",
       "required": false,
       "default": 512

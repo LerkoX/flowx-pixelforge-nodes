@@ -56,6 +56,7 @@ COPY latent-upscale/*.py             /opt/flowx-nodes/latent-upscale/
 COPY model-unload/*.py               /opt/flowx-nodes/model-unload/
 COPY preprocess-canny/*.py           /opt/flowx-nodes/preprocess-canny/
 COPY preprocess-openpose/*.py        /opt/flowx-nodes/preprocess-openpose/
+COPY preprocess-depth/*.py          /opt/flowx-nodes/preprocess-depth/
 COPY upscale-model-apply/*.py        /opt/flowx-nodes/upscale-model-apply/
 COPY upscale-model-load/*.py         /opt/flowx-nodes/upscale-model-load/
 COPY vae-decode-video/*.py           /opt/flowx-nodes/vae-decode-video/

@@ -14,7 +14,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.6",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.7",
   "parameters": [
     {
       "name": "service_url",

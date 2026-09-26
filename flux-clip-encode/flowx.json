@@ -1,0 +1,128 @@
+{
+  "name": "flux-clip-encode",
+  "displayName": "FLUX 文本编码",
+  "description": "FLUX 文本编码（T5-XXL GGUF + CLIP-L）：输出 COND 供 FLUX 采样器。FLUX 免负向提示词（distilled guidance 模型），单实例即可。T5 与 transformer 分时复用内存，编码后默认立即卸载 T5。首次编码建权重缓存约 6 分钟。自包含节点：算子 flux.encode 随包自注册",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "t5",
+    "inference"
+  ],
+  "icon": "📝",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.6",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "FLUX 模型引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-loader",
+        "output": "model_ref",
+        "description": "由 FLUX 加载节点的 model_ref 提供"
+      }
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "description": "正向提示词（FLUX 擅长自然语言长句与文字渲染，不需要质量词堆砌）",
+      "required": true
+    },
+    {
+      "name": "max_seq",
+      "type": "integer",
+      "description": "T5 最大序列长度（schnell 训练用 256；长 prompt 可开 512，编码更慢）",
+      "required": false,
+      "default": 256
+    },
+    {
+      "name": "release_t5",
+      "type": "integer",
+      "description": "编码后是否立即卸载 T5（1=是，默认；12GB 内存盒必须卸载才能进采样相；同批次多 prompt 复用可设 0 免重载）",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "编码任务超时（秒），首次建缓存约 6 分钟",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "MODEL_REF": "{{ Param.model_ref }}",
+    "TEXT": "{{ Param.text }}",
+    "MAX_SEQ": "{{ Param.max_seq }}",
+    "RELEASE_T5": "{{ Param.release_t5 }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "COND 引用（flux-sampler 的 cond 输入）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "编码统计（张量形状等）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 220,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 2100,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

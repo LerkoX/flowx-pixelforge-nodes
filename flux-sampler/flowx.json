@@ -1,0 +1,175 @@
+{
+  "name": "flux-sampler",
+  "displayName": "FLUX 采样器",
+  "description": "FLUX.1-schnell 采样（distilled guidance，免负向提示词）：消费 FLUX 加载节点的 model 与 FLUX 文本编码节点的 cond，直接输出图像（VAE 解码内置）。schnell 为 1~4 步蒸馏模型，默认 4 步、guidance=0。自包含节点：算子 flux.sample 随包自注册。异步 job + 进度卡片预览",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "gguf",
+    "inference"
+  ],
+  "icon": "⚡",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.6",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧中转由 Studio 发请求，docker 节点的 service_url 是容器内网地址时 Studio 取不到——把本参数绑成 Studio 可达地址（通常同 {{ Param.service_url }} 公网隧道）。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "FLUX 模型引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-loader",
+        "output": "model_ref",
+        "description": "由 FLUX 加载节点的 model_ref 提供"
+      }
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "COND 引用",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-clip-encode",
+        "output": "cond",
+        "description": "由 FLUX 文本编码节点的 cond 输出提供"
+      }
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "出图宽度（16 倍数；GTX1080 上 512≈4min / 768≈29min / 1024 约 2h，建议 512~768 出稿）",
+      "required": false,
+      "default": 768
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "出图高度（16 倍数）",
+      "required": false,
+      "default": 768
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子，-1 随机",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数（schnell 蒸馏 1~4 步，默认 4；更多步数收益递减）",
+      "required": false,
+      "default": 4
+    },
+    {
+      "name": "guidance",
+      "type": "float",
+      "description": "distilled guidance 强度（schnell 固定 0；本节点面向 schnell，一般不动）",
+      "required": false,
+      "default": 0.0
+    },
+    {
+      "name": "preview_every",
+      "type": "integer",
+      "description": "每 N 步留一帧进度卡片（0 关闭）",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "采样任务超时（秒），1024px/4 步在 GTX1080 上约 2 小时",
+      "required": false,
+      "default": 7200
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "MODEL_REF": "{{ Param.model_ref }}",
+    "COND": "{{ Param.cond }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "SEED": "{{ Param.seed }}",
+    "STEPS": "{{ Param.steps }}",
+    "GUIDANCE": "{{ Param.guidance }}",
+    "PREVIEW_EVERY": "{{ Param.preview_every }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "图像引用（VAE 解码已内置，直接接保存图像节点）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的随机种子"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 460,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 7500,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

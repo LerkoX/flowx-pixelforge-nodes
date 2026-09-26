@@ -1,0 +1,112 @@
+{
+  "name": "flux-loader",
+  "displayName": "FLUX 加载",
+  "description": "FLUX.1-schnell（GGUF Q4 量化）装配：GGUF transformer + T5-XXL + CLIP-L + VAE 原地组装 FluxPipeline（低内存路线，12GB 内存盒实测可行），输出 model 引用供 FLUX 编码/采样节点使用。幂等，已装配则秒回。自包含节点：算子 flux.load 随包自注册",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "gguf",
+    "inference"
+  ],
+  "icon": "⚡",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.6",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "transformer",
+      "type": "string",
+      "description": "FLUX transformer GGUF 文件名（位于推理服务 /models/flux/ 下），如 flux1-schnell-Q4_K_S.gguf",
+      "required": false,
+      "default": "flux1-schnell-Q4_K_S.gguf"
+    },
+    {
+      "name": "t5",
+      "type": "string",
+      "description": "T5-XXL 文本编码器 GGUF 文件名（/models/flux/ 下），如 t5xxl-Q4_K_S.gguf",
+      "required": false,
+      "default": "t5xxl-Q4_K_S.gguf"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "description": "显存治理旋钮：auto（默认，继承服务端）/none（整模型驻留显存，8GB 卡需 GGUF 低档位才可行）。FLUX 插件内部自管设备相位（编码相 T5 上卡、采样相整管上卡），本参数主要影响 transformer 常驻位置",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "加载任务超时（秒），GGUF 冷装配约 6 分钟",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "TRANSFORMER": "{{ Param.transformer }}",
+    "T5": "{{ Param.t5 }}",
+    "OFFLOAD": "{{ Param.offload }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "FLUX 模型引用 ID（flux-clip-encode / flux-sampler 使用）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 200,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

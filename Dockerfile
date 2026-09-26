@@ -47,6 +47,9 @@ COPY ipadapter-apply/*.py            /opt/flowx-nodes/ipadapter-apply/
 COPY ipadapter-load/*.py             /opt/flowx-nodes/ipadapter-load/
 COPY instantid-face-analyze/*.py     /opt/flowx-nodes/instantid-face-analyze/
 COPY instantid-apply/*.py            /opt/flowx-nodes/instantid-apply/
+COPY flux-loader/*.py                /opt/flowx-nodes/flux-loader/
+COPY flux-clip-encode/*.py           /opt/flowx-nodes/flux-clip-encode/
+COPY flux-sampler/*.py               /opt/flowx-nodes/flux-sampler/
 COPY latent-composite/*.py           /opt/flowx-nodes/latent-composite/
 COPY latent-set-noise-mask/*.py      /opt/flowx-nodes/latent-set-noise-mask/
 COPY latent-upscale/*.py             /opt/flowx-nodes/latent-upscale/

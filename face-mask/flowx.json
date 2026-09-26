@@ -1,0 +1,147 @@
+{
+  "name": "face-mask",
+  "displayName": "人脸蒙版",
+  "description": "insightface 检测人脸 bbox → 中心外扩（覆盖全脸+发际）→ 8 倍数对齐，输出 feathered 矩形蒙版 + crop 框坐标（x/y/width/height），供 image-crop 裁剪与 image-composite 贴回直接绑定——FaceDetailer（面部局部精修）编排的入口。服务端插件 instantid_ops.py 的 face.mask 算子（onnxruntime CPU，不占显存）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "face",
+    "mask",
+    "facedetailer"
+  ],
+  "icon": "😶",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧/重放/中断中转都由 Studio 发请求。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "输入图对象 ID（含人脸；AI 生成图建议 det_thresh 保持 0.2）",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码/load-image 等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "face_index",
+      "type": "integer",
+      "description": "选哪张脸：-1=最大脸（默认），0..N-1=按面积降序第 N 张",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "det_thresh",
+      "type": "float",
+      "description": "检测置信度阈值（默认 0.2；AI 生成图人脸置信度常 0.35~0.45，勿调高到 0.5 以上）",
+      "required": false,
+      "default": 0.2
+    },
+    {
+      "name": "expand",
+      "type": "float",
+      "description": "bbox 中心外扩比例（默认 0.6 = 各方向 +30%，覆盖全脸+发际；局部更紧调小，要带头发/颈部调大）",
+      "required": false,
+      "default": 0.6
+    },
+    {
+      "name": "feather",
+      "type": "float",
+      "description": "蒙版边缘羽化半径（像素，默认 16；贴回接缝过渡用，0=硬边）",
+      "required": false,
+      "default": 16
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMAGE": "{{ Param.image }}",
+    "FACE_INDEX": "{{ Param.face_index }}",
+    "DET_THRESH": "{{ Param.det_thresh }}",
+    "EXPAND": "{{ Param.expand }}",
+    "FEATHER": "{{ Param.feather }}"
+  },
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "feathered 矩形蒙版对象 ID（灰度图，白=精修区域）"
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "description": "crop 框左上角 x（8 倍数对齐，供 image-crop/image-composite 绑定）"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "description": "crop 框左上角 y（8 倍数对齐）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "crop 框宽（8 倍数，可直接喂 vae.encode）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "crop 框高（8 倍数，可直接喂 vae.encode）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.8",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 660,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

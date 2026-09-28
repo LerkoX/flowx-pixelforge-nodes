@@ -144,17 +144,19 @@ def interrupt_job(base, job_id=None, tok=None, timeout=30):
 
 
 def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
-             on_poll=None, max_poll_errors=12):
+             on_poll=None, max_poll_errors=12, error_window=300.0):
     """轮询任务直到终态。done 返回 result dict；failed/cancelled/超时抛异常
     （超时先尽力 interrupt，避免孤儿任务继续占 GPU）。
     on_poll(view)：每次轮询拿到任务视图后回调（如上报预览帧地址），
     回调异常静默忽略，不影响任务等待。
-    轮询容错：瞬态网络错误（隧道抖动/超时/连接重置）重试，连续
-    max_poll_errors 次（默认 ≈ 1 分钟窗口）才放弃；HTTP 4xx（如 job
-    不存在）立即失败，不重试。"""
+    轮询容错：瞬态网络错误（隧道抖动/超时/连接重置/SSL EOF）重试，
+    连续失败 ≥max_poll_errors 次【且】持续 ≥error_window 秒（默认 5 分钟）
+    才放弃——双条件避免长任务（FLUX 采样 30min+）期间隧道长时间断流
+    被误判为任务失败；HTTP 4xx（如 job 不存在）立即失败，不重试。"""
     t0 = time.time()
     last = ""
     errors = 0
+    err_t0 = 0.0
     while True:
         try:
             v = get_job(base, job_id, tok)
@@ -163,12 +165,17 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
             msg = str(e)
             if "-> HTTP 4" in msg:  # 404 等：job 真不存在，重试无意义
                 raise
+            if errors == 0:
+                err_t0 = time.time()
             errors += 1
+            elapsed = time.time() - err_t0
             if log:
-                log(f"[job {job_id[:8]}] poll error ({errors}/{max_poll_errors}): {msg}")
-            if errors >= max_poll_errors:
+                log(f"[job {job_id[:8]}] poll error ({errors}, "
+                    f"{elapsed:.0f}s/{error_window:.0f}s): {msg}")
+            if errors >= max_poll_errors and elapsed >= error_window:
                 raise RuntimeError(
-                    f"job {job_id} poll failed {errors} times in a row, last: {msg}")
+                    f"job {job_id} poll failed {errors} times over "
+                    f"{elapsed:.0f}s, last: {msg}")
             time.sleep(poll)
             continue
         if on_poll is not None:

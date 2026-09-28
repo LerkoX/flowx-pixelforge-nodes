@@ -1,0 +1,132 @@
+{
+  "name": "face-similarity",
+  "displayName": "人脸相似度",
+  "description": "两张图各自取目标人脸（默认最大脸），返回身份余弦相似度（insightface antelopev2 normed_embedding 点积，onnxruntime CPU，不占显存）——InstantID 身份保持效果的验收/调试量化：同人典型 >=0.5，陌生人典型 <0.3。任一侧未检出人脸明确报错。服务端插件 instantid_ops.py 的 face.similarity 算子",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "face",
+    "similarity",
+    "instantid",
+    "verify"
+  ],
+  "icon": "🧬",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧/重放/中断中转都由 Studio 发请求。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image_a",
+      "type": "string",
+      "description": "图像 A 对象 ID（基准图，如参考人像）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image/vae-decode 等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "image_b",
+      "type": "string",
+      "description": "图像 B 对象 ID（待验证图，如 InstantID 生成结果）",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码/load-image 等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "face_index_a",
+      "type": "integer",
+      "description": "图 A 选哪张脸：-1=最大脸（默认），0..N-1=按面积降序第 N 张",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "face_index_b",
+      "type": "integer",
+      "description": "图 B 选哪张脸：-1=最大脸（默认），0..N-1=按面积降序第 N 张",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "det_thresh",
+      "type": "float",
+      "description": "检测置信度阈值（默认 0.5；AI 生成图人脸置信度常 0.35~0.45，检不出脸时降到 0.2）",
+      "required": false,
+      "default": 0.5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMAGE_A": "{{ Param.image_a }}",
+    "IMAGE_B": "{{ Param.image_b }}",
+    "FACE_INDEX_A": "{{ Param.face_index_a }}",
+    "FACE_INDEX_B": "{{ Param.face_index_b }}",
+    "DET_THRESH": "{{ Param.det_thresh }}"
+  },
+  "outputs": [
+    {
+      "name": "similarity",
+      "type": "float",
+      "description": "身份余弦相似度 [−1,1]：同人典型 >=0.5，陌生人典型 <0.3"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.8",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 560,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

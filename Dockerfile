@@ -58,6 +58,7 @@ COPY preprocess-canny/*.py           /opt/flowx-nodes/preprocess-canny/
 COPY preprocess-openpose/*.py        /opt/flowx-nodes/preprocess-openpose/
 COPY preprocess-depth/*.py          /opt/flowx-nodes/preprocess-depth/
 COPY face-mask/*.py                 /opt/flowx-nodes/face-mask/
+COPY face-similarity/*.py           /opt/flowx-nodes/face-similarity/
 COPY upscale-model-apply/*.py        /opt/flowx-nodes/upscale-model-apply/
 COPY upscale-model-load/*.py         /opt/flowx-nodes/upscale-model-load/
 COPY vae-decode-video/*.py           /opt/flowx-nodes/vae-decode-video/

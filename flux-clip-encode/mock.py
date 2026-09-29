@@ -1,7 +1,8 @@
-"""flux-clip-encode mock：不调服务，回显文本产出假 COND 引用与统计。"""
+"""flux-clip-encode mock：生成伪 COND id。"""
 from flowx_client import emit, param
 
-text = param("text", "mock prompt")
-print(f"[flux-encode][mock] len={len(text)} text={text[:40]!r}")
-emit(cond="mock-flux-cond",
-     info=f"pe=(1,256,4096) pooled=(1,768) | len={len(text)}")
+text = param("text", "mock")
+preview = text if len(text) <= 30 else text[:30] + "..."
+oid = f"mock-flux-cond-{abs(hash(text)) % 100000}"
+print(f"[flux-clip-encode][mock] text=\"{preview}\" -> cond={oid}")
+emit(cond=oid, info="mock")

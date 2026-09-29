@@ -1,9 +1,12 @@
-"""flux-sampler：FLUX.1-schnell 采样器（distilled guidance，免负向）。
+"""flux-sampler：FLUX 采样器（对标 ComfyUI SamplerCustomAdvanced）。
 
 自包含节点：服务端算子 flux.sample 由 server_op.py 自注册（ensure_plugin）。
-消费 flux-loader 的 model 引用 + flux-clip-encode 的 cond，直接输出图像
-（VAE 解码内置，无需独立 decode 节点）。异步 job + 进度卡片预览。
-schnell 为 1~4 步蒸馏模型：steps 默认 4、guidance 固定 0（不填负向）。
+消费 flux-unet-load 的 MODEL + flux-clip-encode 的 COND +
+flux-empty-latent/flux-vae-encode 的 LATENT，输出采样后 LATENT
+（VAE 解码独立成 flux-vae-decode 节点）。
+latent 来自 empty-latent → txt2img；来自 vae-encode 且 denoise<1 → img2img
+（hires-fix 两阶段可编排）。schnell 为 1~4 步蒸馏模型：steps 默认 4、
+guidance 固定 0（免负向）。异步 job + 逐步 latent 预览帧。
 """
 import time
 
@@ -20,20 +23,19 @@ def main():
 
     preview_every = param("preview_every", 1, int)
     steps = param("steps", 4, int)
-    width = param("width", 1024, int)
-    height = param("height", 1024, int)
     seed = param("seed", -1, int)
+    denoise = param("denoise", 1.0, float)
     inputs = {
-        "model": ref(param("model_ref")),
+        "model": ref(param("model")),
         "cond": ref(param("cond")),
-        "width": width,
-        "height": height,
+        "latent": ref(param("latent")),
         "seed": seed,
         "steps": steps,
         "guidance": param("guidance", 0.0, float),
+        "denoise": denoise,
         "preview_every": preview_every,
     }
-    print(f"[flux-sampler] {width}x{height} steps={steps} seed={seed}",
+    print(f"[flux-sampler] steps={steps} denoise={denoise} seed={seed}",
           flush=True)
 
     t0 = time.time()
@@ -53,11 +55,11 @@ def main():
                       poll=param("poll_interval", 5, int),
                       on_poll=on_poll)
     outs = result["outputs"]
-    image_id = outs["image"]["id"]
+    latent_id = outs["latent"]["id"]
     actual_seed = outs["seed"].get("value")
-    print(f"[flux-sampler] done in {time.time()-t0:.1f}s -> image={image_id} "
+    print(f"[flux-sampler] done in {time.time()-t0:.1f}s -> latent={latent_id} "
           f"seed={actual_seed}", flush=True)
-    emit(image=image_id, seed=actual_seed)
+    emit(latent=latent_id, seed=actual_seed)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-"""flux-sampler mock：不调服务，回显参数产出假图像引用与种子。"""
+"""flux-sampler mock：生成伪采样 latent id。"""
 from flowx_client import emit, param
 
-w = param("width", 1024, int)
-h = param("height", 1024, int)
-steps = param("steps", 4, int)
-print(f"[flux-sampler][mock] {w}x{h} steps={steps}")
-emit(image="mock-flux-image", seed=42)
+latent = param("latent", "mock")
+seed = param("seed", -1)
+oid = f"mock-flux-sampled-from-{latent}"
+print(f"[flux-sampler][mock] latent={latent} seed={seed} -> {oid}")
+emit(latent=oid, seed=str(seed if int(seed) >= 0 else 42))

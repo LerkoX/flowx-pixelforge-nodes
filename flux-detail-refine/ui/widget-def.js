@@ -1,0 +1,23 @@
+const WIDGET_SPEC = {
+  icon: '🎯',
+  title: 'FLUX 局部重绘',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'service_url_host', label: 'service_url_host（预览用）', kind: 'text', mono: true, advanced: true },
+    { key: 'image', label: '待重绘图像（image）', kind: 'text', mono: true },
+    { key: 'model', label: 'model（FLUX UNET 加载）', kind: 'text', mono: true },
+    { key: 'vae', label: 'vae（FLUX VAE 加载）', kind: 'text', mono: true },
+    { key: 'cond', label: 'cond（FLUX 文本编码）', kind: 'text', mono: true },
+    { key: 'detector', label: '检测目标', kind: 'select', options: ['face', 'hand'], default: 'face' },
+    { key: 'denoise', label: '重绘强度（修脸0.35~0.5 修手0.45~0.6）', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.4 },
+    { key: 'steps', label: '步数（实际去噪≈steps×denoise）', kind: 'slider', min: 2, max: 20, step: 1, default: 8 },
+    { key: 'conf', label: '检测置信度阈值', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.3 },
+    { key: 'padding', label: '检测框外扩比例', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.4 },
+    { key: 'guide_size', label: '重绘短边像素', kind: 'select', options: ['384', '512', '768'], default: '512' },
+    { key: 'seed', label: 'seed（-1 随机）', kind: 'text', mono: true },
+    { key: 'max_targets', label: '最多重绘目标数', kind: 'text', default: 4 },
+    { key: 'feather', label: '贴回羽化像素', kind: 'text', default: 16 },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+  ],
+  note: 'FLUX 同模型修脸/修手；可串联两个实例先 face 后 hand',
+}

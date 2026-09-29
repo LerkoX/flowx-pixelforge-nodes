@@ -1,0 +1,106 @@
+{
+  "name": "flux-vae-decode",
+  "displayName": "FLUX VAE 解码",
+  "description": "FLUX VAE 解码（对标 ComfyUI VAE Decode）：消费 flux-sampler 的 LATENT（packed）解码输出图像（unpack + 反归一化 + decode）。自包含节点：server_op.py 运行时自注册",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "gguf",
+    "inference"
+  ],
+  "icon": "🖼",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "FLUX VAE 组件引用",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-vae-load",
+        "output": "vae",
+        "description": "由 FLUX VAE 加载节点提供"
+      }
+    },
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "FLUX LATENT 束引用（采样产物）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-sampler",
+        "output": "latent",
+        "description": "由 FLUX 采样节点提供"
+      }
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "解码超时（秒）",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "VAE": "{{ Param.vae }}",
+    "LATENT": "{{ Param.latent }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "图像引用（接 save-image 或 flux-detail-refine）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 200,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

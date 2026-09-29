@@ -897,16 +897,16 @@ function createNodeWidget(spec) {
 
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
-  icon: '⚡',
-  title: 'FLUX 加载',
+  icon: '⬜',
+  title: 'FLUX 空 Latent',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
-    { key: 'transformer', label: 'transformer GGUF 文件名', kind: 'text', mono: true, placeholder: 'flux1-schnell-Q4_K_S.gguf' },
-    { key: 't5', label: 'T5-XXL GGUF 文件名', kind: 'text', mono: true, placeholder: 't5xxl-Q4_K_S.gguf' },
-    { key: 'offload', label: 'offload', kind: 'select', options: ['auto', 'none'], default: 'auto', advanced: true },
+    { key: 'width', label: '宽度', kind: 'select', options: ['512', '768', '1024'], default: '768' },
+    { key: 'height', label: '高度', kind: 'select', options: ['512', '768', '1024', '1280'], default: '768' },
+    { key: 'batch_size', label: '批次', kind: 'text', default: 1 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  note: 'FLUX.1-schnell GGUF Q4 装配（幂等）；输出 model_ref 接 FLUX 编码/采样节点',
+  note: '16 倍数；噪声由采样器按 seed 生成；GTX1080 建议 512~768',
 }
 
 export default createNodeWidget(WIDGET_SPEC)

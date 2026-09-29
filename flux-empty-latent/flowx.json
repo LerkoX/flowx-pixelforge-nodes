@@ -1,0 +1,98 @@
+{
+  "name": "flux-empty-latent",
+  "displayName": "FLUX 空 Latent",
+  "description": "FLUX 空 Latent（对标 ComfyUI Empty Latent Image）：只携带尺寸/批次（samples=None），初始噪声由 flux-sampler 按 seed 生成。宽高须 16 倍数。自包含节点：server_op.py 运行时自注册",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "gguf",
+    "inference"
+  ],
+  "icon": "⬜",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "画布宽度（16 倍数；GTX1080 上 512≈4min / 768≈29min，建议 512~768 出稿）",
+      "required": false,
+      "default": 768
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "画布高度（16 倍数）",
+      "required": false,
+      "default": 768
+    },
+    {
+      "name": "batch_size",
+      "type": "integer",
+      "description": "批次大小（显存紧张建议 1）",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "BATCH_SIZE": "{{ Param.batch_size }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "FLUX LATENT 束引用（接 flux-sampler 的 latent）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 200,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 120,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

@@ -1,8 +1,8 @@
 {
   "name": "flux-clip-encode",
   "displayName": "FLUX 文本编码",
-  "description": "FLUX 文本编码（T5-XXL GGUF + CLIP-L）：输出 COND 供 FLUX 采样器。FLUX 免负向提示词（distilled guidance 模型），单实例即可。T5 与 transformer 分时复用内存，编码后默认立即卸载 T5。首次编码建权重缓存约 6 分钟。自包含节点：算子 flux.encode 随包自注册",
-  "version": "1.0.0",
+  "description": "FLUX 文本编码（对标 ComfyUI CLIP Text Encode (Flux)）：消费 flux-dual-clip-load 的 CLIP 组件束，T5-XXL+CLIP-L 双编码输出 COND 供 flux-sampler。FLUX 免负向提示词（schnell 蒸馏 guidance=0）。T5 与 transformer 分时复用内存（编码相位 transformer 搬回 CPU）。自包含节点：server_op.py 运行时自注册",
+  "version": "2.0.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -16,7 +16,7 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.8",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
   "parameters": [
     {
       "name": "service_url",
@@ -30,14 +30,14 @@
       }
     },
     {
-      "name": "model_ref",
+      "name": "clip",
       "type": "string",
-      "description": "FLUX 模型引用 ID",
+      "description": "FLUX CLIP 组件束引用",
       "required": true,
       "source": {
-        "nodeRef": "flux-loader",
-        "output": "model_ref",
-        "description": "由 FLUX 加载节点的 model_ref 提供"
+        "nodeRef": "flux-dual-clip-load",
+        "output": "clip",
+        "description": "由 FLUX DualCLIP 加载节点提供"
       }
     },
     {
@@ -84,11 +84,13 @@
   ],
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
-    "MODEL_REF": "{{ Param.model_ref }}",
+    "CLIP": "{{ Param.clip }}",
     "TEXT": "{{ Param.text }}",
     "MAX_SEQ": "{{ Param.max_seq }}",
     "RELEASE_T5": "{{ Param.release_t5 }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}"
   },
   "outputs": [
     {

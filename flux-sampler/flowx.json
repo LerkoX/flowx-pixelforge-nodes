@@ -1,8 +1,8 @@
 {
   "name": "flux-sampler",
   "displayName": "FLUX 采样器",
-  "description": "FLUX.1-schnell 采样（distilled guidance，免负向提示词）：消费 FLUX 加载节点的 model 与 FLUX 文本编码节点的 cond，直接输出图像（VAE 解码内置）。schnell 为 1~4 步蒸馏模型，默认 4 步、guidance=0。自包含节点：算子 flux.sample 随包自注册。异步 job + 进度卡片预览",
-  "version": "1.0.0",
+  "description": "FLUX 采样（对标 ComfyUI SamplerCustomAdvanced，schnell 蒸馏 guidance=0 免负向）：消费 UNET+COND+LATENT 组件，输出采样后 LATENT（VAE 解码独立成 flux-vae-decode）。latent 来自 empty-latent → txt2img；来自 vae-encode 且 denoise<1 → img2img/hires-fix。异步 job + 逐步 latent 预览帧。自包含节点：server_op.py 运行时自注册",
+  "version": "2.0.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -16,7 +16,7 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.8",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
   "parameters": [
     {
       "name": "service_url",
@@ -37,14 +37,14 @@
       "default": ""
     },
     {
-      "name": "model_ref",
+      "name": "model",
       "type": "string",
-      "description": "FLUX 模型引用 ID",
+      "description": "FLUX MODEL 组件引用（UNET）",
       "required": true,
       "source": {
-        "nodeRef": "flux-loader",
-        "output": "model_ref",
-        "description": "由 FLUX 加载节点的 model_ref 提供"
+        "nodeRef": "flux-unet-load",
+        "output": "model",
+        "description": "由 FLUX UNET 加载节点提供"
       }
     },
     {
@@ -59,18 +59,22 @@
       }
     },
     {
-      "name": "width",
-      "type": "integer",
-      "description": "出图宽度（16 倍数；GTX1080 上 512≈4min / 768≈29min / 1024 约 2h，建议 512~768 出稿）",
-      "required": false,
-      "default": 768
+      "name": "latent",
+      "type": "string",
+      "description": "FLUX LATENT 束引用（empty-latent → txt2img；vae-encode → img2img 配 denoise<1）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-empty-latent",
+        "output": "latent",
+        "description": "由 FLUX 空 Latent（或 VAE 编码）节点提供"
+      }
     },
     {
-      "name": "height",
-      "type": "integer",
-      "description": "出图高度（16 倍数）",
+      "name": "denoise",
+      "type": "float",
+      "description": "去噪强度 0~1：1=txt2img 全调度；<1=img2img 尾段重绘（hires-fix 建议 0.4~0.6，须搭配 vae-encode 的 latent）",
       "required": false,
-      "default": 768
+      "default": 1.0
     },
     {
       "name": "seed",
@@ -125,16 +129,16 @@
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
     "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
-    "MODEL_REF": "{{ Param.model_ref }}",
+    "MODEL": "{{ Param.model }}",
     "COND": "{{ Param.cond }}",
-    "WIDTH": "{{ Param.width }}",
-    "HEIGHT": "{{ Param.height }}",
+    "LATENT": "{{ Param.latent }}",
+    "DENOISE": "{{ Param.denoise }}",
     "SEED": "{{ Param.seed }}",
     "STEPS": "{{ Param.steps }}",
     "GUIDANCE": "{{ Param.guidance }}",
     "PREVIEW_EVERY": "{{ Param.preview_every }}",
-    "POLL_INTERVAL": "{{ Param.poll_interval }}",
     "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}"
   },
   "outputs": [

@@ -1,0 +1,230 @@
+{
+  "name": "flux-detail-refine",
+  "displayName": "FLUX 局部重绘",
+  "description": "FLUX ADetailer 式局部重绘：YOLO 检测脸部/手部 → 裁剪放大 → FLUX img2img 低 strength 重绘（复用主管线 UNET/VAE/COND 组件，同模型同风格）→ 羽化贴回原图。修复五官扭曲/手指畸形，不引入 SD checkpoint 异质感。自包含节点：server_op.py 运行时自注册到推理服务（需服务端配置 INFERENCE_TOKEN）",
+  "version": "2.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "inference"
+  ],
+  "icon": "🎯",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧中转由 Studio 发请求，docker 节点的 service_url 是容器内网地址时 Studio 取不到——把本参数绑成 Studio 可达地址（通常同 {{ Param.service_url }} 公网隧道）。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待重绘的图像对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-vae-decode",
+        "output": "image",
+        "description": "由 FLUX VAE 解码节点（或上一级 flux-detail-refine）提供"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "FLUX MODEL 组件引用（UNET，重绘采样用）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-unet-load",
+        "output": "model",
+        "description": "由 FLUX UNET 加载节点提供"
+      }
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "FLUX VAE 组件引用（img2img 重绘的 VAE 编解码用）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-vae-load",
+        "output": "vae",
+        "description": "由 FLUX VAE 加载节点提供"
+      }
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "FLUX COND 引用（重绘沿用主管线提示词，免重编码/T5 重载）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-clip-encode",
+        "output": "cond",
+        "description": "由 FLUX 文本编码节点的 cond 输出提供"
+      }
+    },
+    {
+      "name": "detector",
+      "type": "string",
+      "description": "检测目标：face（脸部）/ hand（手部）；对应服务端 DETECTOR_DIR 下的 <detector>.pt 检测模型（与 detail-refine 共用）",
+      "required": false,
+      "default": "face"
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "description": "重绘强度（img2img strength）0~1：越高改动越大。修脸建议 0.35~0.5，修手建议 0.45~0.6",
+      "required": false,
+      "default": 0.4
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "重绘采样步数：实际去噪步数≈steps×denoise（schnell 蒸馏勿用 4 步配低 denoise——只剩 1~2 步太糙），默认 8（denoise 0.4 → ~3 步生效）",
+      "required": false,
+      "default": 8
+    },
+    {
+      "name": "guidance",
+      "type": "float",
+      "description": "distilled guidance 强度（schnell 固定 0，一般不动）",
+      "required": false,
+      "default": 0.0
+    },
+    {
+      "name": "conf",
+      "type": "float",
+      "description": "检测置信度阈值 0~1，低于此值的目标忽略",
+      "required": false,
+      "default": 0.3
+    },
+    {
+      "name": "padding",
+      "type": "float",
+      "description": "检测框外扩比例（0.4 = 四周各扩 40%），给重绘留上下文",
+      "required": false,
+      "default": 0.4
+    },
+    {
+      "name": "guide_size",
+      "type": "integer",
+      "description": "裁剪区域重绘前放大到的短边像素（FLUX 建议 512，对齐 16）",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "重绘种子，-1 随机（多目标时按 seed+序号 逐目标派生）",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "max_targets",
+      "type": "integer",
+      "description": "最多重绘的目标数（按置信度从高到低取）",
+      "required": false,
+      "default": 4
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "description": "贴回时的边缘羽化像素，消除拼接痕",
+      "required": false,
+      "default": 16
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "重绘任务超时（秒），GTX1080 上 512px 裁剪 × ~3 步 ≈ 3min/目标",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODEL": "{{ Param.model }}",
+    "VAE": "{{ Param.vae }}",
+    "COND": "{{ Param.cond }}",
+    "DETECTOR": "{{ Param.detector }}",
+    "DENOISE": "{{ Param.denoise }}",
+    "STEPS": "{{ Param.steps }}",
+    "GUIDANCE": "{{ Param.guidance }}",
+    "CONF": "{{ Param.conf }}",
+    "PADDING": "{{ Param.padding }}",
+    "GUIDE_SIZE": "{{ Param.guide_size }}",
+    "SEED": "{{ Param.seed }}",
+    "MAX_TARGETS": "{{ Param.max_targets }}",
+    "FEATHER": "{{ Param.feather }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "局部重绘后的图像对象 ID（接 save-image 或下一级 flux-detail-refine 修手）"
+    },
+    {
+      "name": "count",
+      "type": "string",
+      "description": "实际重绘的目标数量（0 = 未检测到目标，原图透传）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

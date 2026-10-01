@@ -1,0 +1,136 @@
+{
+  "name": "flux-redux-apply",
+  "displayName": "FLUX Redux 参考图注入",
+  "description": "FLUX Redux 参考图生成（对标 ComfyUI Load Style Model + Apply Style Model）：SigLIP 编码参考图 → Redux 适配器投影 729 token → 拼到文本 COND 序列前，让生成结果保持参考图的构图/主体/风格语义。输出接 flux-sampler 的 cond。自包含节点：server_op.py 运行时自注册；服务端需预置 siglip-so400m-patch14-384（/models/clip_vision）与 flux1-redux-dev.safetensors（/models/flux）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "redux",
+    "reference"
+  ],
+  "icon": "🎨",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "文本 COND 引用（Redux token 将拼到其序列前）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-clip-encode",
+        "output": "cond",
+        "description": "由 FLUX 文本编码节点的 cond 输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "参考图对象 ID（主体/构图/风格的语义来源，任意尺寸，服务端自动预处理为 384x384）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由加载图像节点提供"
+      }
+    },
+    {
+      "name": "strength",
+      "type": "float",
+      "description": "参考图影响强度（乘性缩放 Redux 投影 embeds）：1.0=标准；>1 更贴参考图，<1 更偏文本提示词",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "reducer",
+      "type": "string",
+      "description": "Redux 适配器文件名（/models/flux 下的 safetensors，默认 flux1-redux-dev.safetensors）",
+      "required": false,
+      "default": "flux1-redux-dev.safetensors"
+    },
+    {
+      "name": "vision",
+      "type": "string",
+      "description": "SigLIP 视觉编码器目录名（/models/clip_vision 下的 transformers 格式目录，默认 siglip-so400m-patch14-384）",
+      "required": false,
+      "default": "siglip-so400m-patch14-384"
+    },
+    {
+      "name": "release",
+      "type": "integer",
+      "description": "编码后是否把 SigLIP/适配器淘汰出常驻 LRU（1=是，下次用重新装载；0=CPU 驻留，默认）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "编码超时（秒；首次装载模型约 1~2 分钟）",
+      "required": false,
+      "default": 900
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "COND": "{{ Param.cond }}",
+    "IMAGE": "{{ Param.image }}",
+    "STRENGTH": "{{ Param.strength }}",
+    "REDUCER": "{{ Param.reducer }}",
+    "VISION": "{{ Param.vision }}",
+    "RELEASE": "{{ Param.release }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "注入参考图语义的 COND 引用（729 Redux token + 原文本序列，接 flux-sampler 的 cond）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "编码统计（张量形状、耗时）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 960,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": false
+  }
+}

@@ -73,6 +73,13 @@
       "description": "kps 关键点图画布高（默认 0=不启用）。与 canvas_width 配对使用，填生成画布高度，需为 8 的倍数",
       "required": false,
       "default": 0
+    },
+    {
+      "name": "canvas_mode",
+      "type": "string",
+      "description": "kps 画布映射模式：fit=letterbox（默认，完整保留参考构图，脸/画幅占比与参考一致，脸可能偏小）；cover=铺满裁溢出（人脸保持参考原尺度，身份保持生成优选，真机 sim 更高；参考图人脸贴边时可能裁到）。仅在 canvas_width/canvas_height 启用时生效",
+      "required": false,
+      "default": "fit"
     }
   ],
   "env": {

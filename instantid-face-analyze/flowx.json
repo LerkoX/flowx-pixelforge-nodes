@@ -59,6 +59,20 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "canvas_width",
+      "type": "integer",
+      "description": "kps 关键点图画布宽（默认 0=不启用，画在参考图原始尺寸上）。启用时与 canvas_height 一起填生成画布尺寸（如 768×768）：关键点等比缩放+居中映射，保人脸几何——参考图比例与生成比例不一致时必须启用，否则控制图被非均匀压缩导致生成人脸变扁/变长。需为 8 的倍数",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "canvas_height",
+      "type": "integer",
+      "description": "kps 关键点图画布高（默认 0=不启用）。与 canvas_width 配对使用，填生成画布高度，需为 8 的倍数",
+      "required": false,
+      "default": 0
     }
   ],
   "env": {

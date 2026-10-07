@@ -2,7 +2,7 @@
   "name": "vae-decode-video",
   "displayName": "VAE 视频解码",
   "description": "3D latent → VIDEO（视频 VAE 解码）：force_fp32 防 Pascal fp16 解码过曝/亮度漂移；decode_chunk_size 分块控制显存峰值（SVD 有效）。与 video-sample-latent 接力：采样与解码解耦，decode 精度/分块成为流水线可调参数",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "video",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -126,7 +127,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

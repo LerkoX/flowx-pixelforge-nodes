@@ -2,7 +2,7 @@
   "name": "empty-latent",
   "displayName": "空 Latent 图像",
   "description": "按宽高与 batch 在推理服务端创建空白 latent（对应 ComfyUI Empty Latent Image），输出 latent 对象 ID 供 KSampler 使用",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -12,9 +12,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

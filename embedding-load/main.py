@@ -4,7 +4,7 @@ from flowx_client import param, ref
 
 
 def main():
-    run_op("embedding.load", {
+    run_op("sd.embedding.load", {
         "clip": ref(param("clip")),
         "names": param("names"),
     }, emit_keys=['clip'], timeout=600)

@@ -2,7 +2,7 @@
   "name": "upscale-model-apply",
   "displayName": "模型放大",
   "description": "UPSCALE_MODEL + 图像 → 放大图（倍数为模型自带 scale）；tile=0 整图（默认，显存够时最快），>0 分块（overlap 16px 消接缝，大分辨率防爆显存）。服务端插件 upscale_ops.py 为唯一实现来源",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -102,7 +103,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

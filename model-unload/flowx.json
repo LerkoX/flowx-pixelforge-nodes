@@ -2,7 +2,7 @@
   "name": "model-unload",
   "displayName": "显存卸载（Unload Model）",
   "description": "卸载推理服务里常驻显存的模型（对标 ComfyUI 的 unload/free）：target 留空 = 全部卸载，否则按模型名匹配（可省略扩展名，支持 vae:/cn:/motion 组合管）。典型用法：视频/大模型段跑完先卸载，再跑图像采样 —— 8GB 卡上视频模型与图像模型同池常驻会把采样压到分钟级/步（dev-plan §21）。输出 unloaded/resident 两个清单",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -82,5 +83,5 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0"
 }

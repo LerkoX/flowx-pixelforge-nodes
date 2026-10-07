@@ -2,7 +2,7 @@
   "name": "vae-decode",
   "displayName": "VAE 解码",
   "description": "将采样后的 latent 解码为图像（对应 ComfyUI VAE Decode），输出推理服务端的图像对象 ID，供 Save Image 下载",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -12,9 +12,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

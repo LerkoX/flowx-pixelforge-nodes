@@ -53,6 +53,7 @@ COPY flux-vae-load/*.py              /opt/flowx-nodes/flux-vae-load/
 COPY flux-empty-latent/*.py          /opt/flowx-nodes/flux-empty-latent/
 COPY flux-clip-encode/*.py           /opt/flowx-nodes/flux-clip-encode/
 COPY flux-sampler/*.py               /opt/flowx-nodes/flux-sampler/
+COPY flux-redux-apply/*.py           /opt/flowx-nodes/flux-redux-apply/
 COPY flux-vae-decode/*.py            /opt/flowx-nodes/flux-vae-decode/
 COPY flux-vae-encode/*.py            /opt/flowx-nodes/flux-vae-encode/
 COPY flux-detail-refine/*.py         /opt/flowx-nodes/flux-detail-refine/

@@ -16,7 +16,6 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
   "parameters": [
     {
       "name": "service_url",
@@ -131,6 +130,7 @@
       "docker"
     ],
     "preferredType": "local",
-    "bundled": false
-  }
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0"
 }

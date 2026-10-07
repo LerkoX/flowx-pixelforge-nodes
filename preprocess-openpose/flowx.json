@@ -2,7 +2,7 @@
   "name": "preprocess-openpose",
   "displayName": "OpenPose 姿态提取",
   "description": "controlnet_aux OpenposeDetector 姿态骨架提取：全身骨架（默认），可选手部/面部细节；产出骨架叠加图，供 ControlNet openpose 控制采样作 hint（姿态复刻/指定姿势出图）。服务端插件 preprocess_ops.py 为唯一实现来源",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -14,7 +14,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -99,7 +100,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

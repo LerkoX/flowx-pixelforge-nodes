@@ -8,7 +8,7 @@ from flowx_client import param
 
 
 def main():
-    run_op("vae.load", {
+    run_op("sd.vae.load", {
         "name": param("name"),
         "dtype": param("dtype", "auto"),
     }, emit_keys=["vae"])

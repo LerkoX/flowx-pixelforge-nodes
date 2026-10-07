@@ -8,7 +8,7 @@ from flowx_client import param, ref
 
 
 def main():
-    run_op("controlnet.apply", {
+    run_op("sd.controlnet.apply", {
         "control_net": ref(param("control_net")),
         "image": ref(param("image")),
         "strength": param("strength", 1.0, cast=float),

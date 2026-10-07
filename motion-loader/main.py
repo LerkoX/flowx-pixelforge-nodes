@@ -5,7 +5,8 @@
 POST /jobs + 轮询，避免同步 /op 被隧道/代理的空闲超时掐断。"""
 import time
 
-from flowx_client import emit, param, submit_job, token, wait_job
+from flowx_client import (emit, ensure_plugin, param, submit_job, token,
+                          wait_job)
 
 
 def main():
@@ -13,9 +14,10 @@ def main():
     ckpt = param("ckpt_name")
     motion = param("motion_name")
     tok = token()
+    ensure_plugin(url, "sd.motion.load", tok=tok)
 
     t0 = time.time()
-    jid = submit_job(url, {"name": "motion.load",
+    jid = submit_job(url, {"name": "sd.motion.load",
                            "inputs": {"ckpt": ckpt, "motion": motion}}, tok)
     print(f"[motion] job={jid} submitted ({ckpt} + {motion})", flush=True)
     result = wait_job(url, jid, tok,

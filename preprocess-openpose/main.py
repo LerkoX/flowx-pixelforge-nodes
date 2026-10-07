@@ -16,7 +16,7 @@ def main():
         "image": ref(param("image")),
         "include_hand": _bool(param("include_hand", "false")),
         "include_face": _bool(param("include_face", "false")),
-    }, emit_keys=["image"], check_exists=True)
+    }, emit_keys=["image"])
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
   "name": "latent-upscale",
   "displayName": "Latent 放大",
   "description": "latent 空间插值放大：按 scale 倍率（默认 2.0）或目标 width/height（图像像素）；method 支持 bicubic/bilinear/nearest。hires.fix 潜空间路径核心件（放大后接 sample 低 denoise 精修）",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -114,7 +115,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

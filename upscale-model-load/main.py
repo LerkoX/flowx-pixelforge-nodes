@@ -10,7 +10,7 @@ from flowx_client import param
 def main():
     run_op("upscale_model.load", {
         "name": param("name"),
-    }, emit_keys=["upscale_model"], check_exists=True)
+    }, emit_keys=["upscale_model"])
 
 
 if __name__ == "__main__":

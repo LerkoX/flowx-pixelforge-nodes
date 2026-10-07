@@ -2,7 +2,7 @@
   "name": "checkpoint-loader",
   "displayName": "Checkpoint 加载",
   "description": "将指定 checkpoint（safetensors/ckpt）加载到推理服务显存中常驻（幂等，已加载则秒回），输出 model/clip/vae 引用供下游节点使用",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -12,9 +12,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

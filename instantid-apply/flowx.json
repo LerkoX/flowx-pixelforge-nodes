@@ -2,7 +2,7 @@
   "name": "instantid-apply",
   "displayName": "InstantID 应用",
   "description": "InstantID 身份保持生成（SDXL 专用）：人脸身份特征经 IPAdapter 注入 UNet（weight），关键点图经 InstantID ControlNet 控制面部位置/姿态（cn_strength）；输出 model/control 接采样节点。ipadapter 用 instantid-ip-adapter.bin，controlnet 用 instantid-controlnet。服务端插件 instantid_ops.py 为唯一实现来源",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sdxl",
@@ -14,7 +14,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -169,7 +170,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

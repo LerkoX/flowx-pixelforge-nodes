@@ -2,7 +2,7 @@
   "name": "preprocess-depth",
   "displayName": "MiDaS 深度提取",
   "description": "controlnet_aux MidasDetector（dpt_hybrid）单目深度估计：产出灰度深度图（近亮远暗），供 ControlNet depth 控制采样作 hint（锁构图/空间层次，配 control_v11f1p_sd15_depth）；输出尺寸=输入尺寸，CPU 推理不占显存。服务端插件 preprocess_ops.py 为唯一实现来源",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -14,7 +14,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -91,7 +92,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

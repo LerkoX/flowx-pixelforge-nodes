@@ -2,7 +2,7 @@
   "name": "video-sample-latent",
   "displayName": "视频采样（latent）",
   "description": "SVD 视频采样只出 latent 不解码，输出 3D latent 供 vae-decode-video 接力；分钟级任务。preview_every>0 时画布实时预览采样帧",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "video",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -179,7 +180,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

@@ -2,7 +2,7 @@
   "name": "clip-text-encode",
   "displayName": "CLIP 文本编码",
   "description": "将提示词文本编码为 conditioning（驻留推理服务 GPU 内存），输出 cond_id；正向/反向提示词各用一个实例。按底模架构分派：SD1.x 单编码器；SDXL 双 text encoder + pooled（采样时自动注入 added_cond_kwargs），此时 width/height 指定“原始尺寸”供 time_ids 使用",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -12,9 +12,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

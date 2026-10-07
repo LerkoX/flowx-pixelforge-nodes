@@ -9,14 +9,15 @@ preview_every=0 关闭预览（进度仍经 job 轮询上报）。
 """
 import time
 
-from flowx_client import (emit, emit_preview, host_base, param, ref, submit_job,
-                          token, wait_job)
+from flowx_client import (emit, emit_preview, ensure_plugin, host_base,
+                          param, ref, submit_job, token, wait_job)
 
 
 def main():
     url = param("service_url").rstrip("/")
     pbase = host_base(url)  # 画布预览帧由 Studio 取，必须宿主机可达
     tok = token()
+    ensure_plugin(url, "sd.sample", tok=tok)
     preview_every = param("preview_every", 1, int)
     inputs = {
         "model": ref(param("model_ref")),
@@ -41,7 +42,7 @@ def main():
           f"control={'yes' if control else 'no'}", flush=True)
 
     t0 = time.time()
-    jid = submit_job(url, {"name": "sample", "inputs": inputs}, tok)
+    jid = submit_job(url, {"name": "sd.sample", "inputs": inputs}, tok)
     print(f"[ksampler] job={jid} submitted "
           f"(preview {'every ' + str(preview_every) + ' step' if preview_every > 0 else 'off'})",
           flush=True)

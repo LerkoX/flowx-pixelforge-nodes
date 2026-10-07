@@ -19,7 +19,7 @@ def main():
         "canvas_width": param("canvas_width", "0", cast=int),
         "canvas_height": param("canvas_height", "0", cast=int),
         "canvas_mode": param("canvas_mode", "fit"),
-    }, emit_keys=["face", "kps"], check_exists=True)
+    }, emit_keys=["face", "kps"])
 
 
 if __name__ == "__main__":

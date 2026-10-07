@@ -2,7 +2,7 @@
   "name": "latent-composite",
   "displayName": "Latent 合成",
   "description": "把 src latent 贴入 dst 的 (x,y) 处（图像像素坐标），越界自动裁剪；feather>0（图像像素）边缘线性羽化。带 noise_mask 的 latent 会被拒绝（先 composite 再 set_noise_mask）",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -118,7 +119,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

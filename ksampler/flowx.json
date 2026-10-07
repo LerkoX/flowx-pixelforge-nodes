@@ -2,7 +2,7 @@
   "name": "ksampler",
   "displayName": "KSampler 采样器",
   "description": "扩散采样（对应 ComfyUI KSampler）：消费模型引用、正/反 conditioning、latent，按 seed/steps/cfg/sampler 迭代去噪，输出采样后 latent 对象 ID；经推理服务异步 job 通道执行，采样中预览帧留在服务端 GET /preview/{job_id}，节点轮询时经 stdout 标记上报地址，Studio 中转拉帧给画布实时渲染（媒体全程 HTTP，不走 base64）",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -12,9 +12,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

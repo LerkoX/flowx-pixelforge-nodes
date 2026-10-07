@@ -4,13 +4,17 @@
 避免同步 /op 被隧道/代理的空闲超时掐断（同 motion-loader 模式）。"""
 import time
 
-from flowx_client import emit, get_json, param, submit_job, token, wait_job
+from flowx_client import (emit, ensure_plugin, get_json, param, submit_job,
+                          token, wait_job)
+
+OP = "sd.checkpoint.load"
 
 
 def main():
     url = param("service_url").rstrip("/")
     ckpt = param("ckpt_name")
     tok = token()
+    ensure_plugin(url, OP, tok=tok)
 
     # 性能旋钮（dtype/offload/use_t5）：auto/留空 = 继承服务端进程级环境变量；
     # 显式指定时作为模型级覆盖透传给 checkpoint.load——同模型不同旋钮组合
@@ -23,7 +27,7 @@ def main():
     knobs = {k: v for k, v in inputs.items() if k != "ckpt"}
 
     t0 = time.time()
-    jid = submit_job(url, {"name": "checkpoint.load",
+    jid = submit_job(url, {"name": OP,
                            "inputs": inputs}, tok)
     print(f"[loader] job={jid} submitted (ckpt={ckpt}, knobs={knobs or 'auto'})", flush=True)
     result = wait_job(url, jid, tok,

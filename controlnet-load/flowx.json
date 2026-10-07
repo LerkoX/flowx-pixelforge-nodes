@@ -2,7 +2,7 @@
   "name": "controlnet-load",
   "displayName": "ControlNet 加载",
   "description": "加载 ControlNet 组件（MODELS_DIR 下 control_v11* 等 safetensors 单文件或 diffusers 组件目录），输出 CONTROL_NET 句柄经 controlnet-apply 捆绑 hint 图后喂采样节点 control 端口；dtype=auto 默认 fp16，进模型 LRU 常驻管理",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -85,7 +86,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

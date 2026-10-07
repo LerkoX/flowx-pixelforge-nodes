@@ -2,7 +2,7 @@
   "name": "face-similarity",
   "displayName": "人脸相似度",
   "description": "两张图各自取目标人脸（默认最大脸），返回身份余弦相似度（insightface antelopev2 normed_embedding 点积，onnxruntime CPU，不占显存）——InstantID 身份保持效果的验收/调试量化：同人典型 >=0.5，陌生人典型 <0.3。任一侧未检出人脸明确报错。服务端插件 instantid_ops.py 的 face.similarity 算子",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -16,7 +16,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -121,7 +122,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

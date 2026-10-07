@@ -12,7 +12,7 @@ def main():
         "upscale_model": ref(param("upscale_model")),
         "image": ref(param("image")),
         "tile": param("tile", 0, cast=int),
-    }, emit_keys=["image"], check_exists=True)
+    }, emit_keys=["image"])
 
 
 if __name__ == "__main__":

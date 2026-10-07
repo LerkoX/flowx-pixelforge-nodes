@@ -11,7 +11,7 @@ def main():
     run_op("preprocess.depth", {
         "image": ref(param("image")),
         "detect_resolution": int(param("detect_resolution", "512")),
-    }, emit_keys=["image"], check_exists=True)
+    }, emit_keys=["image"])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from flowx_client import param, ref
 
 
 def main():
-    run_op("vae.decode_video", {
+    run_op("video.vae.decode", {
         "vae": ref(param("vae")),
         "latents": ref(param("latents")),
         "num_frames": param("num_frames", 0, cast=int),

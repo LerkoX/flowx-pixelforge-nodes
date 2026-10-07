@@ -5,13 +5,16 @@
 17s/步、精修 127s/步。显存预算式淘汰（服务端）解决"加载时"的挤压，本节点解决
 "跑完主动腾地方"这一步：视频段结束 → 卸载 → 随后图像采样回到基线。
 """
-from flowx_client import emit, param, post_json, token
+from flowx_client import emit, ensure_plugin, param, post_json, token
 
 
 def main():
     url = param("service_url").rstrip("/")
     target = param("target", "")
     tok = token()
+    # model.unload 算子形态随节点自注册（图编排/inference-op 用）；
+    # 本节点主路径走 POST /model/unload 端点（运维同语义）
+    ensure_plugin(url, "model.unload", tok=tok)
     res = post_json(url, "/model/unload", {"target": target}, tok, timeout=300)
     unloaded = res.get("unloaded", "(none)")
     resident = res.get("resident", "(empty)")

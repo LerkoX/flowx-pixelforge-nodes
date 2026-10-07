@@ -2,7 +2,7 @@
   "name": "motion-loader",
   "displayName": "Motion 加载",
   "description": "把 AnimateDiff 运动模块（MotionAdapter）组合进 SD1.x 底模管道，组装成文生视频管道（AnimateDiffPipeline）；输出 model/clip/vae 引用，下游接 video-gen（文本驱动，无需首帧图）",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -21,9 +21,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

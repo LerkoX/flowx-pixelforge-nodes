@@ -2,7 +2,7 @@
   "name": "cond-set-area",
   "displayName": "Conditioning 设区域",
   "description": "把整图 cond 标记为只在指定区域生效（对标 ComfyUI ConditioningSetArea）：x/y/width/height 为图像像素，strength 为该段权重。多区域构图 = 多个 set_area 经 cond-combine 拼接（重叠区域效果叠加）。暂不与 controlnet 组合",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -122,7 +123,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

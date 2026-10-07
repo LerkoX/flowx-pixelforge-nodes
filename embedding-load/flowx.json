@@ -2,7 +2,7 @@
   "name": "embedding-load",
   "displayName": "Embedding 加载",
   "description": "Textual Inversion 加载：把 embeddings 目录下的 embedding（逗号分隔，如 badhandv4,EasyNegative）载进 CLIP 文本编码器；之后正/反提示词里直接写该词生效（常用于负面压制缺陷）。幂等，已加载自动跳过",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -90,7 +91,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

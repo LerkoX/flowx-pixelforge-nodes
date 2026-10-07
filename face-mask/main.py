@@ -14,7 +14,7 @@ def main():
         "det_thresh": float(param("det_thresh", "0.2")),
         "expand": float(param("expand", "0.6")),
         "feather": float(param("feather", "16")),
-    }, emit_keys=["mask", "x", "y", "width", "height"], check_exists=True)
+    }, emit_keys=["mask", "x", "y", "width", "height"])
 
 
 if __name__ == "__main__":

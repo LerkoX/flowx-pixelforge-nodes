@@ -11,8 +11,8 @@ POST /interrupt。
 """
 import time
 
-from flowx_client import (emit, emit_preview, host_base, param, ref, submit_job,
-                          token, wait_job)
+from flowx_client import (emit, emit_preview, ensure_plugin, host_base,
+                          param, ref, submit_job, token, wait_job)
 
 
 def main():
@@ -40,6 +40,8 @@ def main():
         inputs["image"] = ref(image_id)
     # latent 模式不解码，分块参数无意义（算子未声明的输入会被静默忽略，仅日志不展示）
     op_name = "video.sample_latent" if output_mode == "latent" else "video.sample"
+    # video.sample / video.sample_latent 同族同文件（server_op.py 同时注册两者）
+    ensure_plugin(url, op_name, tok=tok)
 
     print(f"[video-gen] {inputs['width']}x{inputs['height']} "
           f"frames={inputs['num_frames']} fps={inputs['fps']} "

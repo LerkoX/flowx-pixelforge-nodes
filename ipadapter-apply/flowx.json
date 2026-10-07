@@ -2,7 +2,7 @@
   "name": "ipadapter-apply",
   "displayName": "IPAdapter 应用",
   "description": "参考图驱动生成：image 编码成图像条件注入采样（风格/内容/构图迁移）。weight 常用 0.5~1.0；start/end_percent 限定注入步区间（默认全程）。仅支持 SD1.x/SDXL 底模，可与 ControlNet/LoRA 叠加。",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "executor": {
     "supportedTypes": [
@@ -148,5 +149,5 @@
       "description": "注入 IPAdapter 的 MODEL 对象 ID（接 ksampler）"
     }
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0"
 }

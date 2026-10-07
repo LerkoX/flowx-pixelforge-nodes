@@ -2,7 +2,8 @@
 
 走异步任务通道 POST /jobs + 轮询（同 motion-loader 模式）：sequential offload /
 隧道环境下挂载补丁可能触发组件搬运，同步 /op 会被代理空闲超时掐断。"""
-from flowx_client import emit, param, ref, submit_job, token, wait_job
+from flowx_client import (emit, ensure_plugin, param, ref, submit_job,
+                          token, wait_job)
 
 
 def main():
@@ -11,8 +12,9 @@ def main():
     lora = param("lora_name")
     strength = param("strength", 1.0, float)
     tok = token()
+    ensure_plugin(url, "sd.lora.apply", tok=tok)
 
-    jid = submit_job(url, {"name": "lora.apply",
+    jid = submit_job(url, {"name": "sd.lora.apply",
                            "inputs": {"model": ref(model), "lora": lora,
                                       "strength": strength}}, tok)
     print(f"[lora] job={jid} submitted ({lora}@{strength})", flush=True)

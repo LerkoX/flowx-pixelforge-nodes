@@ -4,7 +4,7 @@
 + pooled（采样时自动注入 added_cond_kwargs）。width/height/clip_skip 仅 SDXL
 有意义（原始尺寸 → time_ids；clip_skip=-2 为 SDXL 常用），0 = 默认/auto。
 """
-from flowx_client import call_op, emit, param, ref, token
+from flowx_client import call_op, emit, ensure_plugin, param, ref, token
 
 
 def main():
@@ -15,8 +15,9 @@ def main():
     height = param("height", 0, cast=int)
     clip_skip = param("clip_skip", 0, cast=int)
     tok = token()
+    ensure_plugin(url, "sd.clip.encode", tok=tok)
 
-    out = call_op(url, "clip.encode",
+    out = call_op(url, "sd.clip.encode",
                   {"clip": ref(clip), "text": text, "width": width,
                    "height": height, "clip_skip": clip_skip}, tok, timeout=300)
     preview = text if len(text) <= 60 else text[:60] + "..."

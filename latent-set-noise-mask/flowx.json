@@ -2,7 +2,7 @@
   "name": "latent-set-noise-mask",
   "displayName": "Latent 噪点蒙版",
   "description": "给 latent 包裹 noise_mask（局部重绘/inpaint 核心）：mask 为灰度图（白=重绘区域），内部 resize 到 latent 尺寸；配 vae-encode + sample(denoise<1) 做 inpaint",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -14,7 +14,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -95,7 +96,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

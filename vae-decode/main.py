@@ -1,12 +1,13 @@
 """vae-decode：VAE Decode，latent → 图像对象引用。"""
-from flowx_client import call_op, emit, param, ref, token
+from flowx_client import call_op, emit, ensure_plugin, param, ref, token
 
 
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
+    ensure_plugin(url, "sd.vae.decode", tok=tok)
 
-    out = call_op(url, "vae.decode",
+    out = call_op(url, "sd.vae.decode",
                   {"vae": ref(param("vae_ref")), "latent": ref(param("latent"))},
                   tok, timeout=600)
     print(f"[decode] -> image={out['image']}", flush=True)

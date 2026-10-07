@@ -7,7 +7,7 @@ from flowx_client import param
 
 
 def main():
-    run_op("controlnet.load", {
+    run_op("sd.controlnet.load", {
         "name": param("name"),
         "dtype": param("dtype", "auto"),
     }, emit_keys=["control_net"])

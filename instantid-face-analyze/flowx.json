@@ -2,7 +2,7 @@
   "name": "instantid-face-analyze",
   "displayName": "InstantID 人脸分析",
   "description": "insightface（antelopev2，CPU）人脸检测 + 512 维身份特征提取 + 5 关键点控制图生成，InstantID 身份保持生成的前置。服务端插件 instantid_ops.py 为唯一实现来源",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sdxl",
@@ -14,7 +14,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -117,7 +118,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

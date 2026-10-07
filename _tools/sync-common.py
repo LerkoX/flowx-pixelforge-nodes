@@ -26,6 +26,23 @@ def targets(name, node_dir):
     return False
 
 
+# 算子族文件（_common/server_ops/<族>.py）→ 成员节点的 server_op.py。
+# 同族多算子共享 helper，单文件上传机制下同族同文件可避免跨文件重名 409；
+# 集中放 _common 由本脚本分发，防多副本漂移（同 flowx_client 教训）。
+OP_FAMILIES = {
+    "cond_latent.py": ["cond-average", "cond-combine", "cond-set-area",
+                       "latent-composite", "latent-set-noise-mask",
+                       "latent-upscale"],
+    "preprocess.py": ["preprocess-canny", "preprocess-depth",
+                      "preprocess-openpose"],
+    "ipadapter.py": ["ipadapter-load", "ipadapter-apply", "clip-vision-load"],
+    "instantid.py": ["instantid-apply", "instantid-face-analyze",
+                     "face-mask", "face-similarity"],
+    "upscale.py": ["upscale-model-load", "upscale-model-apply"],
+    "video_sample.py": ["video-gen", "video-sample-latent"],
+}
+
+
 def main():
     check = "--check" in sys.argv
     drift, wrote = [], 0
@@ -44,6 +61,19 @@ def main():
                 else:
                     dst.write_text(want)
                     wrote += 1
+    # 算子族分发：_common/server_ops/<族>.py → 成员节点 server_op.py
+    fam_dir = ROOT / "_common" / "server_ops"
+    for fam, members in sorted(OP_FAMILIES.items()):
+        src = fam_dir / fam
+        want = src.read_text()
+        for member in members:
+            dst = ROOT / member / "server_op.py"
+            if not dst.exists() or dst.read_text() != want:
+                if check:
+                    drift.append(str(dst.relative_to(ROOT)))
+                else:
+                    dst.write_text(want)
+                    wrote += 1
     if check:
         if drift:
             print(f"✗ 共享件漂移（{len(drift)} 个）：{drift[:5]}"
@@ -52,7 +82,8 @@ def main():
             return 1
         print("✓ 共享件一致（_common → 各节点目录）")
         return 0
-    print(f"✓ 已同步共享件：写入 {wrote} 个文件（源：{', '.join(p.name for p in sources)}）")
+    print(f"✓ 已同步共享件：写入 {wrote} 个文件（源：{', '.join(p.name for p in sources)}"
+          f" + server_ops 族文件 {len(OP_FAMILIES)} 个）")
     return 0
 
 

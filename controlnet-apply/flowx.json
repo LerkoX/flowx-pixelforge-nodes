@@ -2,7 +2,7 @@
   "name": "controlnet-apply",
   "displayName": "ControlNet 应用",
   "description": "ControlNetModel + hint 图（边缘/姿态等线稿，预处理器产出）捆绑为 CONTROL；strength=残差强度（默认 1.0，0 ≡ 关闭）；start/end_percent 为生效步窗口（默认全程）。暂不与 cond.set_area 组合",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -118,7 +119,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

@@ -20,7 +20,7 @@ def main():
         "end_percent": param("end_percent", "1", cast=float),
         "cn_start_percent": param("cn_start_percent", "0", cast=float),
         "cn_end_percent": param("cn_end_percent", "1", cast=float),
-    }, emit_keys=["model", "control"], check_exists=True)
+    }, emit_keys=["model", "control"])
 
 
 if __name__ == "__main__":

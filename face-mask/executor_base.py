@@ -6,7 +6,7 @@
     from flowx_client import param, ref
 
     def main():
-        run_op("controlnet.apply", {
+        run_op("sd.controlnet.apply", {
             "control_net": ref(param("control_net")),
             "image": ref(param("image")),
             "strength": param("strength", 1.0, cast=float),
@@ -24,32 +24,47 @@
 - 输出经 ```flowx-yaml 块：outputs_json + __op_name + __inputs_resolved
   + emit_keys 指定键；__ 前缀内部元数据供 Studio op-replay 端点重放
   （预处理调参即时预览），widget 显示时过滤 __ 前缀；
-- check_exists=True 时先查 /ops 校验算子已注册（插件算子缺失给出明确报错）。
+- 算子自注册：节点目录带 server_op.py 时先 ensure_plugin 上传热加载
+  （算子实现随节点包分发，hash 比对幂等）；未携带时回退 /ops 存在性校验
+  （提示升级节点包）。check_exists 形参保留兼容，已无实际分支。
 """
 import json
+import os
 
-from flowx_client import (emit_preview, get_json, host_base, param, submit_job,
-                          token, wait_job)
+from flowx_client import (emit_preview, ensure_plugin, get_json, host_base,
+                          param, submit_job, token, wait_job)
+
+_SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def check_op_exists(url, tok, op_name):
-    """插件算子存在性校验：算子实现以服务端（plugins/）为唯一来源，
-    节点包不自注册实现；缺失时给出可操作的报错。"""
+    """算子存在性校验（节点未携带 server_op.py 时的回退路径）：
+    缺失说明节点包/镜像过旧，给出可操作的报错。"""
     ops = get_json(url, "/ops", tok, timeout=30).get("ops", [])
     if not any(o.get("name") == op_name for o in ops):
         raise RuntimeError(
-            f"算子 '{op_name}' 未注册：推理服务侧插件未部署"
-            f"（该算子实现以服务端为唯一来源，节点包不自注册）")
+            f"算子 '{op_name}' 未注册且节点包未携带 server_op.py："
+            f"请升级该节点包（或节点镜像）到算子自注册版本后重试")
+
+
+def ensure_op(url, tok, op_name):
+    """节点目录带 server_op.py 时自注册（ensure_plugin 按内容 hash 幂等）；
+    未携带时回退为存在性校验。"""
+    plugin = os.path.join(_SELF_DIR, "server_op.py")
+    if os.path.isfile(plugin):
+        ensure_plugin(url, op_name, plugin_path=plugin, tok=tok)
+    else:
+        check_op_exists(url, tok, op_name)
 
 
 def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
     """提交单个算子为异步 job 并回传输出。inputs 中对象引用用 ref() 包装；
-    service_url/service_token 从节点参数读（flowx.json env 映射）。"""
+    service_url/service_token 从节点参数读（flowx.json env 映射）。
+    check_exists 保留兼容（旧节点签名），自注册模式下无需显式传。"""
     url = param("service_url").rstrip("/")
     tok = token()
 
-    if check_exists:
-        check_op_exists(url, tok, op_name)
+    ensure_op(url, tok, op_name)
 
     jid = submit_job(url, {"name": op_name, "inputs": inputs}, tok)
     print(f"[op] {op_name} job={jid[:8]}", flush=True)

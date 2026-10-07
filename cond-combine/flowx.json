@@ -2,7 +2,7 @@
   "name": "cond-combine",
   "displayName": "Conditioning 拼接",
   "description": "两段 conditioning 沿序列维拼接（对标 ComfyUI ConditioningCombine），两段提示词同时生效，可突破 77 token 截断；多区域构图 = set_area 产物经本算子串联。暂不支持 SD3 dict 形式 COND",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -94,7 +95,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

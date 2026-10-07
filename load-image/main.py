@@ -1,7 +1,7 @@
 """load-image：读取本地图片上传到推理服务（POST /images），输出图像对象 ID。"""
 import os
 
-from flowx_client import emit, param, post_bytes, token
+from flowx_client import emit, ensure_plugin, param, post_bytes, token
 
 _MAX_BYTES = 32 * 1024 * 1024  # 与服务端 MAX_UPLOAD_MB 默认值对齐
 
@@ -10,6 +10,9 @@ def main():
     url = param("service_url").rstrip("/")
     path = os.path.expanduser(param("image_path"))
     tok = token()
+    # image.load 算子（服务端 INPUT_DIR 本地图）随节点自注册；
+    # 本节点主路径走 POST /images 上传客户端本地图
+    ensure_plugin(url, "image.load", tok=tok)
 
     if not os.path.isfile(path):
         raise RuntimeError(f"image file not found: {path}")

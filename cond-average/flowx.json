@@ -2,7 +2,7 @@
   "name": "cond-average",
   "displayName": "Conditioning 平均",
   "description": "两段 conditioning 按权重加权平均（对标 ComfyUI ConditioningAverage）：out = a*weight + b*(1-weight)；序列长度不同时短者补零。暂不支持 SD3 dict 形式 COND",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -102,7 +103,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

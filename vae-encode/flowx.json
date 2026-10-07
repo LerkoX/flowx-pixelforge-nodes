@@ -2,7 +2,7 @@
   "name": "vae-encode",
   "displayName": "VAE 编码",
   "description": "将图像编码为 latent（对应 ComfyUI VAE Encode），供图生图链路使用：输出接 KSampler 的 latent 输入并将 denoise 调低（如 0.6）",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -12,9 +12,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

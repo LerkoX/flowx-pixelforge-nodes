@@ -1,10 +1,11 @@
 """image-upscale：图像放大（hires.fix 前置），图像对象引用 → 放大后的图像对象引用。"""
-from flowx_client import call_op, emit, param, ref, token
+from flowx_client import call_op, emit, ensure_plugin, param, ref, token
 
 
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
+    ensure_plugin(url, "image.upscale", tok=tok)
     scale = param("scale", 2.0, cast=float)
     width = param("width", 0, cast=int)
     height = param("height", 0, cast=int)

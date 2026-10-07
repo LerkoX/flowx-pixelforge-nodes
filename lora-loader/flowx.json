@@ -2,7 +2,7 @@
   "name": "lora-loader",
   "displayName": "LoRA 加载",
   "description": "给 MODEL 挂 LoRA 增量补丁（对应 ComfyUI LoraLoader）：不改底模，补丁在采样时按 strength 启用；多个 LoRA 可串联叠加，各带独立强度",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,9 +13,10 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "parameters": [
     {
       "name": "service_url",

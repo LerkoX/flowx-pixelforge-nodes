@@ -2,7 +2,7 @@
   "name": "upscale-model-load",
   "displayName": "放大模型加载",
   "description": "加载放大模型（RealESRGAN/SwinIR 等 .pth/.safetensors，spandrel 自动识别架构与倍数），输出 UPSCALE_MODEL 句柄供 upscale-model-apply；服务端插件 upscale_ops.py 为唯一实现来源",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -13,7 +13,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -77,7 +78,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

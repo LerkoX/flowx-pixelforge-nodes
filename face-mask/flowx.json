@@ -2,7 +2,7 @@
   "name": "face-mask",
   "displayName": "人脸蒙版",
   "description": "insightface 检测人脸 bbox → 中心外扩（覆盖全脸+发际）→ 8 倍数对齐，输出 feathered 矩形蒙版 + crop 框坐标（x/y/width/height），供 image-crop 裁剪与 image-composite 贴回直接绑定——FaceDetailer（面部局部精修）编排的入口。服务端插件 instantid_ops.py 的 face.mask 算子（onnxruntime CPU，不占显存）",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -15,7 +15,8 @@
   "entry": "main.py",
   "files": [
     "flowx_client.py",
-    "executor_base.py"
+    "executor_base.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -136,7 +137,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.6.9",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

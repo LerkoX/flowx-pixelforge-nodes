@@ -2,7 +2,7 @@
   "name": "instantid-face-analyze",
   "displayName": "InstantID 人脸分析",
   "description": "insightface（antelopev2，CPU）人脸检测 + 512 维身份特征提取 + 5 关键点控制图生成，InstantID 身份保持生成的前置。服务端插件 instantid_ops.py 为唯一实现来源",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sdxl",
@@ -81,6 +81,27 @@
       "description": "kps 画布映射模式：fit=letterbox（默认，完整保留参考构图，脸/画幅占比与参考一致，脸可能偏小）；cover=铺满裁溢出（人脸保持参考原尺度，身份保持生成优选，真机 sim 更高；参考图人脸贴边时可能裁到）。仅在 canvas_width/canvas_height 启用时生效",
       "required": false,
       "default": "fit"
+    },
+    {
+      "name": "face_scale",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "人脸关键点缩放系数（0.05~1.0，需配合 canvas 尺寸使用）：fit/cover 之上以人脸为锚再缩小——特写参考照做全身构图时设 0.2~0.4，脸在画面中变小，身体才有构图空间"
+    },
+    {
+      "name": "face_x",
+      "type": "float",
+      "required": false,
+      "default": 0.5,
+      "description": "缩放后人脸中心在画布的横向归一化位置（0~1，默认 0.5 居中）"
+    },
+    {
+      "name": "face_y",
+      "type": "float",
+      "required": false,
+      "default": 0.5,
+      "description": "缩放后人脸中心在画布的纵向归一化位置（0~1）；全身像建议 0.15~0.25（脸在画面上部，身体留构图空间）"
     }
   ],
   "env": {
@@ -118,7 +139,7 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.1",
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

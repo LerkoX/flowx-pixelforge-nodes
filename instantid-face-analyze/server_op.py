@@ -220,8 +220,22 @@ def fit_kps_to_canvas(kps, width, height, canvas_width, canvas_height,
     return out, s, ox, oy
 
 
+def _anchor_scale_kps(kps, face_scale, face_x, face_y, canvas_w, canvas_h):
+    """以关键点包围盒中心为锚缩放，再把锚点平移到画布 (face_x·cw, face_y·ch)。
+    用途：特写参考照做全身构图——fit/cover 后人脸仍保持参考图占比，
+    face_scale<1 把关键点整体缩小（脸在画面中变小），face_x/face_y 把脸
+    定位到画布上部（如 face_y=0.2），为身体留出构图空间。"""
+    xs = [p[0] for p in kps]
+    ys = [p[1] for p in kps]
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    tx, ty = face_x * canvas_w, face_y * canvas_h
+    return [[(x - cx) * face_scale + tx, (y - cy) * face_scale + ty]
+            for x, y in kps]
+
+
 def face_analyze(image, face_index=-1, det_thresh=0.5,
-                 canvas_width=0, canvas_height=0, canvas_mode="fit"):
+                 canvas_width=0, canvas_height=0, canvas_mode="fit",
+                 face_scale=1.0, face_x=0.5, face_y=0.5):
     """Face Analyze：检测输入图人脸，输出 FACE 对象（512 维身份特征 +
     关键点图）。face_index：-1=最大脸（官方语义），0..N-1=按面积降序第 N 张。
     det_thresh：检测置信度阈值（默认 0.5；AI 生成的人脸置信度常仅
@@ -232,12 +246,28 @@ def face_analyze(image, face_index=-1, det_thresh=0.5,
     生成人脸随参考图比例变扁/变长。
     canvas_mode="fit"（默认，letterbox 完整保留参考构图）/ "cover"
     （铺满裁溢出，人脸保持参考原尺度——身份保持生成优选，真机 sim 更高）。
+    face_scale（默认 1.0，需配合 canvas 使用）：fit/cover 之上以人脸关键点
+    包围盒中心为锚再缩放——特写参考照做全身构图时设 0.2~0.4 让脸变小；
+    face_x/face_y（默认 0.5/0.5）为缩放后人脸中心在画布上的归一化位置，
+    全身像建议 face_y≈0.15~0.25（脸在画面上部，身体留构图空间）。
     人脸特征为 antelopev2 的原始 embedding（InstantID 训练尺度）；
     FACE 对象另存 normed_embedding 供余弦相似度回测（点积即余弦）。"""
     from PIL import Image
     if not isinstance(image, Image.Image):
         raise ValueError(
             f"face.analyze: image 需为单张 PIL 图像，got {type(image).__name__}")
+    # 轻量参数校验全部在 cv2/onnxruntime 懒加载之前（本机无重依赖时契约可测）
+    face_scale = float(face_scale)
+    face_x, face_y = float(face_x), float(face_y)
+    if not 0.05 <= face_scale <= 1.0:
+        raise ValueError(
+            f"face.analyze: face_scale 需在 [0.05,1]，got {face_scale}")
+    if not (0.0 <= face_x <= 1.0 and 0.0 <= face_y <= 1.0):
+        raise ValueError(
+            f"face.analyze: face_x/face_y 需在 [0,1]，got ({face_x},{face_y})")
+    if face_scale != 1.0 and not (int(canvas_width) > 0):
+        raise ValueError(
+            "face.analyze: face_scale 需配合 canvas_width/canvas_height 使用")
     import cv2
     import numpy as np
     face_index = int(face_index)
@@ -278,9 +308,13 @@ def face_analyze(image, face_index=-1, det_thresh=0.5,
     if cw > 0:
         kps_t, s, ox, oy = fit_kps_to_canvas(f.kps, image.width, image.height,
                                              cw, ch, mode=str(canvas_mode))
+        if face_scale != 1.0:
+            kps_t = _anchor_scale_kps(kps_t, face_scale, face_x, face_y,
+                                      cw, ch)
         kps_img = draw_kps(None, kps_t, size=(cw, ch))
         print(f"[face.analyze] canvas={cw}x{ch} mode={canvas_mode} "
-              f"fit: s={s:.4f} offset=({ox:.0f},{oy:.0f})", flush=True)
+              f"fit: s={s:.4f} offset=({ox:.0f},{oy:.0f}) "
+              f"face_scale={face_scale} anchor=({face_x},{face_y})", flush=True)
     else:
         kps_img = draw_kps(image, f.kps)
     face = {"embeds": emb, "kps_image": kps_img,
@@ -487,7 +521,8 @@ def register(registry):
         "face.analyze",
         inputs={"image": "IMAGE", "face_index": "INT", "det_thresh": "FLOAT",
                 "canvas_width": "INT", "canvas_height": "INT",
-                "canvas_mode": "STRING"},
+                "canvas_mode": "STRING", "face_scale": "FLOAT",
+                "face_x": "FLOAT", "face_y": "FLOAT"},
         outputs={"face": "FACE", "kps": "IMAGE"},
         description="Face Analyze（InstantID 配套）：insightface antelopev2 "
                     "检测+识别（onnxruntime CPU，不占显存），输出 512 维身份"

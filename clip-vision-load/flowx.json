@@ -84,5 +84,5 @@
       "description": "CLIP_VISION 对象 ID"
     }
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.0"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.1"
 }

@@ -716,6 +716,14 @@ function createNodeWidget(spec) {
         }
       }
 
+      const updateHint = () => {
+        paintHint.textContent = strokes.length
+          ? `${strokes.length} 笔 · ${refW}×${refH}${baseImg ? '' : '（空白参照）'}`
+          : (baseImg
+            ? `底图 ${baseImg.naturalWidth}×${baseImg.naturalHeight} · 未绘制`
+            : '未绘制 · 可空白起手（512×512 参照）')
+      }
+
       const maskCv = document.createElement('canvas')
       const renderThumb = () => {
         const W = Math.min(refW, 384)
@@ -969,26 +977,48 @@ function createNodeWidget(spec) {
 
       refreshers.push(() => {
         parseStrokes()
-        // 底图：上次执行 resolved inputs 里的原图对象（同 compareInput 链路）
+        // 底图两条链：① 回放/执行态：resolved inputs + 节点级代理（同 compareInput）；
+        // ② 编辑态：paramSources 运行时值解析出对象 id + 通用代理 blob 拉取
+        // （同模型下拉链路），执行过一次上游即可衬图绘制
         const resolved = resolvedInputs()
         const rr = resolved && resolved[P.imageInput]
-        const inId = rr && (typeof rr === 'string' ? rr : (rr.$id || rr.id || ''))
-        if (inId && cur.execution && inId !== baseFor) {
+        let inId = rr && (typeof rr === 'string' ? rr : (rr.$id || rr.id || ''))
+        let viaProxy = ''
+        if (!(inId && cur.execution)) {
+          const rv = resolveParam(P.imageInput)
+          const base = resolveParam('service_url')
+          if (rv && !isWired(rv) && /^[0-9a-f]{32}$/.test(rv) && base && !isWired(base)) {
+            inId = rv
+            viaProxy = base + '|' + (resolveParam('service_token') || '')
+          } else {
+            inId = ''
+          }
+        }
+        if (inId && inId !== baseFor) {
           baseFor = inId
           const img = new Image()
-          img.onload = () => { baseImg = img; thumbKey = ''; renderThumb() }
+          img.onload = () => { baseImg = img; thumbKey = ''; renderThumb(); updateHint() }
           img.onerror = () => { if (baseFor === inId) { baseFor = ''; baseImg = null } }
-          img.src = nodeProxyUrl('/images/' + inId, 'GET')
+          if (viaProxy) {
+            const [base, tok] = viaProxy.split('|')
+            fetch('/api/v1/service-proxy', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service_url: base, service_token: tok, method: 'GET', path: '/images/' + inId, timeout_sec: 30 }),
+            }).then((r) => {
+              if (!r.ok) throw new Error('HTTP ' + r.status)
+              return r.blob()
+            }).then((b) => { img.src = URL.createObjectURL(b) })
+              .catch(() => { if (baseFor === inId) { baseFor = ''; baseImg = null } })
+          } else {
+            img.src = nodeProxyUrl('/images/' + inId, 'GET')
+          }
         }
         const key = ((cur.params || {})[P.strokesKey] || '') + '|' + baseFor + '|' + (baseImg ? 1 : 0)
         if (key !== thumbKey) { thumbKey = key; renderThumb() }
         editBtn.disabled = !editable()
         editBtn.style.opacity = editable() ? '1' : '0.5'
-        paintHint.textContent = strokes.length
-          ? `${strokes.length} 笔 · ${refW}×${refH}${baseImg ? '' : '（空白参照）'}`
-          : (baseImg
-            ? `底图 ${baseImg.naturalWidth}×${baseImg.naturalHeight} · 未绘制`
-            : '未绘制 · 可空白起手（512×512 参照）')
+        updateHint()
       })
     }
 

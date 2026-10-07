@@ -41,10 +41,17 @@
  *                    （同上媒体端点 + lightbox）
  *   mediaVideoOutput （可选）输出键名（如 'file_path'）：内嵌 <video> 播放
  *                    落盘视频 + ⛶ 放大 lightbox（含全屏按钮）
+ *   paint         （可选）蒙版手绘：{ strokesKey, imageInput }。节点上显示
+ *                   底图+红罩缩略，点「✏️ 编辑蒙版」弹全屏编辑器（笔刷/矩形/
+ *                   橡皮/撤销/清除，捏合缩放平移）。笔画以矢量存 strokesKey
+ *                   参数（{strokes:[...], image_size:[w,h]}，分辨率无关，可再
+ *                   编辑）；底图从上次执行 __inputs_resolved 经节点级代理拉取
+ *                   （同 compareInput 链路），未执行过按 512x512 空白参照绘制。
+ *                   strokesKey 对应的参数不要放进 fields（由本控件管理）。
  *   note          （可选）输出说明行
  *
  * 布局顺序（固定，图像预览置顶）：状态行 → 过程/结果预览帧 → 前后对比 →
- *   本地图片/视频（含路径说明行）→ ▶重放按钮 → 实时预览开关 → 参数控件 →
+ *   蒙版手绘 → 本地图片/视频（含路径说明行）→ ▶重放按钮 → 实时预览开关 → 参数控件 →
  *   输出。未启用的块 display:none 不占位。
  */
 
@@ -651,6 +658,340 @@ function createNodeWidget(spec) {
       })
     }
 
+    // ---- 蒙版手绘区（spec.paint）：节点缩略预览 + ✏️弹窗编辑器 ----
+    // 笔画矢量存 strokesKey 参数；底图走 compareInput 同款链路（上次执行
+    // __inputs_resolved + 节点级代理 GET /images/{id}）；未执行过给 512x512
+    // 空白参照系，执行器按原图分辨率缩放光栅化。
+    let closePaintEditor = null
+    const paintWrap = h('div', 'display:none;margin-bottom:6px')
+    if (spec.paint) {
+      const P = spec.paint
+      let strokes = []
+      let refW = 512, refH = 512
+      let baseImg = null, baseFor = ''
+      let thumbKey = ''
+      const thumb = h('canvas', 'width:100%;border-radius:8px;display:block;background:#0b1220')
+      const bar = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
+      const editBtn = h('button', BTN_CSS + ';color:#f472b6;border-color:rgba(244,114,182,0.4)', '✏️ 编辑蒙版')
+      editBtn.title = '打开蒙版编辑器：笔刷/矩形涂抹重绘区域（白=重绘、黑=保留），橡皮修正'
+      const paintHint = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);flex:1;line-height:1.4')
+      bar.append(editBtn, paintHint)
+      paintWrap.append(thumb, bar)
+      paintWrap.style.display = 'block'
+
+      const parseStrokes = () => {
+        const raw = (cur.params || {})[P.strokesKey]
+        if (!raw || isWired(raw)) { strokes = []; return }
+        try {
+          const d = JSON.parse(raw)
+          strokes = Array.isArray(d.strokes) ? d.strokes : []
+          const sz = d.image_size
+          if (Array.isArray(sz) && Number(sz[0]) > 0 && Number(sz[1]) > 0) { refW = Number(sz[0]); refH = Number(sz[1]) }
+        } catch (_) { strokes = [] }
+      }
+
+      // 画一笔到 ctx（k = 画布像素 / 图像像素）；erase 用 destination-out 挖洞，
+      // 调用方需保证笔画画在独立图层上（否则会擦掉底图）
+      const drawStroke = (ctx, st, k) => {
+        ctx.globalCompositeOperation = st.type === 'erase' ? 'destination-out' : 'source-over'
+        ctx.fillStyle = 'rgba(244,63,94,1)'
+        ctx.strokeStyle = 'rgba(244,63,94,1)'
+        if (st.type === 'rect') {
+          const x = (st.x || 0) * k, y = (st.y || 0) * k
+          const w = (st.w || 0) * k, hh = (st.h || 0) * k
+          ctx.fillRect(Math.min(x, x + w), Math.min(y, y + hh), Math.abs(w), Math.abs(hh))
+          return
+        }
+        if (st.type === 'brush' || st.type === 'erase') {
+          const pts = st.points || []
+          if (!pts.length) return
+          ctx.lineWidth = Math.max(1, (st.size || 40) * k)
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          ctx.beginPath()
+          ctx.moveTo(pts[0][0] * k, pts[0][1] * k)
+          if (pts.length === 1) ctx.lineTo(pts[0][0] * k + 0.01, pts[0][1] * k)
+          else for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0] * k, pts[i][1] * k)
+          ctx.stroke()
+        }
+      }
+
+      const maskCv = document.createElement('canvas')
+      const renderThumb = () => {
+        const W = Math.min(refW, 384)
+        const k = W / refW
+        const H = Math.max(1, Math.round(refH * k))
+        if (thumb.width !== W || thumb.height !== H) { thumb.width = W; thumb.height = H }
+        const ctx = thumb.getContext('2d')
+        ctx.fillStyle = '#0b1220'
+        ctx.fillRect(0, 0, W, H)
+        if (baseImg) ctx.drawImage(baseImg, 0, 0, W, H)
+        if (strokes.length) {
+          maskCv.width = W; maskCv.height = H
+          const mctx = maskCv.getContext('2d')
+          mctx.clearRect(0, 0, W, H)
+          for (const st of strokes) drawStroke(mctx, st, k)
+          ctx.save(); ctx.globalAlpha = 0.55; ctx.drawImage(maskCv, 0, 0); ctx.restore()
+        }
+      }
+
+      // ---- 全屏编辑器 ----
+      const openEditor = () => {
+        if (closePaintEditor) return
+        // 工作坐标系 = 当前底图分辨率（无底图沿用存储参照）；与存储参照不同时
+        // 先把已有笔画换算过来，保存时以当前坐标系为准
+        const W0 = baseImg ? baseImg.naturalWidth : refW
+        const H0 = baseImg ? baseImg.naturalHeight : refH
+        const wk = strokes.map((s) => JSON.parse(JSON.stringify(s)))
+        if (W0 !== refW || H0 !== refH) {
+          const kx = W0 / refW, ky = H0 / refH, km = (kx + ky) / 2
+          for (const s of wk) {
+            if (s.points) s.points = s.points.map((p) => [p[0] * kx, p[1] * ky])
+            if (s.size) s.size = s.size * km
+            if (s.type === 'rect') { s.x *= kx; s.y *= ky; s.w *= kx; s.h *= ky }
+          }
+        }
+        let tool = 'brush'
+        let brushSize = 40
+        let curStroke = null
+
+        const overlay = h('div', [
+          'position:fixed', 'inset:0', 'z-index:9999', 'background:rgba(0,0,0,0.92)',
+          'display:flex', 'flex-direction:column', 'user-select:none', '-webkit-user-select:none',
+        ].join(';'))
+        // 工具栏
+        const tb = h('div', 'display:flex;align-items:center;gap:6px;padding:8px 10px;flex-wrap:wrap')
+        const TB_BTN = BTN_CSS + ';font-size:13px;padding:3px 9px'
+        const toolBtns = {}
+        const mkTool = (id, label, title) => {
+          const b = h('button', TB_BTN, label)
+          b.title = title
+          b.addEventListener('click', () => { tool = id; syncTools() })
+          toolBtns[id] = b
+          return b
+        }
+        const syncTools = () => {
+          for (const id of Object.keys(toolBtns)) {
+            toolBtns[id].style.borderColor = id === tool ? '#f472b6' : 'rgba(255,255,255,0.15)'
+            toolBtns[id].style.color = id === tool ? '#f472b6' : 'rgba(255,255,255,0.75)'
+          }
+        }
+        tb.append(
+          mkTool('brush', '🖌 笔刷', '涂抹重绘区域'),
+          mkTool('rect', '⬜ 矩形', '拖框填充重绘区域'),
+          mkTool('erase', '◻ 橡皮', '擦除已涂区域'),
+        )
+        const sizeLab = h('span', 'font-size:10px;color:rgba(255,255,255,0.5)', '笔刷 ' + brushSize)
+        const sizeRng = h('input', 'width:90px;accent-color:#f472b6')
+        sizeRng.type = 'range'; sizeRng.min = 4; sizeRng.max = 200; sizeRng.step = 1; sizeRng.value = brushSize
+        sizeRng.addEventListener('input', () => { brushSize = Number(sizeRng.value); sizeLab.textContent = '笔刷 ' + brushSize })
+        const undoBtn = h('button', TB_BTN, '↩ 撤销')
+        undoBtn.title = '撤销最后一笔'
+        undoBtn.addEventListener('click', () => { wk.pop(); redraw() })
+        const clearBtn = h('button', TB_BTN, '🗑 清除')
+        clearBtn.title = '清空全部笔画'
+        clearBtn.addEventListener('click', () => { wk.length = 0; redraw() })
+        const spacer = h('span', 'flex:1')
+        const cancelBtn = h('button', TB_BTN, '取消')
+        cancelBtn.addEventListener('click', () => close(false))
+        const doneBtn = h('button', TB_BTN + ';color:#34d399;border-color:rgba(52,211,153,0.5)', '✔ 完成')
+        doneBtn.title = '保存笔画并关闭（Esc = 取消）'
+        doneBtn.addEventListener('click', () => close(true))
+        tb.append(sizeLab, sizeRng, undoBtn, clearBtn, spacer, cancelBtn, doneBtn)
+
+        // 画布区：底图 canvas + 笔画 canvas 双层绝对定位，view 变换同步两层
+        const area = h('div', 'position:relative;flex:1;overflow:hidden;touch-action:none')
+        const bcv = h('canvas', 'position:absolute;left:0;top:0')
+        const pcv = h('canvas', 'position:absolute;left:0;top:0;cursor:crosshair;opacity:0.55')
+        area.append(bcv, pcv)
+        overlay.append(tb, area)
+
+        const view = { scale: 1, tx: 0, ty: 0 }
+        const fit = () => {
+          const aw = area.clientWidth || 360, ah = area.clientHeight || 480
+          view.scale = Math.min(aw / W0, ah / H0) * 0.94
+          view.tx = (aw - W0 * view.scale) / 2
+          view.ty = (ah - H0 * view.scale) / 2
+        }
+        const apply = () => {
+          const w = Math.max(1, Math.round(W0 * view.scale))
+          const hh = Math.max(1, Math.round(H0 * view.scale))
+          for (const cv of [bcv, pcv]) {
+            cv.style.left = view.tx + 'px'
+            cv.style.top = view.ty + 'px'
+            cv.style.width = w + 'px'
+            cv.style.height = hh + 'px'
+          }
+          // 内部像素封顶 2048（防大图高倍缩放占内存），CSS 负责拉伸显示
+          const iw = Math.min(w, 2048), ih = Math.min(hh, Math.round(2048 * H0 / W0))
+          if (bcv.width !== iw || bcv.height !== ih) { bcv.width = iw; bcv.height = ih; drawBase() }
+          if (pcv.width !== iw || pcv.height !== ih) { pcv.width = iw; pcv.height = ih }
+        }
+        const drawBase = () => {
+          const ctx = bcv.getContext('2d')
+          ctx.fillStyle = '#0b1220'
+          ctx.fillRect(0, 0, bcv.width, bcv.height)
+          if (baseImg) { ctx.drawImage(baseImg, 0, 0, bcv.width, bcv.height); return }
+          // 空白参照：网格底 + 提示
+          ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+          ctx.lineWidth = 1
+          const step = Math.max(8, Math.round(64 * bcv.width / W0))
+          ctx.beginPath()
+          for (let x = step; x < bcv.width; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, bcv.height) }
+          for (let y = step; y < bcv.height; y += step) { ctx.moveTo(0, y); ctx.lineTo(bcv.width, y) }
+          ctx.stroke()
+          ctx.fillStyle = 'rgba(255,255,255,0.35)'
+          ctx.font = Math.round(bcv.width / 24) + 'px sans-serif'
+          ctx.textAlign = 'center'
+          ctx.fillText(`空白参照 ${W0}×${H0}`, bcv.width / 2, bcv.height / 2 - 8)
+          ctx.font = Math.round(bcv.width / 32) + 'px sans-serif'
+          ctx.fillText('执行一次上游节点后可衬图绘制', bcv.width / 2, bcv.height / 2 + Math.round(bcv.width / 20))
+        }
+        const redraw = () => {
+          const k = pcv.width / W0
+          const ctx = pcv.getContext('2d')
+          ctx.clearRect(0, 0, pcv.width, pcv.height)
+          // 全不透明绘制（半透明观感由 pcv 的 CSS opacity 提供），否则橡皮的
+          // destination-out 每次只能擦掉 55%，永远擦不干净
+          for (const st of wk) drawStroke(ctx, st, k)
+          if (curStroke) drawStroke(ctx, curStroke, k)
+        }
+
+        // 手势：单指/鼠标 = 画，双指捏合 = 缩放平移（进行中的一笔丢弃），滚轮缩放
+        const pointers = new Map()
+        let pinch0 = null
+        const toImg = (e) => {
+          const r = area.getBoundingClientRect()
+          return [
+            Math.min(W0, Math.max(0, (e.clientX - r.left - view.tx) / view.scale)),
+            Math.min(H0, Math.max(0, (e.clientY - r.top - view.ty) / view.scale)),
+          ]
+        }
+        area.addEventListener('pointerdown', (e) => {
+          if (e.target.closest('button, input')) return
+          pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+          try { area.setPointerCapture(e.pointerId) } catch (_) {}
+          if (pointers.size === 2) {
+            curStroke = null // 双指手势打断进行中的一笔
+            const pts = [...pointers.values()]
+            pinch0 = {
+              dist: Math.max(Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), 1),
+              scale: view.scale,
+              mx: (pts[0].x + pts[1].x) / 2, my: (pts[0].y + pts[1].y) / 2,
+              tx: view.tx, ty: view.ty,
+            }
+            redraw()
+          } else if (pointers.size === 1) {
+            const [x0, y0] = toImg(e)
+            const x = Math.round(x0 * 10) / 10, y = Math.round(y0 * 10) / 10
+            curStroke = tool === 'rect'
+              ? { type: 'rect', x, y, w: 0, h: 0 }
+              : { type: tool === 'erase' ? 'erase' : 'brush', size: brushSize, points: [[x, y]] }
+            redraw()
+          }
+          e.preventDefault()
+        })
+        area.addEventListener('pointermove', (e) => {
+          if (!pointers.has(e.pointerId)) return
+          pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+          if (pointers.size === 2 && pinch0) {
+            const pts = [...pointers.values()]
+            const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+            const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2
+            const r = area.getBoundingClientRect()
+            // 以双指中点为锚缩放
+            const ns = Math.min(12, Math.max(0.05, pinch0.scale * d / pinch0.dist))
+            view.tx = mx - r.left - (pinch0.mx - r.left - pinch0.tx) * (ns / pinch0.scale)
+            view.ty = my - r.top - (pinch0.my - r.top - pinch0.ty) * (ns / pinch0.scale)
+            view.scale = ns
+            apply(); redraw()
+          } else if (curStroke) {
+            const [x, y] = toImg(e)
+            if (curStroke.type === 'rect') {
+              curStroke.w = x - curStroke.x
+              curStroke.h = y - curStroke.y
+            } else {
+              curStroke.points.push([Math.round(x * 10) / 10, Math.round(y * 10) / 10])
+            }
+            redraw()
+          }
+          e.preventDefault()
+        })
+        const endPointer = (e) => {
+          pointers.delete(e.pointerId)
+          if (pointers.size < 2) pinch0 = null
+          if (pointers.size === 0 && curStroke) {
+            const s = curStroke
+            curStroke = null
+            const empty = s.type === 'rect' ? (Math.abs(s.w) < 1 && Math.abs(s.h) < 1) : !s.points.length
+            if (!empty) wk.push(s)
+            redraw()
+          }
+        }
+        area.addEventListener('pointerup', endPointer)
+        area.addEventListener('pointercancel', endPointer)
+        area.addEventListener('wheel', (e) => {
+          e.preventDefault()
+          const r = area.getBoundingClientRect()
+          const cx = e.clientX - r.left, cy = e.clientY - r.top
+          const ns = Math.min(12, Math.max(0.05, view.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+          view.tx = cx - (cx - view.tx) * (ns / view.scale)
+          view.ty = cy - (cy - view.ty) * (ns / view.scale)
+          view.scale = ns
+          apply(); redraw()
+        }, { passive: false })
+
+        const onKey = (e) => { if (e.key === 'Escape') close(false) }
+        document.addEventListener('keydown', onKey)
+        let closed = false
+        const close = (save) => {
+          if (closed) return
+          closed = true
+          document.removeEventListener('keydown', onKey)
+          overlay.remove()
+          closePaintEditor = null
+          if (save) {
+            setParam(P.strokesKey, JSON.stringify({ strokes: wk, image_size: [W0, H0] }))
+            parseStrokes()
+            thumbKey = ''
+            renderThumb()
+            paintHint.textContent = `${wk.length} 笔 · ${W0}×${H0}${baseImg ? '' : '（空白参照）'}`
+          }
+        }
+        closePaintEditor = () => close(false)
+
+        syncTools()
+        document.body.appendChild(overlay)
+        fit(); apply(); redraw()
+      }
+      editBtn.addEventListener('click', openEditor)
+      thumb.addEventListener('click', () => { if (editable()) openEditor() })
+
+      refreshers.push(() => {
+        parseStrokes()
+        // 底图：上次执行 resolved inputs 里的原图对象（同 compareInput 链路）
+        const resolved = resolvedInputs()
+        const rr = resolved && resolved[P.imageInput]
+        const inId = rr && (typeof rr === 'string' ? rr : (rr.$id || rr.id || ''))
+        if (inId && cur.execution && inId !== baseFor) {
+          baseFor = inId
+          const img = new Image()
+          img.onload = () => { baseImg = img; thumbKey = ''; renderThumb() }
+          img.onerror = () => { if (baseFor === inId) { baseFor = ''; baseImg = null } }
+          img.src = nodeProxyUrl('/images/' + inId, 'GET')
+        }
+        const key = ((cur.params || {})[P.strokesKey] || '') + '|' + baseFor + '|' + (baseImg ? 1 : 0)
+        if (key !== thumbKey) { thumbKey = key; renderThumb() }
+        editBtn.disabled = !editable()
+        editBtn.style.opacity = editable() ? '1' : '0.5'
+        paintHint.textContent = strokes.length
+          ? `${strokes.length} 笔 · ${refW}×${refH}${baseImg ? '' : '（空白参照）'}`
+          : (baseImg
+            ? `底图 ${baseImg.naturalWidth}×${baseImg.naturalHeight} · 未绘制`
+            : '未绘制 · 可空白起手（512×512 参照）')
+      })
+    }
+
     // ---- ▶预览（op-replay 重放） ----
     const replayRow = h('div', 'display:none;align-items:center;margin-bottom:6px')
     if (spec.replay && spec.replay.length) {
@@ -799,7 +1140,7 @@ function createNodeWidget(spec) {
     // ▶重放、实时预览开关）→ 参数控件 → 输出。图像预览一律置顶，手机窄画布上
     // 不必往下滚就能看到结果；无预览/无媒体/无重放的节点这些块是 display:none，
     // 不占位也不改变观感。
-    el.append(header, prevWrap, cmpWrap, mediaBox, mediaPath, replayRow, peRow, controls, outBox)
+    el.append(header, prevWrap, cmpWrap, paintWrap, mediaBox, mediaPath, replayRow, peRow, controls, outBox)
     if (spec.note) el.append(h('div', 'font-size:9px;color:rgba(255,255,255,0.3);margin-top:4px', spec.note))
 
     let lastPreviewUrl = ''
@@ -890,7 +1231,7 @@ function createNodeWidget(spec) {
 
     return {
       update(next) { render(next) },
-      unmount() { closeLightbox(); document.removeEventListener('keydown', onEsc); el.textContent = '' },
+      unmount() { if (closePaintEditor) closePaintEditor(); closeLightbox(); document.removeEventListener('keydown', onEsc); el.textContent = '' },
     }
   }
 }

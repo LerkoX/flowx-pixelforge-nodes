@@ -1,0 +1,96 @@
+{
+  "name": "mask-paint",
+  "displayName": "蒙版手绘",
+  "description": "画布手绘蒙版（对标 ComfyUI MaskEditor）：在节点上预览底图，点开编辑器用笔刷/矩形/橡皮涂抹任意区域，白=重绘、黑=保留。笔画以矢量存于 strokes_json 参数（分辨率无关，可再编辑），执行时按原图实际分辨率光栅化为灰度蒙版，可直接喂 mask-grow/feather/invert/latent-set-noise-mask",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "mask"
+  ],
+  "icon": "🖌",
+  "language": "python",
+  "entry": "main.py",
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  },
+  "files": [
+    "flowx_client.py",
+    "image_io.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务访问令牌（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "推理服务端的原图对象 ID（蒙版按此图分辨率生成）",
+      "required": true
+    },
+    {
+      "name": "strokes_json",
+      "type": "string",
+      "description": "画布手绘笔画（JSON 矢量，由节点 widget 的蒙版编辑器写入；白=重绘区域）。格式 {strokes:[{type:brush|rect|erase,...}], image_size:[w,h]}，执行时按原图分辨率缩放光栅化",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "手绘蒙版在推理服务的对象 ID（灰度 IMAGE，255=重绘/0=保留）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "蒙版宽度（= 原图宽度）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "蒙版高度（= 原图高度）"
+    },
+    {
+      "name": "coverage",
+      "type": "float",
+      "description": "重绘区域占比（0~1，白区像素比例）"
+    },
+    {
+      "name": "thumb_b64",
+      "type": "string",
+      "description": "红罩叠加原图的预览缩略图 data URL（JPEG，画布 widget 预览用）"
+    }
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 360,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  }
+}

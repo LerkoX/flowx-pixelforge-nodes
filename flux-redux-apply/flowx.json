@@ -2,14 +2,14 @@
   "name": "flux-redux-apply",
   "displayName": "FLUX Redux 参考图注入",
   "description": "FLUX Redux 参考图生成（对标 ComfyUI Load Style Model + Apply Style Model）：SigLIP 编码参考图 → Redux 适配器投影 729 token → 拼到文本 COND 序列前，让生成结果保持参考图的构图/主体/风格语义。输出接 flux-sampler 的 cond。自包含节点：server_op.py 运行时自注册；服务端需预置 siglip-so400m-patch14-384（/models/clip_vision）与 flux1-redux-dev.safetensors（/models/flux）",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "flowx-team",
   "tags": [
     "flux",
     "redux",
     "reference"
   ],
-  "icon": "🎨",
+  "icon": "🧬",
   "language": "python",
   "entry": "main.py",
   "files": [
@@ -132,5 +132,12 @@
     "preferredType": "local",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.1"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.1",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 340,
+    "collapsed": false,
+    "apiVersion": 1
+  }
 }

@@ -24,6 +24,12 @@ def token():
     return os.environ.get("SERVICE_TOKEN") or os.environ.get("FLOWX_PARAM_SERVICE_TOKEN") or ""
 
 
+def lease_id():
+    """执行租约标识（dev-plan §43.2）：Studio 注入的 FLOWX_EXECUTION_ID。
+    非 Studio 环境（命令行直跑/mock）为空 → 不加头，服务端行为不变。"""
+    return os.environ.get("FLOWX_EXECUTION_ID") or ""
+
+
 def _req(method, base, path, payload=None, tok=None, timeout=1800,
          content_type="application/json"):
     """payload 为 bytes（已编码）；GET/无 body 时传 None。"""
@@ -33,6 +39,10 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800,
         req.add_header("Content-Type", content_type)
     if tok:
         req.add_header("Authorization", "Bearer " + tok)
+    lid = lease_id()
+    if lid:
+        # 执行租约（§43.2）：加载/淘汰按租约隔离，并发执行排队而非互踩
+        req.add_header("X-FlowX-Lease", lid)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
@@ -48,6 +58,32 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800,
         raise RuntimeError(f"{method} {url} failed: {type(e).__name__}: {e}")
 
 
+# 瞬态重试次数（dev-plan §43.5 遗留：隧道瞬断率 ~50% 时 GET /ops 等单发
+# 调用瞬败导致节点假失败）。仅作用于幂等调用；FLOWX_HTTP_RETRIES=1 关闭。
+HTTP_RETRIES = int(os.environ.get("FLOWX_HTTP_RETRIES", "3"))
+
+
+def _retriable(err):
+    """HTTP 4xx 是请求本身的问题，重试无意义；超时/连接重置/EOF/5xx 视为瞬态。"""
+    return "-> HTTP 4" not in str(err)
+
+
+
+def _with_retry(fn, retries=None):
+    """对瞬态错误重试（线性退避，对齐 call_op）。仅用于幂等调用（GET、
+    内容寻址的幂等上传）；非幂等调用（如 POST /jobs 提交任务，重试会
+    产生重复任务）不得走这里。"""
+    n = max(1, int(retries if retries is not None else HTTP_RETRIES))
+    for attempt in range(1, n + 1):
+        try:
+            return fn()
+        except RuntimeError as e:
+            if not _retriable(e) or attempt >= n:
+                raise
+            time.sleep(min(5 * attempt, 15))
+
+
+
 def post_json(base, path, payload, tok=None, timeout=1800):
     data = json.dumps(payload).encode()
     return json.loads(_req("POST", base, path, data, tok, timeout))
@@ -59,12 +95,16 @@ def post_bytes(base, path, data, tok=None, timeout=300,
     return json.loads(_req("POST", base, path, data, tok, timeout, content_type))
 
 
-def get_json(base, path, tok=None, timeout=60):
-    return json.loads(_req("GET", base, path, None, tok, timeout))
+def get_json(base, path, tok=None, timeout=60, retries=None):
+    """GET 幂等：瞬态错误自动重试（隧道抖动兜底，4xx 不重试）。"""
+    return _with_retry(lambda: json.loads(_req("GET", base, path, None, tok,
+                                             timeout)), retries)
 
 
-def get_bytes(base, path, tok=None, timeout=300):
-    return _req("GET", base, path, None, tok, timeout)
+def get_bytes(base, path, tok=None, timeout=300, retries=None):
+    """GET 幂等：瞬态错误自动重试（隧道抖动兜底，4xx 不重试）。"""
+    return _with_retry(lambda: _req("GET", base, path, None, tok, timeout),
+                       retries)
 
 
 def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
@@ -91,8 +131,10 @@ def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
 
     payload = {"filename": op_name.replace(".", "_") + ".py",
                "content": content.decode("utf-8"), "sha256": digest}
+    # /admin/plugins 按内容 sha256 覆盖上传：同内容重传幂等，可安全重试
     try:
-        resp = post_json(base, "/admin/plugins", payload, tok, timeout)
+        resp = _with_retry(lambda: post_json(base, "/admin/plugins", payload,
+                                             tok, timeout))
     except RuntimeError as e:
         if "-> HTTP 404" in str(e):
             raise RuntimeError(
@@ -144,17 +186,19 @@ def interrupt_job(base, job_id=None, tok=None, timeout=30):
 
 
 def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
-             on_poll=None, max_poll_errors=12):
+             on_poll=None, max_poll_errors=12, error_window=300.0):
     """轮询任务直到终态。done 返回 result dict；failed/cancelled/超时抛异常
     （超时先尽力 interrupt，避免孤儿任务继续占 GPU）。
     on_poll(view)：每次轮询拿到任务视图后回调（如上报预览帧地址），
     回调异常静默忽略，不影响任务等待。
-    轮询容错：瞬态网络错误（隧道抖动/超时/连接重置）重试，连续
-    max_poll_errors 次（默认 ≈ 1 分钟窗口）才放弃；HTTP 4xx（如 job
-    不存在）立即失败，不重试。"""
+    轮询容错：瞬态网络错误（隧道抖动/超时/连接重置/SSL EOF）重试，
+    连续失败 ≥max_poll_errors 次【且】持续 ≥error_window 秒（默认 5 分钟）
+    才放弃——双条件避免长任务（FLUX 采样 30min+）期间隧道长时间断流
+    被误判为任务失败；HTTP 4xx（如 job 不存在）立即失败，不重试。"""
     t0 = time.time()
     last = ""
     errors = 0
+    err_t0 = 0.0
     while True:
         try:
             v = get_job(base, job_id, tok)
@@ -163,12 +207,17 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
             msg = str(e)
             if "-> HTTP 4" in msg:  # 404 等：job 真不存在，重试无意义
                 raise
+            if errors == 0:
+                err_t0 = time.time()
             errors += 1
+            elapsed = time.time() - err_t0
             if log:
-                log(f"[job {job_id[:8]}] poll error ({errors}/{max_poll_errors}): {msg}")
-            if errors >= max_poll_errors:
+                log(f"[job {job_id[:8]}] poll error ({errors}, "
+                    f"{elapsed:.0f}s/{error_window:.0f}s): {msg}")
+            if errors >= max_poll_errors and elapsed >= error_window:
                 raise RuntimeError(
-                    f"job {job_id} poll failed {errors} times in a row, last: {msg}")
+                    f"job {job_id} poll failed {errors} times over "
+                    f"{elapsed:.0f}s, last: {msg}")
             time.sleep(poll)
             continue
         if on_poll is not None:
@@ -208,14 +257,36 @@ def emit(**fields):
     print("```")
 
 
-def emit_preview(url, progress=None, tok=None):
+def host_base(url):
+    """Studio 宿主机侧可达的服务基地址（画布预览帧/重放/中断中转都由 Studio
+    发起 HTTP 请求，用的是 Studio 自己的网络视角）。
+
+    容器内可达 ≠ Studio 可达：docker 节点跑在远端宿主上，`service_url` 只能填
+    docker bridge 网关（如 http://172.17.0.1:8100），而 Studio 在手机/外网侧
+    只能走公网隧道——此时必须由 workflow 给节点绑 `service_url_host`
+    （如 {{ Param.service_url }}），否则画布取不到预览帧。
+
+    未配置时退回 url（local 节点或 Studio 与推理服务同网段的部署下二者相同）。"""
+    host = (os.environ.get("SERVICE_URL_HOST")
+            or os.environ.get("FLOWX_PARAM_SERVICE_URL_HOST") or "")
+    return host.rstrip("/") or url
+
+
+def emit_preview(url, progress=None, tok=None, base=None, job_id=None):
     """经 stdout 标记通道向 Studio 上报预览帧地址（媒体本体不走 stdout/base64）：
     Studio 拦截 FLOWX_PREVIEW 行（不落日志），按 url 经 HTTP 中转拉帧给画布。
-    url 指向推理服务的预览帧端点（如 {service_url}/preview/{job_id}）。"""
+    url 指向推理服务的预览帧端点（应经 host_base() 构造，如
+    {host_base}/preview/{job_id}）。
+    base/job_id 供 Studio 记录服务基地址与推理 job（节点级中断、
+    op-replay 重放预览用）；旧版 Studio 忽略多余字段。"""
     payload = {"url": url}
     if progress is not None:
         payload["progress"] = round(float(progress), 4)
     if tok:
         payload["token"] = tok
+    if base:
+        payload["base"] = base
+    if job_id:
+        payload["job_id"] = job_id
     print("FLOWX_PREVIEW " + json.dumps(payload, separators=(",", ":")),
           flush=True)

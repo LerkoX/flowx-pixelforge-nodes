@@ -58,6 +58,32 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800,
         raise RuntimeError(f"{method} {url} failed: {type(e).__name__}: {e}")
 
 
+# 瞬态重试次数（dev-plan §43.5 遗留：隧道瞬断率 ~50% 时 GET /ops 等单发
+# 调用瞬败导致节点假失败）。仅作用于幂等调用；FLOWX_HTTP_RETRIES=1 关闭。
+HTTP_RETRIES = int(os.environ.get("FLOWX_HTTP_RETRIES", "3"))
+
+
+def _retriable(err):
+    """HTTP 4xx 是请求本身的问题，重试无意义；超时/连接重置/EOF/5xx 视为瞬态。"""
+    return "-> HTTP 4" not in str(err)
+
+
+
+def _with_retry(fn, retries=None):
+    """对瞬态错误重试（线性退避，对齐 call_op）。仅用于幂等调用（GET、
+    内容寻址的幂等上传）；非幂等调用（如 POST /jobs 提交任务，重试会
+    产生重复任务）不得走这里。"""
+    n = max(1, int(retries if retries is not None else HTTP_RETRIES))
+    for attempt in range(1, n + 1):
+        try:
+            return fn()
+        except RuntimeError as e:
+            if not _retriable(e) or attempt >= n:
+                raise
+            time.sleep(min(5 * attempt, 15))
+
+
+
 def post_json(base, path, payload, tok=None, timeout=1800):
     data = json.dumps(payload).encode()
     return json.loads(_req("POST", base, path, data, tok, timeout))
@@ -69,12 +95,16 @@ def post_bytes(base, path, data, tok=None, timeout=300,
     return json.loads(_req("POST", base, path, data, tok, timeout, content_type))
 
 
-def get_json(base, path, tok=None, timeout=60):
-    return json.loads(_req("GET", base, path, None, tok, timeout))
+def get_json(base, path, tok=None, timeout=60, retries=None):
+    """GET 幂等：瞬态错误自动重试（隧道抖动兜底，4xx 不重试）。"""
+    return _with_retry(lambda: json.loads(_req("GET", base, path, None, tok,
+                                             timeout)), retries)
 
 
-def get_bytes(base, path, tok=None, timeout=300):
-    return _req("GET", base, path, None, tok, timeout)
+def get_bytes(base, path, tok=None, timeout=300, retries=None):
+    """GET 幂等：瞬态错误自动重试（隧道抖动兜底，4xx 不重试）。"""
+    return _with_retry(lambda: _req("GET", base, path, None, tok, timeout),
+                       retries)
 
 
 def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
@@ -101,8 +131,10 @@ def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
 
     payload = {"filename": op_name.replace(".", "_") + ".py",
                "content": content.decode("utf-8"), "sha256": digest}
+    # /admin/plugins 按内容 sha256 覆盖上传：同内容重传幂等，可安全重试
     try:
-        resp = post_json(base, "/admin/plugins", payload, tok, timeout)
+        resp = _with_retry(lambda: post_json(base, "/admin/plugins", payload,
+                                             tok, timeout))
     except RuntimeError as e:
         if "-> HTTP 404" in str(e):
             raise RuntimeError(

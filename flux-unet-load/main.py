@@ -17,8 +17,9 @@ def main():
     ensure_plugin(url, "flux.unet_load", tok=tok)
 
     t0 = time.time()
-    out = call_op(url, "flux.unet_load", {"transformer": transformer},
-                  tok, timeout=1800)
+    out = call_op(url, "flux.unet_load",
+                  {"transformer": transformer,
+                   "dtype": param("dtype", "auto")}, tok, timeout=1800)
     print(f"[flux-unet-load] {transformer} -> model={out['model']} "
           f"({time.time()-t0:.1f}s)", flush=True)
     emit(model=out["model"])

@@ -33,8 +33,22 @@ from PIL import Image
 
 from app import ops as _core_ops  # 插件可见性约定：可复用核心原语
 
-# 编码器缓存：name -> CLIPVisionModelWithProjection（CPU 常驻）
+# 编码器缓存：(name, dtype) -> CLIPVisionModelWithProjection（CPU 常驻）
 _VISION_CACHE = {}
+
+_CLIP_VISION_DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16,
+                       "fp32": torch.float32}
+
+
+def _resolve_vision_dtype(dtype):
+    """dtype 旋钮：auto/空 → fp16（历史默认）；显式指定进缓存键，
+    同模型不同精度 = 独立缓存条目（与核心 checkpoint.load 同一语义）。"""
+    if dtype in (None, "", "auto"):
+        return "fp16"
+    if dtype not in _CLIP_VISION_DTYPES:
+        raise ValueError(
+            f"unknown dtype '{dtype}' (expect auto/fp16/bf16/fp32)")
+    return dtype
 
 
 def _vision_dir():
@@ -45,9 +59,10 @@ def _ipadapter_dir():
     return os.environ.get("IPADAPTER_DIR", "/models/ipadapter")
 
 
-def clip_vision_load(name):
+def clip_vision_load(name, dtype="auto"):
     """CLIP Vision Load：加载 CLIP 图像编码器（diffusers 格式目录）。
-    fp16 加载、CPU 常驻缓存；CLIPImageProcessor 一并挂载（apply 时复用）。"""
+    dtype 加载精度旋钮（auto 默认 fp16，历史行为），CPU 常驻缓存；
+    CLIPImageProcessor 一并挂载（apply 时复用）。"""
     base = _vision_dir()
     if os.path.basename(name) != name:
         raise ValueError(
@@ -58,16 +73,17 @@ def clip_vision_load(name):
         raise FileNotFoundError(
             f"clip_vision '{name}' not found in {base}; "
             f"available: {available or '(empty)'}")
-    enc = _VISION_CACHE.get(name)
+    dt = _resolve_vision_dtype(dtype)
+    enc = _VISION_CACHE.get((name, dt))
     if enc is None:
         from transformers import (  # 懒加载：无 GPU 契约测试可导入
             CLIPImageProcessor, CLIPVisionModelWithProjection)
         enc = CLIPVisionModelWithProjection.from_pretrained(
-            path, torch_dtype=torch.float16)
+            path, torch_dtype=_CLIP_VISION_DTYPES[dt])
         enc.eval()
         enc._flowx_processor = CLIPImageProcessor.from_pretrained(path)
-        _VISION_CACHE[name] = enc
-        print(f"[clip_vision.load] loaded {path}", flush=True)
+        _VISION_CACHE[(name, dt)] = enc
+        print(f"[clip_vision.load] loaded {path} (dtype={dt})", flush=True)
     return {"clip_vision": enc}
 
 
@@ -190,11 +206,12 @@ def ipadapter_apply(model, ipadapter, clip_vision, image, weight=1.0,
 def register(registry):
     registry.register(
         "clip_vision.load",
-        inputs={"name": "STRING"},
+        inputs={"name": "STRING", "dtype": "STRING"},
         outputs={"clip_vision": "CLIP_VISION"},
         description="CLIP Vision Load：加载 CLIP 图像编码器（CLIP_VISION_DIR 下"
                     " diffusers 格式目录，如 CLIP-ViT-H-14），IPAdapter 的参考图"
-                    "编码器；fp16 CPU 常驻，编码时临时上 GPU")(clip_vision_load)
+                    "编码器；dtype 加载精度旋钮（auto 默认 fp16），CPU 常驻，"
+                    "编码时临时上 GPU")(clip_vision_load)
     registry.register(
         "ipadapter.load",
         inputs={"name": "STRING"},

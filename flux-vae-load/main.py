@@ -17,7 +17,9 @@ def main():
     ensure_plugin(url, "flux.vae_load", tok=tok)
 
     t0 = time.time()
-    out = call_op(url, "flux.vae_load", {"name": name}, tok, timeout=600)
+    out = call_op(url, "flux.vae_load",
+                  {"name": name, "dtype": param("dtype", "auto")},
+                  tok, timeout=600)
     print(f"[flux-vae-load] {name} -> vae={out['vae']} "
           f"({time.time()-t0:.1f}s)", flush=True)
     emit(vae=out["vae"])

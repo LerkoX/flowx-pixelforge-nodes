@@ -2,7 +2,7 @@
   "name": "motion-loader",
   "displayName": "Motion 加载",
   "description": "把 AnimateDiff 运动模块（MotionAdapter）组合进 SD1.x 底模管道，组装成文生视频管道（AnimateDiffPipeline）；输出 model/clip/vae 引用，下游接 video-gen（文本驱动，无需首帧图）",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -24,7 +24,7 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.7.1",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.8.0",
   "parameters": [
     {
       "name": "service_url",
@@ -57,6 +57,20 @@
       "required": true
     },
     {
+      "name": "dtype",
+      "type": "string",
+      "description": "组合加载精度 auto/fp16/bf16/fp32，auto 继承进程级默认（fp16）；显式指定时同模型不同精度独立常驻（缓存键区分）",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "description": "显存治理 auto/none/model/sequential，auto 继承进程级 OFFLOAD_MODE；8GB 卡建议 sequential",
+      "required": false,
+      "default": "auto"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
@@ -85,7 +99,9 @@
     "MOTION_NAME": "{{ Param.motion_name }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
     "JOB_TIMEOUT": "{{ Param.job_timeout }}",
-    "POLL_INTERVAL": "{{ Param.poll_interval }}"
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "DTYPE": "{{ Param.dtype }}",
+    "OFFLOAD": "{{ Param.offload }}"
   },
   "outputs": [
     {

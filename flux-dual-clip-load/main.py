@@ -18,7 +18,9 @@ def main():
     ensure_plugin(url, "flux.dual_clip_load", tok=tok)
 
     t0 = time.time()
-    out = call_op(url, "flux.dual_clip_load", {"t5": t5}, tok, timeout=600)
+    out = call_op(url, "flux.dual_clip_load",
+                  {"t5": t5, "dtype": param("dtype", "auto")},
+                  tok, timeout=600)
     print(f"[flux-dual-clip-load] t5={t5} -> clip={out['clip']} "
           f"({time.time()-t0:.1f}s)", flush=True)
     emit(clip=out["clip"])

@@ -1275,6 +1275,8 @@ const WIDGET_SPEC = {
     { key: 'service_url_host', label: '画布侧服务地址（service_url_host）', kind: 'text', mono: true , advanced: true},
     { key: 'ckpt_name', label: 'SD1.x 底模名（ckpt_name）', kind: 'text' },
     { key: 'motion_name', label: '运动模块名（motion_name）', kind: 'model', modelType: 'motion' },
+    { key: 'dtype', label: '组合加载精度（dtype）', kind: 'select', options: ['auto', 'fp16', 'bf16', 'fp32'], default: 'auto' },
+    { key: 'offload', label: '显存治理（offload）', kind: 'select', options: ['auto', 'none', 'model', 'sequential'], default: 'auto' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 1800 },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },

@@ -51,6 +51,27 @@ from app import execution, ops, preview
 FLUX_DIR = os.environ.get("FLUX_DIR", "/models/flux")
 DETECTOR_DIR = os.environ.get("DETECTOR_DIR", "/models/detectors")
 
+# compute dtype 旋钮（加载旋钮全量化，dev-plan §43.1）：auto/空 → 各 loader
+# 历史默认（unet/vae=fp16，clip-l=bf16），显式指定则缓存键扩展 '|dtype=..'，
+# 同模型不同精度 = 独立常驻条目（与核心 checkpoint.load 同一语义）。
+# 量化档位（Q4_K_S/Q8 等）仍按文件名选择，不做参数（决策记录 §43.3）。
+_FLUX_DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16,
+                "fp32": torch.float32}
+
+
+def _resolve_compute_dtype(dtype, default):
+    if dtype in (None, "", "auto"):
+        return default
+    if dtype not in _FLUX_DTYPES:
+        raise ValueError(
+            f"unknown dtype '{dtype}' (expect auto/fp16/bf16/fp32)")
+    return dtype
+
+
+def _dtype_suffix(dtype):
+    """显式指定（非 auto）时返回缓存键后缀，否则空串（默认行为键名不变）。"""
+    return "" if dtype in (None, "", "auto") else f"|dtype={dtype}"
+
 # ---------------------------------------------------------------------------
 # torch 2.3.1 兼容补丁（幂等，模块导入即安装；与旧聚合插件相同三处）
 # ---------------------------------------------------------------------------
@@ -346,14 +367,17 @@ def _small(img, max_size=512):
 def register(registry):
     @registry.register(
         "flux.unet_load",
-        inputs={"transformer": "STRING"},
+        inputs={"transformer": "STRING", "dtype": "STRING"},
         outputs={"model": "MODEL"},
         description="FLUX UNET Loader（对标 ComfyUI UNETLoader）：GGUF Q4_K_S "
-                    "transformer 单独装载（fp16 compute），输出 MODEL 组件引用，"
+                    "transformer 单独装载（dtype 为 compute 精度旋钮，auto 默认 "
+                    "fp16；量化档位按文件名选），输出 MODEL 组件引用，"
                     "进 model_manager LRU。权重布局 /models/flux，见插件 docstring")
-    def _op_flux_unet_load(transformer="flux1-schnell-Q4_K_S.gguf"):
+    def _op_flux_unet_load(transformer="flux1-schnell-Q4_K_S.gguf",
+                           dtype="auto"):
         from diffusers import FluxTransformer2DModel, GGUFQuantizationConfig
-        key = f"flux-unet:{transformer}"
+        dt = _resolve_compute_dtype(dtype, "fp16")
+        key = f"flux-unet:{transformer}{_dtype_suffix(dt if dtype not in (None, '', 'auto') else None)}"
         models = _models()
         if key in models._pipes:
             return {"model": models.get(key)}
@@ -363,25 +387,28 @@ def register(registry):
             os.path.join(FLUX_DIR, "transformer", "config.json"),
             "transformer config")
         t0 = time.time()
-        quant = GGUFQuantizationConfig(compute_dtype=torch.float16)
+        quant = GGUFQuantizationConfig(compute_dtype=_FLUX_DTYPES[dt])
         tr = FluxTransformer2DModel.from_single_file(
             tr_path, config=os.path.dirname(tr_cfg),
-            quantization_config=quant, torch_dtype=torch.float16)
-        print(f"[flux] transformer {transformer} {time.time()-t0:.1f}s",
-              flush=True)
+            quantization_config=quant, torch_dtype=_FLUX_DTYPES[dt])
+        print(f"[flux] transformer {transformer} dtype={dt} "
+              f"{time.time()-t0:.1f}s", flush=True)
         est = os.path.getsize(tr_path)
         return {"model": _register(key, tr, est, "FluxTransformer2DModel(GGUF)")}
 
     @registry.register(
         "flux.dual_clip_load",
-        inputs={"t5": "STRING"},
+        inputs={"t5": "STRING", "dtype": "STRING"},
         outputs={"clip": "CLIP"},
         description="FLUX DualCLIP Loader（对标 ComfyUI DualCLIPLoader）：CLIP-L "
-                    "(bf16) + 双 tokenizer 立即装载，T5-XXL(GGUF) 编码相位才装载"
-                    "上卡（内存错峰）。输出 CLIP 组件束引用")
-    def _op_flux_dual_clip_load(t5="t5xxl-Q4_K_S.gguf"):
+                    "(dtype 为 compute 精度旋钮，auto 默认 bf16) + 双 tokenizer "
+                    "立即装载，T5-XXL(GGUF) 编码相位才装载上卡（内存错峰；T5 "
+                    "装载精度恒为 bf16——fp16 高激活崩坏，不随旋钮）。"
+                    "输出 CLIP 组件束引用")
+    def _op_flux_dual_clip_load(t5="t5xxl-Q4_K_S.gguf", dtype="auto"):
         from transformers import CLIPTextModel, CLIPTokenizer, T5TokenizerFast
-        key = f"flux-clip:t5={t5}"
+        dt = _resolve_compute_dtype(dtype, "bf16")
+        key = f"flux-clip:t5={t5}{_dtype_suffix(dt if dtype not in (None, '', 'auto') else None)}"
         models = _models()
         if key in models._pipes:
             return {"clip": models.get(key)}
@@ -392,25 +419,27 @@ def register(registry):
         bundle = FluxClipBundle(
             clip_l=CLIPTextModel.from_pretrained(
                 os.path.join(FLUX_DIR, "text_encoder"),
-                torch_dtype=torch.bfloat16),
+                torch_dtype=_FLUX_DTYPES[dt]),
             tokenizer=CLIPTokenizer.from_pretrained(
                 os.path.join(FLUX_DIR, "tokenizer")),
             tokenizer_2=T5TokenizerFast.from_pretrained(
                 os.path.join(FLUX_DIR, "tokenizer_2")),
             t5_gguf=t5_path, t5_cfg=t5_cfg)
-        print(f"[flux] dual-clip (clip-l + tokenizers, t5 lazy) "
+        print(f"[flux] dual-clip (clip-l {dt} + tokenizers, t5 lazy) "
               f"{time.time()-t0:.1f}s", flush=True)
         return {"clip": _register(key, bundle, int(0.5e9), "FluxClipBundle")}
 
     @registry.register(
         "flux.vae_load",
-        inputs={"name": "STRING"},
+        inputs={"name": "STRING", "dtype": "STRING"},
         outputs={"vae": "VAE"},
         description="FLUX VAE Loader（对标 ComfyUI Load VAE）：装载 FLUX 专用 "
-                    "AutoencoderKL（FLUX_DIR/vae，fp16），输出 VAE 组件引用")
-    def _op_flux_vae_load(name="vae"):
+                    "AutoencoderKL（FLUX_DIR/vae，dtype 为精度旋钮，auto 默认 "
+                    "fp16），输出 VAE 组件引用")
+    def _op_flux_vae_load(name="vae", dtype="auto"):
         from diffusers import AutoencoderKL
-        key = f"flux-vae:{name}"
+        dt = _resolve_compute_dtype(dtype, "fp16")
+        key = f"flux-vae:{name}{_dtype_suffix(dt if dtype not in (None, '', 'auto') else None)}"
         models = _models()
         if key in models._pipes:
             return {"vae": models.get(key)}
@@ -418,8 +447,8 @@ def register(registry):
         if not os.path.isdir(path):
             raise ValueError(f"flux: 缺 VAE 目录（{path}）")
         t0 = time.time()
-        vae = AutoencoderKL.from_pretrained(path, torch_dtype=torch.float16)
-        print(f"[flux] vae {name} {time.time()-t0:.1f}s", flush=True)
+        vae = AutoencoderKL.from_pretrained(path, torch_dtype=_FLUX_DTYPES[dt])
+        print(f"[flux] vae {name} dtype={dt} {time.time()-t0:.1f}s", flush=True)
         return {"vae": _register(key, vae, int(0.4e9), "AutoencoderKL(FLUX)")}
 
     @registry.register(
@@ -525,8 +554,10 @@ def register(registry):
         model.to("cuda")
         torch.cuda.empty_cache()
         pipe = _assemble_txt2img(model)
-        pe = cond["prompt_embeds"].to("cuda", torch.float16)
-        pooled = cond["pooled"].to("cuda", torch.float16)
+        # embeds 按 transformer 实际 compute dtype 转换（dtype 旋钮联动；
+        # 默认 fp16 与历史硬编码一致）
+        pe = cond["prompt_embeds"].to("cuda", model.dtype)
+        pooled = cond["pooled"].to("cuda", model.dtype)
         gen = torch.Generator("cpu").manual_seed(seed)
 
         def _cb(p, i, t, kw):
@@ -593,7 +624,7 @@ def register(registry):
                 noise = torch.randn(s.shape, generator=gen, dtype=torch.float32)
                 noised = (1.0 - sigma0) * s + sigma0 * noise  # flow-match 前向
                 packed = FluxPipeline._pack_latents(
-                    noised.to(torch.float16), s.shape[0], 16, H // 8, W // 8)
+                    noised.to(model.dtype), s.shape[0], 16, H // 8, W // 8)
                 sigmas_pre = np.linspace(1.0, 1.0 / steps, steps)[t_start:]
                 out = pipe(
                     prompt_embeds=pe, pooled_prompt_embeds=pooled,
@@ -731,8 +762,8 @@ def register(registry):
             transformer=model)
         i2i.set_progress_bar_config(disable=True)
 
-        pe = cond["prompt_embeds"].to("cuda", torch.float16)
-        pooled = cond["pooled"].to("cuda", torch.float16)
+        pe = cond["prompt_embeds"].to("cuda", model.dtype)
+        pooled = cond["pooled"].to("cuda", model.dtype)
 
         img = image.copy()
         W, H = img.size

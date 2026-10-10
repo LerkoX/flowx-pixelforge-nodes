@@ -6,6 +6,7 @@ from flowx_client import param
 def main():
     run_op("clip_vision.load", {
         "name": param("name"),
+        "dtype": param("dtype", "auto"),
     }, emit_keys=["clip_vision"], timeout=600)
 
 

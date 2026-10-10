@@ -18,7 +18,9 @@ def main():
 
     t0 = time.time()
     jid = submit_job(url, {"name": "sd.motion.load",
-                           "inputs": {"ckpt": ckpt, "motion": motion}}, tok)
+                           "inputs": {"ckpt": ckpt, "motion": motion,
+                                      "dtype": param("dtype", "auto"),
+                                      "offload": param("offload", "auto")}}, tok)
     print(f"[motion] job={jid} submitted ({ckpt} + {motion})", flush=True)
     result = wait_job(url, jid, tok,
                       timeout=param("job_timeout", 1800, int),

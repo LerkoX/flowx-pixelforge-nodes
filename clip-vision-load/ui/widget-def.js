@@ -4,6 +4,7 @@ const WIDGET_SPEC = {
   fields: [
     {"key": "service_url", "label": "推理服务 service_url", "kind": "text", "mono": true, "placeholder": "http://…:8100", "advanced": true},
     {"key": "name", "label": "编码器模型", "kind": "model", "modelType": "clip_vision"},
+    {"key": "dtype", "label": "加载精度（dtype）", "kind": "select", "options": ["auto", "fp16", "bf16", "fp32"], "default": "auto"},
     {"key": "service_token", "label": "service_token（可空）", "kind": "text", "mono": true, "advanced": true},
   ],
   note: '输出 clip_vision → ipadapter-apply 节点',

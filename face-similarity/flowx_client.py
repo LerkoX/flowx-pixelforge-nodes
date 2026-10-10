@@ -24,6 +24,12 @@ def token():
     return os.environ.get("SERVICE_TOKEN") or os.environ.get("FLOWX_PARAM_SERVICE_TOKEN") or ""
 
 
+def lease_id():
+    """执行租约标识（dev-plan §43.2）：Studio 注入的 FLOWX_EXECUTION_ID。
+    非 Studio 环境（命令行直跑/mock）为空 → 不加头，服务端行为不变。"""
+    return os.environ.get("FLOWX_EXECUTION_ID") or ""
+
+
 def _req(method, base, path, payload=None, tok=None, timeout=1800,
          content_type="application/json"):
     """payload 为 bytes（已编码）；GET/无 body 时传 None。"""
@@ -33,6 +39,10 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800,
         req.add_header("Content-Type", content_type)
     if tok:
         req.add_header("Authorization", "Bearer " + tok)
+    lid = lease_id()
+    if lid:
+        # 执行租约（§43.2）：加载/淘汰按租约隔离，并发执行排队而非互踩
+        req.add_header("X-FlowX-Lease", lid)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()

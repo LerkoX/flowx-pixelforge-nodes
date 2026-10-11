@@ -1,0 +1,160 @@
+{
+  "name": "matting-birefnet",
+  "displayName": "BiRefNet 抠图",
+  "description": "BiRefNet（SOTA 图像抠图）：IMAGE → 前景 alpha 蒙版（灰度 IMAGE）+ RGBA 去背图。变体 lite/main/portrait；默认带前后景分离修正（去白边）。权重在 MATTING_MODELS_DIR（默认 /models/matting/<variant>/）。服务端插件 matting.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image",
+    "matting"
+  ],
+  "icon": "🪄",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100）",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "待抠图的图像对象 ID",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "variant",
+      "type": "string",
+      "default": "lite",
+      "description": "模型变体：lite（177MB，快/省显存，默认）/ main（445MB，通用质量）/ portrait（885MB，人像发丝）"
+    },
+    {
+      "name": "resolution",
+      "type": "integer",
+      "default": 1024,
+      "description": "推理分辨率 1024/1536/2048（越大越细越慢越吃显存）"
+    },
+    {
+      "name": "use_checkpoint",
+      "type": "boolean",
+      "default": false,
+      "description": "打开梯度检查点省显存（8GB 卡兜底，慢一些）"
+    },
+    {
+      "name": "refine",
+      "type": "boolean",
+      "default": true,
+      "description": "去白边的前后景分离修正（官方 refine_foreground，建议开）"
+    },
+    {
+      "name": "refine_radius",
+      "type": "integer",
+      "default": 90,
+      "description": "前后景分离半径（越大边缘修正范围越宽）"
+    },
+    {
+      "name": "alpha_gamma",
+      "type": "float",
+      "default": 1.0,
+      "description": "alpha 曲线：>1 前景更饱满、<1 更克制（1 = 不改）"
+    },
+    {
+      "name": "invert",
+      "type": "boolean",
+      "default": false,
+      "description": "蒙版反相（抠背景而非主体）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "VARIANT": "{{ Param.variant }}",
+    "RESOLUTION": "{{ Param.resolution }}",
+    "USE_CHECKPOINT": "{{ Param.use_checkpoint }}",
+    "REFINE": "{{ Param.refine }}",
+    "REFINE_RADIUS": "{{ Param.refine_radius }}",
+    "ALPHA_GAMMA": "{{ Param.alpha_gamma }}",
+    "INVERT": "{{ Param.invert }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "前景 alpha 蒙版对象 ID（灰度，0=背景 255=前景）"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "RGBA 去背图对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 268,
+    "height": 344,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

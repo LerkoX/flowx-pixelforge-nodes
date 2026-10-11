@@ -20,6 +20,10 @@
  *     { key, label, kind:'slider', min, max, step, default } 滑块（写回字符串，执行器侧 cast）
  *     { key, label, kind:'check', default }                  复选框（写回 'true'/'false'）
  *     { key, label, kind:'select', options:[], default }     固定下拉
+ *     { key, label, kind:'curves', default }                 曲线编辑器（G5 image-curves 用）：
+ *       画布内拖拽控制点编辑 "x,y;x,y;..." 曲线串（x=输入亮度/y=输出亮度，0~255，
+ *       按 x 升序分段线性），支持空白双击加点、双击/右键点删除、↺对角复位、⇅反相；
+ *       绑定态（{{ }}）自动只读
  *     { key, label, kind:'model', modelType }                模型名下拉（经通用代理
  *       POST /api/v1/service-proxy 调第三方服务 GET /models/files，按 kind 过滤；
  *       API 路径语义由本节点生态自持）。基地址优先取同节点的 service_url_host
@@ -41,12 +45,16 @@
  *                    （同上媒体端点 + lightbox）
  *   mediaVideoOutput （可选）输出键名（如 'file_path'）：内嵌 <video> 播放
  *                    落盘视频 + ⛶ 放大 lightbox（含全屏按钮）
- *   paint         （可选）蒙版手绘：{ strokesKey, imageInput }。节点上显示
- *                   底图+红罩缩略，点「✏️ 编辑蒙版」弹全屏编辑器（笔刷/矩形/
- *                   橡皮/撤销/清除，捏合缩放平移）。笔画以矢量存 strokesKey
- *                   参数（{strokes:[...], image_size:[w,h]}，分辨率无关，可再
- *                   编辑）；底图从上次执行 __inputs_resolved 经节点级代理拉取
- *                   （同 compareInput 链路），未执行过按 512x512 空白参照绘制。
+ *   paint         （可选）蒙版手绘：{ strokesKey, imageInput, imagePathKey? }。
+ *                   节点上显示底图+红罩缩略，点「✏️ 编辑蒙版」弹全屏编辑器
+ *                   （笔刷/矩形/橡皮/撤销/清除，捏合缩放平移）。笔画以矢量存
+ *                   strokesKey 参数（{strokes:[...], image_size:[w,h]}，分辨率
+ *                   无关，可再编辑）。底图三条链：① 回放/执行态 __inputs_resolved
+ *                   经节点级代理拉取（同 compareInput 链路）；② 编辑态从参数解析
+ *                   出对象 id 走通用代理；③ imagePathKey 指定的本地路径参数直读
+ *                   （Studio 媒体端点，未经执行也能衬图绘制）。三条链都无底图时
+ *                   按 512x512 空白参照绘制。imagePathKey 是节点自己声明加载
+ *                   本地图的参数键（如 'image_path'）。
  *                   strokesKey 对应的参数不要放进 fields（由本控件管理）。
  *   note          （可选）输出说明行
  *
@@ -351,6 +359,119 @@ function createNodeWidget(spec) {
       return inp
     }
 
+    // ---- 本地文件控件（kind:'file'）：路径框 + 上传 + 拖拽投放 + 就地预览 ----
+    // 上传经 Studio 媒体端点落盘到 FlowX 机器的 ~/flowx-input/uploads/，拿回本机
+    // 路径写回参数（执行器就在本机 ⇒ 加载类节点直接读盘）。处理类节点（吃上游
+    // 对象 ID）不声明 kind:'file'，界面上不会出现任何上传入口。
+    const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi)$/i
+    const fileControl = (f) => {
+      const raw = (cur.params || {})[f.key]
+      if (isWired(raw)) return wiredControl(f.key, raw)
+      const wrap = h('div', '')
+      const inp = h('input', INPUT_CSS + ';font-family:ui-monospace,Menlo,monospace')
+      inp.type = 'text'
+      inp.spellcheck = false
+      inp.placeholder = f.placeholder || '~/flowx-input/xxx.png'
+      inp.addEventListener('change', () => setParam(f.key, inp.value))
+
+      const bar = h('div', 'display:flex;align-items:center;gap:5px;margin-top:3px')
+      const pick = h('button', BTN_CSS + ';color:#a5b4fc;border-color:rgba(165,180,252,0.4)', '📁 选择文件')
+      pick.title = '从本机选择文件上传到 FlowX（也可直接把文件拖到这里）'
+      const status = h('span', 'font-size:9px;color:rgba(255,255,255,0.45);flex:1;line-height:1.3;word-break:break-all')
+      const picker = h('input', 'display:none')
+      picker.type = 'file'
+      if (f.accept) picker.accept = f.accept
+      bar.append(pick, status)
+
+      const img = h('img', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;cursor:zoom-in;background:rgba(0,0,0,0.3)')
+      const vid = h('video', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;background:#000')
+      vid.controls = true
+      vid.muted = true
+      vid.playsInline = true
+
+      const showPreview = () => {
+        const p = (cur.params || {})[f.key] || ''
+        const none = !p || isWired(p)
+        const wantVid = !none && VIDEO_EXT_RE.test(String(p))
+        img.style.display = 'none'
+        vid.style.display = 'none'
+        if (none) return
+        if (wantVid) {
+          if (vid.dataset.path !== p) { vid.src = mediaUrl(p); vid.dataset.path = p }
+          vid.style.display = 'block'
+          return
+        }
+        if (img.dataset.path !== p) { img.src = mediaUrl(p); img.dataset.path = p }
+        img.style.display = 'block'
+      }
+      img.addEventListener('click', () => {
+        if (img.dataset.path) buildImageLightbox(mediaUrl(img.dataset.path), img.dataset.path)
+      })
+      // 路径越出白名单/文件不存在：静默隐藏预览（参数本身仍可手填）
+      img.addEventListener('error', () => { img.style.display = 'none' })
+      vid.addEventListener('error', () => { vid.style.display = 'none' })
+
+      const setPickState = (busy) => {
+        pick.disabled = busy || !editable()
+        pick.textContent = busy ? '⏳ 上传中…' : '📁 选择文件'
+        pick.style.opacity = editable() ? '1' : '0.5'
+      }
+      const doUpload = (file) => {
+        if (!file) return
+        if (!editable()) { status.textContent = '回放态只读，无法写回参数'; return }
+        const fd = new FormData()
+        fd.append('file', file)
+        setPickState(true)
+        status.textContent = `上传 ${file.name}（${(file.size / 1048576).toFixed(1)}MB）…`
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', '/api/v1/media/upload')
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            status.textContent = `上传中 ${Math.round((e.loaded / e.total) * 100)}%`
+          }
+        }
+        const fail = (msg) => { setPickState(false); status.textContent = '❌ ' + msg }
+        xhr.onload = () => {
+          setPickState(false)
+          let body = null
+          try { body = JSON.parse(xhr.responseText) } catch (_) { body = null }
+          const path = body && body.data && body.data.path
+          if (xhr.status >= 200 && xhr.status < 300 && path) {
+            setParam(f.key, path)   // 上传物即参数值（本机路径），执行器直接读盘
+            status.textContent = '✅ ' + (body.data.name || path)
+            showPreview()
+          } else {
+            fail((body && body.message) || ('HTTP ' + xhr.status))
+          }
+        }
+        xhr.onerror = () => fail('网络错误')
+        xhr.send(fd)
+      }
+      pick.addEventListener('click', () => { if (editable()) picker.click() })
+      picker.addEventListener('change', () => { doUpload(picker.files && picker.files[0]); picker.value = '' })
+      wrap.addEventListener('dragover', (e) => {
+        e.preventDefault()
+        if (editable()) wrap.style.outline = '1px dashed rgba(165,180,252,0.7)'
+      })
+      wrap.addEventListener('dragleave', () => { wrap.style.outline = '' })
+      wrap.addEventListener('drop', (e) => {
+        e.preventDefault()
+        wrap.style.outline = ''
+        const fl = e.dataTransfer && e.dataTransfer.files
+        if (fl && fl.length) doUpload(fl[0])
+      })
+
+      refreshers.push(() => {
+        inp.disabled = !editable()
+        inp.style.opacity = editable() ? '1' : '0.55'
+        if (document.activeElement !== inp) inp.value = (cur.params || {})[f.key] || ''
+        showPreview()
+      })
+      wrap.append(inp, bar, picker, img, vid)
+      showPreview()
+      return wrap
+    }
+
     const readParam = (key, dflt) => {
       const v = (cur.params || {})[key]
       return v !== undefined && v !== '' ? v : dflt
@@ -493,6 +614,168 @@ function createNodeWidget(spec) {
       return inp
     }
 
+    // ---- 曲线编辑器（kind:'curves'）：拖拽控制点编辑 "x,y;x,y;..." ----
+    // 语义与 image-curves 节点一致：x=输入亮度(0~255)、y=输出亮度(0~255)，
+    // 按 x 升序分段线性。交互：拖拽已有点 / 空白处双击加点 / 双击点删除 /
+    // 右键点删除 / ↺ 复位。写回的是曲线串（分辨率无关，纯参数，无额外状态）。
+    const CURVE_W = 236
+    const CURVE_H = 140
+    const parseCurve = (raw) => {
+      const pts = []
+      for (const part of String(raw === undefined || raw === null ? '' : raw).split(';')) {
+        const m = part.split(',')
+        if (m.length !== 2) continue
+        const x = Number(m[0])
+        const y = Number(m[1])
+        if (!isFinite(x) || !isFinite(y)) continue
+        pts.push([Math.min(255, Math.max(0, x)), Math.min(255, Math.max(0, y))])
+      }
+      pts.sort((a, b) => a[0] - b[0])
+      return pts.length ? pts : [[0, 0], [255, 255]]
+    }
+    const fmtCurve = (pts) => pts.map((p) => Math.round(p[0]) + ',' + Math.round(p[1])).join(';')
+
+    const curvesControl = (f) => {
+      const wrap = h('div', '')
+      const cv = h('canvas', 'width:100%;height:' + CURVE_H + 'px;border-radius:6px;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.12);touch-action:none;cursor:crosshair;display:block')
+      const val = h('div', 'font-size:9px;color:rgba(255,255,255,0.5);font-family:ui-monospace,Menlo,monospace;margin-top:3px;word-break:break-all')
+      const btns = h('div', 'display:flex;gap:4px;margin-top:4px')
+      const reset = h('button', BTN_CSS, '↺ 对角复位')
+      const inv = h('button', BTN_CSS, '⇅ 反相')
+      const hint = h('div', 'font-size:9px;color:rgba(255,255,255,0.3);margin-top:3px',
+        '拖拽控制点 · 空白双击加点 · 双击点删除')
+      let pts = parseCurve(readParam(f.key, f.default))
+      let drag = -1
+
+      // 画布坐标 ↔ 曲线坐标：y 轴向上为亮（y=255 在顶部）
+      const toCv = (p) => [p[0] / 255 * CURVE_W, CURVE_H - p[1] / 255 * CURVE_H]
+      const fromCv = (cx, cy) => [
+        Math.min(255, Math.max(0, cx / CURVE_W * 255)),
+        Math.min(255, Math.max(0, 255 - cy / CURVE_H * 255)),
+      ]
+      const lutOf = () => {
+        const lut = []
+        for (let i = 0; i < 256; i++) {
+          if (i <= pts[0][0]) { lut.push(pts[0][1]); continue }
+          if (i >= pts[pts.length - 1][0]) { lut.push(pts[pts.length - 1][1]); continue }
+          let v = i
+          for (let k = 0; k < pts.length - 1; k++) {
+            const [x0, y0] = pts[k]
+            const [x1, y1] = pts[k + 1]
+            if (x0 <= i && i <= x1) { v = x1 === x0 ? y1 : y0 + (i - x0) / (x1 - x0) * (y1 - y0); break }
+          }
+          lut.push(v)
+        }
+        return lut
+      }
+      const draw = () => {
+        const dpr = window.devicePixelRatio || 1
+        cv.width = CURVE_W * dpr
+        cv.height = CURVE_H * dpr
+        const g = cv.getContext('2d')
+        g.setTransform(dpr, 0, 0, dpr, 0, 0)
+        g.clearRect(0, 0, CURVE_W, CURVE_H)
+        g.strokeStyle = 'rgba(255,255,255,0.07)'
+        g.lineWidth = 1
+        for (let i = 1; i < 4; i++) {
+          g.beginPath(); g.moveTo(i * CURVE_W / 4, 0); g.lineTo(i * CURVE_W / 4, CURVE_H); g.stroke()
+          g.beginPath(); g.moveTo(0, i * CURVE_H / 4); g.lineTo(CURVE_W, i * CURVE_H / 4); g.stroke()
+        }
+        g.strokeStyle = 'rgba(255,255,255,0.16)'
+        g.beginPath(); g.moveTo(0, CURVE_H); g.lineTo(CURVE_W, 0); g.stroke()
+        const lut = lutOf()
+        g.strokeStyle = '#22d3ee'
+        g.lineWidth = 1.6
+        g.beginPath()
+        for (let i = 0; i < 256; i++) {
+          const x = i / 255 * CURVE_W
+          const y = CURVE_H - Math.min(255, Math.max(0, lut[i])) / 255 * CURVE_H
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y)
+        }
+        g.stroke()
+        pts.forEach((p) => {
+          const [x, y] = toCv(p)
+          g.fillStyle = '#0f172a'
+          g.strokeStyle = '#22d3ee'
+          g.lineWidth = 1.6
+          g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fill(); g.stroke()
+        })
+        val.textContent = fmtCurve(pts)
+      }
+      const commit = () => draw()
+      const save = () => { setParam(f.key, fmtCurve(pts)); refreshCurve() }
+      const hitIndex = (cx, cy) => {
+        for (let i = 0; i < pts.length; i++) {
+          const [x, y] = toCv(pts[i])
+          if ((cx - x) * (cx - x) + (cy - y) * (cy - y) <= 100) return i
+        }
+        return -1
+      }
+      // 报告上游参数变化（绑定串被外部改写 / 回放态切换）
+      const refreshCurve = () => {
+        const raw = (cur.params || {})[f.key]
+        if (isWired(raw)) {
+          // 绑定态：只读展示绑定来源，不参与编辑（与其它控件一致）
+          const next = parseCurve(resolveParam(f.key) === raw ? f.default : resolveParam(f.key))
+          pts = next
+        } else {
+          const next = parseCurve(raw !== undefined && raw !== '' ? raw : f.default)
+          pts = next
+        }
+        const locked = isWired((cur.params || {})[f.key])
+        cv.style.opacity = locked ? '0.45' : '1'
+        reset.disabled = inv.disabled = !editable() || locked
+        draw()
+      }
+      const evtPos = (e) => {
+        const r = cv.getBoundingClientRect()
+        return [
+          Math.min(CURVE_W, Math.max(0, e.clientX - r.left)),
+          Math.min(CURVE_H, Math.max(0, e.clientY - r.top)),
+        ]
+      }
+      const move = (i, cx, cy) => {
+        const [x, y] = fromCv(cx, cy)
+        const lo = i === 0 ? 0 : pts[i - 1][0]
+        const hi = i === pts.length - 1 ? 255 : pts[i + 1][0]
+        pts[i] = [Math.min(hi, Math.max(lo, x)), y]
+      }
+      cv.addEventListener('pointerdown', (e) => {
+        if (!editable() || isWired((cur.params || {})[f.key])) return
+        const [cx, cy] = evtPos(e)
+        const i = hitIndex(cx, cy)
+        if (e.button === 2 || e.detail === 2 && i > 0 && i < pts.length - 1) {
+          if (i > 0 && i < pts.length - 1) { pts.splice(i, 1); save() }
+          return
+        }
+        if (i >= 0) { drag = i } else {
+          const [x, y] = fromCv(cx, cy)
+          pts.push([x, y])
+          pts.sort((a, b) => a[0] - b[0])
+          drag = pts.findIndex((p) => p[0] === x && p[1] === y)
+        }
+        cv.setPointerCapture(e.pointerId)
+        commit()
+      })
+      cv.addEventListener('pointermove', (e) => {
+        if (drag < 0) return
+        const [cx, cy] = evtPos(e)
+        move(drag, cx, cy)
+        commit()
+      })
+      const endDrag = () => { if (drag >= 0) { drag = -1; save() } }
+      cv.addEventListener('pointerup', endDrag)
+      cv.addEventListener('pointercancel', endDrag)
+      cv.addEventListener('contextmenu', (e) => e.preventDefault())
+      reset.addEventListener('click', () => { pts = [[0, 0], [255, 255]]; save() })
+      inv.addEventListener('click', () => { pts = [[0, 255], [255, 0]]; save() })
+      refreshers.push(refreshCurve)
+      refreshCurve()
+      btns.append(reset, inv)
+      wrap.append(cv, val, btns, hint)
+      return wrap
+    }
+
     const controlOf = (f) => {
       // slider 的 label 内嵌在控件里（右侧带当前值），外层不再重复加 label
       if (f.kind === 'slider') return field('', sliderControl(f))
@@ -500,6 +783,8 @@ function createNodeWidget(spec) {
       if (f.kind === 'select') return field(f.label, selectControl(f))
       if (f.kind === 'model') return field(f.label, modelControl(f))
       if (f.kind === 'textarea') return field(f.label, textareaControl(f))
+      if (f.kind === 'curves') return field(f.label, curvesControl(f))
+      if (f.kind === 'file') return field(f.label, fileControl(f))
       return field(f.label, textControl(f))
     }
 
@@ -977,9 +1262,11 @@ function createNodeWidget(spec) {
 
       refreshers.push(() => {
         parseStrokes()
-        // 底图两条链：① 回放/执行态：resolved inputs + 节点级代理（同 compareInput）；
+        // 底图三条链：① 回放/执行态：resolved inputs + 节点级代理（同 compareInput）；
         // ② 编辑态：paramSources 运行时值解析出对象 id + 通用代理 blob 拉取
-        // （同模型下拉链路），执行过一次上游即可衬图绘制
+        // （同模型下拉链路），执行过一次上游即可衬图绘制；
+        // ③ 本地路径兜底（P.imagePathKey，如本节点自带的 image_path 参数）：直读
+        // Studio 媒体端点（目录白名单内），无需先执行上游即可衬图绘制
         const resolved = resolvedInputs()
         const rr = resolved && resolved[P.imageInput]
         let inId = rr && (typeof rr === 'string' ? rr : (rr.$id || rr.id || ''))
@@ -1012,6 +1299,19 @@ function createNodeWidget(spec) {
               .catch(() => { if (baseFor === inId) { baseFor = ''; baseImg = null } })
           } else {
             img.src = nodeProxyUrl('/images/' + inId, 'GET')
+          }
+        } else if (!inId && P.imagePathKey) {
+          // ③ 本地路径兜底：无上游对象 id（尚未执行）时读节点自己的本地图参数
+          const lp = String((cur.params || {})[P.imagePathKey] || '')
+          const fileKey = lp && !isWired(lp) ? 'file:' + lp : ''
+          if (fileKey && fileKey !== baseFor) {
+            baseFor = fileKey
+            const img = new Image()
+            img.onload = () => { baseImg = img; thumbKey = ''; renderThumb(); updateHint() }
+            img.onerror = () => { if (baseFor === fileKey) { baseFor = ''; baseImg = null } }
+            img.src = mediaUrl(lp)
+          } else if (!fileKey && baseFor.indexOf('file:') === 0) {
+            baseFor = ''; baseImg = null
           }
         }
         const key = ((cur.params || {})[P.strokesKey] || '') + '|' + baseFor + '|' + (baseImg ? 1 : 0)

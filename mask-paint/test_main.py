@@ -84,13 +84,24 @@ check("顺序敏感：erase 先画被覆盖", mask.getpixel((50, 50)) == 255)
 check("未知笔画类型忽略", m.rasterize([{"type": "lasso", "points": [[1, 1]]}],
                                     100, 100).getextrema() == (0, 0))
 
-# ---- overlay_thumb ----
-im = Image.new("RGB", (64, 64), (30, 60, 90))
-mask = m.rasterize([{"type": "rect", "x": 0, "y": 0, "w": 32, "h": 64}], 64, 64)
-ov = m.overlay_thumb(im, mask)
-check("overlay 尺寸一致", ov.size == (64, 64) and ov.mode == "RGB")
-check("overlay 白区偏红", ov.getpixel((16, 32))[0] > 150)
-check("overlay 黑区近原色", ov.getpixel((48, 32)) == (30, 60, 90))
+# ---- upload_local：本地路径守卫（无服务、无网络也可验证）----
+try:
+    m.upload_local("http://127.0.0.1:1", "/no/such/file.png", "")
+    check("upload_local 缺文件报错", False)
+except RuntimeError as e:
+    check("upload_local 缺文件报错", "not found" in str(e))
+
+# ---- image / image_path 二选一：都缺时主流程报错 ----
+import os
+for k in ("IMAGE", "IMAGE_PATH", "FLOWX_PARAM_IMAGE", "FLOWX_PARAM_IMAGE_PATH",
+          "STROKES_JSON", "SERVICE_URL"):
+    os.environ.pop(k, None)
+os.environ["SERVICE_URL"] = "http://127.0.0.1:1"
+try:
+    m.main()
+    check("image/image_path 都空时报错", False)
+except RuntimeError as e:
+    check("image/image_path 都空时报错", "image_path" in str(e))
 
 print()
 if FAILED:

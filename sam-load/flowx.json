@@ -1,0 +1,108 @@
+{
+  "name": "sam-load",
+  "displayName": "SAM 装载",
+  "description": "装载 SAM1（segment-anything）变体 → 模型键（STRING，形如 sam:vit_l），供 sam-segment / sam-auto-segment 复用。权重在 SAM_MODELS_DIR（默认 /models/sam/<variant>/）；装载即注册进服务端 model_manager LRU，可用既有 model-unload 节点卸载。dtype 默认 fp32（Pascal fp16 吞吐仅 1/64）。服务端插件 seg.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "segment",
+    "sam"
+  ],
+  "icon": "📦",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "variant",
+      "type": "string",
+      "description": "SAM 变体：vit_l（1249MB，默认）/ vit_h（2564MB，更准更慢，点选首次实测 6.2s vs 1.7s）/ vit_b（375MB，最省）",
+      "default": "vit_l"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "推理精度：fp32（默认，Pascal 纪律）/ fp16（张量核卡更快）/ auto",
+      "default": "fp32"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "VARIANT": "{{ Param.variant }}",
+    "DTYPE": "{{ Param.dtype }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "模型键（如 sam:vit_l），喂 sam-segment 的 model 参数"
+    },
+    {
+      "name": "params_mb",
+      "type": "integer",
+      "description": "参数量（MB）"
+    },
+    {
+      "name": "vram_mb",
+      "type": "integer",
+      "description": "权重显存占用估算（MB）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

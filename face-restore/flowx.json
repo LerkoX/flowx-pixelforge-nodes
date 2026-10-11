@@ -1,0 +1,160 @@
+{
+  "name": "face-restore",
+  "displayName": "人脸修复（GFPGAN）",
+  "description": "老照片/低清脸修复（对标 ComfyUI FaceRestore）：insightface 检测人脸 → spandrel 修复（GFPGAN / RestoreFormer）→ 羽化贴回。只改人脸区域，框外像素逐字节保留；与 detail-refine 的区别是不重新生成内容、只做修复增强。权重在 FACERESTORE_MODELS_DIR（默认 /models/facerestore）。服务端插件 face_restore.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image",
+    "face"
+  ],
+  "icon": "🧑‍🦱",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100）",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "待人脸修复的图像对象 ID",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "default": "gfpgan",
+      "description": "修复模型：gfpgan（GFPGANv1.3，默认）/ restoreformer（保真度更高、纹理更软）"
+    },
+    {
+      "name": "upscale",
+      "type": "float",
+      "default": 1.0,
+      "description": "修复块放大倍数 1.0~4.0（先放大再修复、再缩回，细节更细；2.0 起显存与耗时上升）"
+    },
+    {
+      "name": "padding",
+      "type": "float",
+      "default": 0.3,
+      "description": "人脸框外扩比例 0~2（0.3 = 各向外扩 30%，给额头/下巴留量）"
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "default": 16,
+      "description": "贴回蒙版羽化像素（0 = 硬边，易见接缝）"
+    },
+    {
+      "name": "only_center",
+      "type": "boolean",
+      "default": true,
+      "description": "只修离画面中心最近的一张脸（关闭则按面积从大到小修 max_faces 张）"
+    },
+    {
+      "name": "max_faces",
+      "type": "integer",
+      "default": 1,
+      "description": "最多修复几张脸（1~8）"
+    },
+    {
+      "name": "det_thresh",
+      "type": "float",
+      "default": 0.5,
+      "description": "人脸检测置信度阈值（AI 生成图可调低到 0.2）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODEL": "{{ Param.model }}",
+    "UPSCALE": "{{ Param.upscale }}",
+    "PADDING": "{{ Param.padding }}",
+    "FEATHER": "{{ Param.feather }}",
+    "ONLY_CENTER": "{{ Param.only_center }}",
+    "MAX_FACES": "{{ Param.max_faces }}",
+    "DET_THRESH": "{{ Param.det_thresh }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "修复后图像对象 ID"
+    },
+    {
+      "name": "faces",
+      "type": "integer",
+      "description": "实际修复的人脸数"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 268,
+    "height": 344,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

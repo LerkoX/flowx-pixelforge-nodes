@@ -17,6 +17,16 @@ import urllib.request
 # SIGKILL（宽限期用尽/进程被直接强杀）无法捕获，此时依赖 Studio 侧按节点上报的
 # job_id 转发 /interrupt 兜底（见 flowx-studio CancelExecution）。
 _INFLIGHT = {}  # job_id -> (base, tok)：submit_job 登记，wait_job 终态注销
+
+# F1（dev-plan §47）：基名 → 服务端实际算子名（`<基名>@<族内容hash12>`）。
+# ensure_plugin 解析成功后登记；call_op/submit_job 自动翻译——这样 60 个自包含节点
+# 里写死的字面算子名（call_op(url, "sd.sample", …)）无需逐个改。
+_OP_ALIAS = {}
+
+
+def op_alias(name):
+    """基名 → 实际算子名；未登记的（核心/历史算子）原样返回。"""
+    return _OP_ALIAS.get(name, name)
 _SIGNAL_HANDLERS_READY = False
 
 
@@ -162,12 +172,61 @@ def get_bytes(base, path, tok=None, timeout=300, retries=None):
                        retries)
 
 
+def plugin_identity(plugin_path):
+    """读节点本地 server_op.py 的族版本化常量（F1，dev-plan §47）。
+
+    返回 (family, version)：族文件带 `OP_FAMILY`/`OP_VERSION` 时给出落盘名前缀与版本；
+    未改造的旧族文件两者都无（返回 (None, None)，沿用旧命名规则）。
+    只解析顶层字面量赋值，不 import（无副作用、不需族文件依赖）。
+    """
+    import ast
+    try:
+        with open(plugin_path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError):
+        return None, None
+    vals = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in ("OP_FAMILY", "OP_VERSION")
+                and isinstance(node.value, ast.Constant)):
+            vals[node.targets[0].id] = node.value.value
+    fam, ver = vals.get("OP_FAMILY"), vals.get("OP_VERSION")
+    if fam is None and ver is None:
+        return None, None          # 旧族文件：兼容
+    if not (isinstance(fam, str) and isinstance(ver, str) and fam and ver):
+        raise RuntimeError(
+            f"{plugin_path}: OP_FAMILY/OP_VERSION 必须成对且为非空字符串"
+            f"（F1 族版本化合同，见 dev-plan §47）；请跑 nodes/_tools/sync-common.py")
+    return fam, ver
+
+
+def _resolve_op_name(ops, op_name, digest):
+    """在 /ops 里找「同基名 + 本文件内容 hash」的实际算子名。
+
+    F1 之后族注册名是 `<基名>@<族内容hash12>`，故实际名与基名不同；
+    旧族文件（未版本化）注册名就等于基名。同名归并只发生在内容相同时（语义等价）。
+    """
+    for o in ops:
+        n = o.get("name") or ""
+        if (n == op_name or n.startswith(op_name + "@")) \
+                and o.get("plugin_hash") == digest:
+            return n
+    return None
+
+
 def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
     """节点算子自注册：确保服务端已注册 op_name 且与本地插件文件版本一致，
     缺失或 hash 不符则经 POST /admin/plugins 上传热加载（服务端需配置
     INFERENCE_TOKEN 开启 /admin/*，且节点参数 service_token 填入同一令牌）。
     plugin_path 缺省为节点包内的 server_op.py（与 main.py 同目录）。
-    算子已存在且为核心内置（无 plugin_hash）时视为可用，直接返回。"""
+    算子已存在且为核心内置（无 plugin_hash）时视为可用。
+
+    **返回实际算子名**：F1 之后族文件把注册名写成 `op_name@<族内容hash12>`，
+    调用方必须用返回名提交 job（否则算子不存在）——这也正是「每执行钉在自己那版
+    实现上」的机制（旧版顶不掉新版，见 dev-plan §47）。
+    """
     import hashlib
     if plugin_path is None:
         plugin_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -176,39 +235,97 @@ def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
         content = f.read()
     digest = hashlib.sha256(content).hexdigest()
 
-    ops = get_json(base, "/ops", tok, timeout=30).get("ops", [])
-    for o in ops:
-        if o.get("name") != op_name:
-            continue
-        if o.get("plugin_hash") is None or o.get("plugin_hash") == digest:
-            return  # 核心内置或插件版本一致：就绪
-        break  # 插件版本不符：走上传覆盖
+    # 落盘名：族文件内容寻址（<OP_FAMILY>_<OP_VERSION>.py）——同内容=同文件=幂等，
+    # 不同内容=不同文件=新旧版本并存；旧族文件沿用 <op_name>.py 命名。
+    family, version = plugin_identity(plugin_path)
+    filename = (f"{family}_{version}.py" if family
+                else op_name.replace(".", "_") + ".py")
 
-    payload = {"filename": op_name.replace(".", "_") + ".py",
+    def _done(actual):
+        """登记别名并返回实际算子名（F1：调用方/后续 call_op 都按它提交）。"""
+        if actual != op_name:
+            _OP_ALIAS[op_name] = actual
+        return actual
+
+    ops = get_json(base, "/ops", tok, timeout=30).get("ops", [])
+    ready = _resolve_op_name(ops, op_name, digest)
+    if ready:
+        return _done(ready)       # 本内容已注册（可能是版本化名）：就绪
+    for o in ops:
+        if o.get("name") == op_name and o.get("plugin_hash") is None:
+            return _done(op_name)  # 核心内置：无插件身份
+
+    payload = {"filename": filename,
                "content": content.decode("utf-8"), "sha256": digest}
-    # /admin/plugins 按内容 sha256 覆盖上传：同内容重传幂等，可安全重试
-    try:
-        resp = _with_retry(lambda: post_json(base, "/admin/plugins", payload,
-                                             tok, timeout))
-    except RuntimeError as e:
-        if "-> HTTP 404" in str(e):
+
+    def _op_ready():
+        """■入后复查：本内容是否已被任何同基名算子注册（并发上传竞态收敛判据）。
+
+        扇出场景（如 10 个预处理器并行）各自 ensure_plugin：第一个上传成功后，
+        其余节点会在上方的预检里命中并直接返回；仍有极小窗口撞上并发写
+        （409/400）——只要求到的实际名字与本地实现一致，语义上就已就绪。
+        """
+        return _resolve_op_name(
+            get_json(base, "/ops", tok, timeout=30).get("ops", []),
+            op_name, digest)
+
+    # /admin/plugins 按内容 sha256 上传：同内容同文件幂等，可安全重试
+    last_err = None
+    for attempt in (1, 2):
+        try:
+            resp = _with_retry(lambda: post_json(base, "/admin/plugins", payload,
+                                                 tok, timeout))
+        except RuntimeError as e:
+            msg = str(e)
+            if "-> HTTP 404" in msg:
+                raise RuntimeError(
+                    f"算子 '{op_name}' 未注册且服务端 /admin 未开放"
+                    f"（INFERENCE_TOKEN 未配置）。请在服务端配置 token 并在节点"
+                    f" service_token 参数填入同一值后重试") from e
+            if "-> HTTP 409" in msg or "-> HTTP 400" in msg:
+                if attempt == 1:
+                    time.sleep(1.5)   # 等同族并发上传落地
+                    ready = _op_ready()
+                    if ready:
+                        print(f"[ensure_plugin] {op_name} 已由同内容插件注册"
+                              f"（并发上传竞态，跳过重传）", flush=True)
+                        return _done(ready)
+                    last_err = e
+                    continue
+                ready = _op_ready()
+                if ready:
+                    print(f"[ensure_plugin] {op_name} 已由同内容插件注册"
+                          f"（并发上传竞态，跳过重传）", flush=True)
+                    return _done(ready)
+                raise RuntimeError(
+                    f"{op_name} 插件上传被拒（{msg[:160]}）：服务端可能已有**不同"
+                    f"内容**的插件文件持有同基名算子（plugins.d 下同基名文件冲突）。"
+                    f"处理：删除该插件文件（DELETE /admin/plugins/<file>）或重启"
+                    f"服务端后重试") from e
+            raise
+        registered = resp.get("ops", [])
+        actual = _resolve_op_name(
+            [{"name": n, "plugin_hash": digest} for n in registered],
+            op_name, digest)
+        if not actual:
             raise RuntimeError(
-                f"算子 '{op_name}' 未注册且服务端 /admin 未开放"
-                f"（INFERENCE_TOKEN 未配置）。请在服务端配置 token 并在节点"
-                f" service_token 参数填入同一值后重试") from e
-        raise
-    registered = resp.get("ops", [])
-    if op_name not in registered:
-        raise RuntimeError(
-            f"插件已上传但算子 '{op_name}' 未注册（插件实际注册了 {registered}）")
-    print(f"[ensure_plugin] {op_name} 自注册成功（{resp.get('plugin')}）",
-          flush=True)
+                f"插件已上传但算子 '{op_name}' 未注册"
+                f"（插件实际注册了 {registered}）")
+        if actual != op_name:
+            print(f"[ensure_plugin] {op_name} -> {actual}"
+                  f"（{resp.get('plugin')}）", flush=True)
+        else:
+            print(f"[ensure_plugin] {op_name} 自注册成功"
+                  f"（{resp.get('plugin')}）", flush=True)
+        return _done(actual)
+    raise last_err
 
 
 def call_op(base, name, inputs, tok=None, timeout=1800, max_retries=3):
     """调能力运行时 POST /op（同步），返回展平的 {端口: id或值}。
     瞬态网络错误重试 max_retries 次：/op 算子多为幂等计算（结果进对象仓库），
     超时断开时服务端已完成执行，重试仅重算一次，无副作用。"""
+    name = op_alias(name)  # F1 基名→实际名（未登记的原样通行）
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
@@ -228,6 +345,8 @@ def submit_job(base, payload, tok=None, timeout=60):
     """提交异步任务：payload = {"nodes": ...} 或 {"name", "inputs"}；返回 job_id。
     任务登记为进行中：进程收到终止信号（Studio 取消/超时）时会被定向 interrupt，
     避免节点被终止后远程任务变孤儿。"""
+    if isinstance(payload, dict) and payload.get("name"):
+        payload = dict(payload, name=op_alias(payload["name"]))  # F1 基名→实际名
     job_id = post_json(base, "/jobs", payload, tok, timeout)["job_id"]
     _register_inflight(base, job_id, tok)
     return job_id
@@ -312,11 +431,21 @@ def ref(oid):
     return {"$id": oid}
 
 
+def yaml_scalar(v):
+    """值 → 合法 YAML 双引号标量（供 flowx-yaml 块）。
+
+    JSON 转义是 YAML 双引号标量的子集，所以 `json.dumps(str(v))` 对含 `"`、`:`、
+    换行的值都安全 —— 早期两处裸拼 `f'{k}: "{v}"'`（本函数与 executor_base）
+    会在 JSON 字符串输出上把 YAML 解析打断（B3 真机复现 __extract_missing）。
+    """
+    return json.dumps(str(v), ensure_ascii=False)
+
+
 def emit(**fields):
     """以 flowx-yaml 代码块输出结果字段，供 FlowX 提取为 Metadata。"""
     print("```flowx-yaml")
     for k, v in fields.items():
-        print(f'{k}: "{v}"')
+        print(f"{k}: {yaml_scalar(v)}")
     print("```")
 
 

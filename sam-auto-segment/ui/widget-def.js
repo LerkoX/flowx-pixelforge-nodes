@@ -1,0 +1,22 @@
+const WIDGET_SPEC = {
+  icon: '🧩',
+  title: 'SAM 自动分割',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'image', label: '输入图像对象 ID（image）', kind: 'text', mono: true },
+    { key: 'model', label: 'SAM 模型键', kind: 'text', default: "sam:vit_l", mono: true },
+    { key: 'points_per_side', label: '点阵密度', kind: 'slider', default: 16, min: 4, max: 64, step: 2 },
+    { key: 'pred_iou_thresh', label: '预测质量门限', kind: 'slider', default: 0.88, min: 0.5, max: 0.98, step: 0.01 },
+    { key: 'stability_score_thresh', label: '稳定性门限', kind: 'slider', default: 0.95, min: 0.5, max: 0.99, step: 0.01 },
+    { key: 'min_area', label: '最小面积(px)', kind: 'slider', default: 200, min: 0, max: 5000, step: 50 },
+    { key: 'max_masks', label: '蒙版数上限', kind: 'slider', default: 64, min: 1, max: 128, step: 1 },
+    { key: 'keep', label: '保留编号（网格点选写入）', kind: 'text', mono: true, advanced: true },
+    { key: 'sort', label: '编号排序', kind: 'select', options: ['area', 'score', 'index'], default: "area" },
+    { key: 'overlay', label: '叠加透明度', kind: 'slider', default: 0.45, min: 0, max: 1, step: 0.05 },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+  ],
+  maskMontage: { keepKey: 'keep', montageKey: 'masks', selectedKey: 'selected' },
+  replay: ['points_per_side', 'pred_iou_thresh', 'stability_score_thresh', 'min_area', 'max_masks', 'keep', 'sort'],
+  compareInput: 'image',
+  note: '先跑一次看编号网格图，再点格子挑选（写回 keep），重跑得到选中并集',
+};

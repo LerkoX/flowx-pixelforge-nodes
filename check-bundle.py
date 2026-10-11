@@ -20,6 +20,12 @@
   I. 有画布侧读取的节点（模型下拉、预览帧上报）必须声明 service_url_host，
      且预览 URL 必须经 host_base() 构造（Studio 宿主机可达 ≠ 容器内可达；
      洏网过：docker 节点 model 下拉/预览拽 172.17.0.1:8100 → Studio 502）
+  K. widget 声明 kind:'file'（本机上传控件）的节点必须 local-only
+     （上传物落在 FlowX 机器，docker/远端执行器看不到该磁盘）
+  L. widget 交互回归：node 里用 DOM stub 真跑一遍 bundle
+     （上传控件写回参数 / 绑定态与回放态只读 / 未声明就不出上传入口 /
+     放大弹层的 ✕・点空白・Esc 三条关闭途径；1.3.0 事故：fileControl 漏传
+     onClose 且 Esc 监听挂在 mediaImageParam 分支 ⇒ 弹窗关不掉）
 
 用法：python3 nodes/check-bundle.py [--quiet]
 退出码：0 一致；1 有不一致（逐条打印人话）。
@@ -29,11 +35,12 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import shutil
 import sys
 
 # 仅本地运行的节点：代码仍在仓库里（save-image/save-video 的 .py 也进了镜像，
 # 但执行器必须 local；图像/蒙版节点因镜像内无 Pillow 连分发也不做）
-LOCAL_ONLY = {"save-image", "save-video", "load-image"}
+LOCAL_ONLY = {"save-image", "save-video", "load-image", "mask-paint"}
 
 # 已删除的 Studio 业务端点（去业务耦合：4 个业务端点 → 2 个通用代理）：
 # widget 里再引用就是指向 404 的死链接，第三方 API 路径语义必须自持。
@@ -103,6 +110,21 @@ def main() -> int:
     if r.returncode != 0:
         problems.append(r.stdout.strip() or "共享件漂移")
 
+    # J. 算子族 ↔ 成员节点 main.py 一致（跨文件重名必 409 / 注册表被切坏）
+    # gate M：节点参数引用一致性（param() / env 模板 / 声明未使用）——
+    # 真机事故教训：参数改名后 flowx.json 与 widget 都改了、main.py 忘了改，
+    # 本地单测与产物校验都发现不了，直到真机 TypeError 才暴露。
+    r = subprocess.run([sys.executable, str(root / "_tools" / "check-node-params.py")],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        problems.extend((r.stdout + r.stderr).strip().splitlines() or
+                        ["节点参数引用一致性失败（gate M）"])
+    r = subprocess.run([sys.executable, str(root / "_tools" / "check-ops.py")],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        problems.extend(line for line in
+                        (r.stdout + r.stderr).strip().splitlines() if line.strip())
+
     # G. widget 产物漂移（base + widget-def 重建对表）
     r = subprocess.run([sys.executable, str(root / "_tools" / "build-widget.py"),
                         "--all", "--check"], capture_output=True, text=True)
@@ -144,6 +166,36 @@ def main() -> int:
             problems.append(
                 f"{nd.name}: 直接上报预览帧必须经 flowx_client.host_base() 构造 "
                 f"Studio 宿主机可达的帧 URL")
+
+    # K. 上传控件（widget kind:'file'）只能声明在 local-only 节点
+    #    上传物落在 FlowX 机器（Studio 的 media.roots，默认 ~/flowx-input/uploads/），
+    #    路径参数由节点读盘；docker/远端执行器看不到这台机器的磁盘 ⇒ 声明了就是
+    #    “能上传但一跑就 FileNotFound”的坑。需要上传语义的节点必须 supportedTypes: [local]
+    for wd in sorted(root.glob("*/ui/widget-def.js")):
+        if "kind: 'file'" not in wd.read_text():
+            continue
+        nd = wd.parent.parent
+        fj = nd / "flowx.json"
+        if not fj.is_file():
+            continue
+        ex = json.loads(fj.read_text()).get("executor") or {}
+        types = ex.get("supportedTypes") or []
+        if "docker" in types:
+            problems.append(
+                f"{nd.name}: widget 声明了 kind:'file'（本机上传）但 executor. "
+                f"supportedTypes={types} 含 docker/远端 —— 上传物在本机，"
+                f"容器里读不到；请改为 supportedTypes: [local]")
+
+    # L. widget 交互回归（DOM stub 里真跑 bundle；产物字节合法 ≠ 点得动）
+    node_bin = shutil.which("node")
+    if node_bin:
+        r = subprocess.run([node_bin, str(root / "_tools" / "test-widget-ui.mjs")],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            fails = [ln for ln in (r.stdout + r.stderr).splitlines() if ln.startswith("FAIL")]
+            problems.extend(fails or ["widget UI 回归失败（跑 node nodes/_tools/test-widget-ui.mjs 看详情）"])
+    elif not quiet:
+        print("! 未找到 node，跳过 widget UI 回归（gate L）", file=sys.stderr)
 
     if problems:
         print(f"✗ 清单不一致（{len(problems)} 处）：", file=sys.stderr)

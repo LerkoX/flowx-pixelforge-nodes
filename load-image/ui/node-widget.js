@@ -20,6 +20,10 @@
  *     { key, label, kind:'slider', min, max, step, default } 滑块（写回字符串，执行器侧 cast）
  *     { key, label, kind:'check', default }                  复选框（写回 'true'/'false'）
  *     { key, label, kind:'select', options:[], default }     固定下拉
+ *     { key, label, kind:'curves', default }                 曲线编辑器（G5 image-curves 用）：
+ *       画布内拖拽控制点编辑 "x,y;x,y;..." 曲线串（x=输入亮度/y=输出亮度，0~255，
+ *       按 x 升序分段线性），支持空白双击加点、双击/右键点删除、↺对角复位、⇅反相；
+ *       绑定态（{{ }}）自动只读
  *     { key, label, kind:'model', modelType }                模型名下拉（经通用代理
  *       POST /api/v1/service-proxy 调第三方服务 GET /models/files，按 kind 过滤；
  *       API 路径语义由本节点生态自持）。基地址优先取同节点的 service_url_host
@@ -30,6 +34,12 @@
  *   replay[]      （可选）▶预览按钮：经节点级通用代理重放算子（POST /op），
  *                 overrides 从这些字段当前值收集（slider 转 Number、check 转 Boolean）；
  *                 依赖 outputs 的 __op_name/__inputs_resolved
+ *   pointSelect   （可选）{pointsKey, boxKey, baseImage}：点/框选画布编辑器
+ *                 （点=正样本、Shift点=负样本、拖拽=框选；原图坐标写回参数）
+ *   maskMontage   （可选）{keepKey, montageKey, selectedKey}：编号网格点选保留/排除
+ *                 （格子坐标用算子回传的 montage_cols/montage_tile 换算）
+ *   boxList       （可选）{labelsKey, scoresKey, boxesKey}：检测框+置信度列表
+ *   tileGridOverlay（可选）{gridKey}：切片网格覆盖层 + 块数/行列/预估读数
  *   compareInput  （可选）'image' 等输入键名：完成后显示前后对比滑块
  *                 （原图对象 id 从 outputs.__inputs_resolved 解析，经节点级通用代理
  *                 GET /images/{id} 拉取，结果图 = 预览区最终帧）
@@ -41,12 +51,16 @@
  *                    （同上媒体端点 + lightbox）
  *   mediaVideoOutput （可选）输出键名（如 'file_path'）：内嵌 <video> 播放
  *                    落盘视频 + ⛶ 放大 lightbox（含全屏按钮）
- *   paint         （可选）蒙版手绘：{ strokesKey, imageInput }。节点上显示
- *                   底图+红罩缩略，点「✏️ 编辑蒙版」弹全屏编辑器（笔刷/矩形/
- *                   橡皮/撤销/清除，捏合缩放平移）。笔画以矢量存 strokesKey
- *                   参数（{strokes:[...], image_size:[w,h]}，分辨率无关，可再
- *                   编辑）；底图从上次执行 __inputs_resolved 经节点级代理拉取
- *                   （同 compareInput 链路），未执行过按 512x512 空白参照绘制。
+ *   paint         （可选）蒙版手绘：{ strokesKey, imageInput, imagePathKey? }。
+ *                   节点上显示底图+红罩缩略，点「✏️ 编辑蒙版」弹全屏编辑器
+ *                   （笔刷/矩形/橡皮/撤销/清除，捏合缩放平移）。笔画以矢量存
+ *                   strokesKey 参数（{strokes:[...], image_size:[w,h]}，分辨率
+ *                   无关，可再编辑）。底图三条链：① 回放/执行态 __inputs_resolved
+ *                   经节点级代理拉取（同 compareInput 链路）；② 编辑态从参数解析
+ *                   出对象 id 走通用代理；③ imagePathKey 指定的本地路径参数直读
+ *                   （Studio 媒体端点，未经执行也能衬图绘制）。三条链都无底图时
+ *                   按 512x512 空白参照绘制。imagePathKey 是节点自己声明加载
+ *                   本地图的参数键（如 'image_path'）。
  *                   strokesKey 对应的参数不要放进 fields（由本控件管理）。
  *   note          （可选）输出说明行
  *
@@ -273,6 +287,16 @@ function createNodeWidget(spec) {
       cur = { ...cur, params }
       cur.onParamsChange(params)
     }
+
+    // ---- 放大弹层（lightbox）生命周期：全节点共用一个遮罩 ----------------
+    // 图片/视频预览都经 setLightbox 打开，同一时刻最多一个弹层；关闭途径有三条
+    // ——✕ 按钮、点遮罩空白、Esc——所以 onClose 必须绑上 closeLightbox，且 Esc
+    // 监听常驻注册（不依赖 spec.mediaImageParam：kind:'file' 控件也有预览）。
+    let lightboxEl = null
+    const closeLightbox = () => { if (lightboxEl) { lightboxEl.remove(); lightboxEl = null } }
+    const setLightbox = (el) => { closeLightbox(); lightboxEl = el }
+    const onEsc = (e) => { if (e.key === 'Escape') closeLightbox() }
+    document.addEventListener('keydown', onEsc)
     // 参数当前值：字面值优先，绑定值从 paramSources 取运行时/当前值（模型下拉等
     // 需要真实 service_url/token 发请求时用）
     const resolveParam = (key) => {
@@ -349,6 +373,126 @@ function createNodeWidget(spec) {
         inp.value = nv !== undefined ? nv : (f.default !== undefined ? String(f.default) : '')
       })
       return inp
+    }
+
+    // ---- 本地文件控件（kind:'file'）：路径框 + 上传 + 拖拽投放 + 就地预览 ----
+    // 上传经 Studio 媒体端点落盘到 FlowX 机器的 ~/flowx-input/uploads/，拿回本机
+    // 路径写回参数（执行器就在本机 ⇒ 加载类节点直接读盘）。处理类节点（吃上游
+    // 对象 ID）不声明 kind:'file'，界面上不会出现任何上传入口。
+    const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi)$/i
+    const fileControl = (f) => {
+      const raw = (cur.params || {})[f.key]
+      if (isWired(raw)) return wiredControl(f.key, raw)
+      const wrap = h('div', '')
+      const inp = h('input', INPUT_CSS + ';font-family:ui-monospace,Menlo,monospace')
+      inp.type = 'text'
+      inp.spellcheck = false
+      inp.placeholder = f.placeholder || '~/flowx-input/xxx.png'
+      inp.addEventListener('change', () => setParam(f.key, inp.value))
+
+      const bar = h('div', 'display:flex;align-items:center;gap:5px;margin-top:3px')
+      const pick = h('button', BTN_CSS + ';color:#a5b4fc;border-color:rgba(165,180,252,0.4)', '📁 选择文件')
+      pick.title = '从本机选择文件上传到 FlowX（也可直接把文件拖到这里）'
+      const status = h('span', 'font-size:9px;color:rgba(255,255,255,0.45);flex:1;line-height:1.3;word-break:break-all')
+      const picker = h('input', 'display:none')
+      picker.type = 'file'
+      if (f.accept) picker.accept = f.accept
+      bar.append(pick, status)
+
+      const img = h('img', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;cursor:zoom-in;background:rgba(0,0,0,0.3)')
+      const vid = h('video', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;background:#000')
+      vid.controls = true
+      vid.muted = true
+      vid.playsInline = true
+
+      const showPreview = () => {
+        const p = (cur.params || {})[f.key] || ''
+        const none = !p || isWired(p)
+        const wantVid = !none && VIDEO_EXT_RE.test(String(p))
+        img.style.display = 'none'
+        vid.style.display = 'none'
+        if (none) return
+        if (wantVid) {
+          if (vid.dataset.path !== p) { vid.src = mediaUrl(p); vid.dataset.path = p }
+          vid.style.display = 'block'
+          return
+        }
+        if (img.dataset.path !== p) { img.src = mediaUrl(p); img.dataset.path = p }
+        img.style.display = 'block'
+      }
+      img.addEventListener('click', () => {
+        if (img.dataset.path) {
+          setLightbox(buildImageLightbox(mediaUrl(img.dataset.path), img.dataset.path, closeLightbox))
+        }
+      })
+      // 路径越出白名单/文件不存在：静默隐藏预览（参数本身仍可手填）
+      img.addEventListener('error', () => { img.style.display = 'none' })
+      vid.addEventListener('error', () => { vid.style.display = 'none' })
+
+      let uploadBusy = false
+      const setPickState = (busy) => {
+        uploadBusy = busy
+        pick.disabled = busy || !editable()
+        pick.textContent = busy ? '⏳ 上传中…' : '📁 选择文件'
+        pick.style.opacity = editable() ? '1' : '0.5'
+      }
+      const doUpload = (file) => {
+        if (!file) return
+        if (!editable()) { status.textContent = '回放态只读，无法写回参数'; return }
+        const fd = new FormData()
+        fd.append('file', file)
+        setPickState(true)
+        status.textContent = `上传 ${file.name}（${(file.size / 1048576).toFixed(1)}MB）…`
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', '/api/v1/media/upload')
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            status.textContent = `上传中 ${Math.round((e.loaded / e.total) * 100)}%`
+          }
+        }
+        const fail = (msg) => { setPickState(false); status.textContent = '❌ ' + msg }
+        xhr.onload = () => {
+          setPickState(false)
+          let body = null
+          try { body = JSON.parse(xhr.responseText) } catch (_) { body = null }
+          const path = body && body.data && body.data.path
+          if (xhr.status >= 200 && xhr.status < 300 && path) {
+            setParam(f.key, path)   // 上传物即参数值（本机路径），执行器直接读盘
+            status.textContent = '✅ ' + (body.data.name || path)
+            showPreview()
+          } else {
+            fail((body && body.message) || ('HTTP ' + xhr.status))
+          }
+        }
+        xhr.onerror = () => fail('网络错误')
+        xhr.send(fd)
+      }
+      pick.addEventListener('click', () => { if (editable()) picker.click() })
+      picker.addEventListener('change', () => { doUpload(picker.files && picker.files[0]); picker.value = '' })
+      wrap.addEventListener('dragover', (e) => {
+        e.preventDefault()
+        if (editable()) wrap.style.outline = '1px dashed rgba(165,180,252,0.7)'
+      })
+      wrap.addEventListener('dragleave', () => { wrap.style.outline = '' })
+      wrap.addEventListener('drop', (e) => {
+        e.preventDefault()
+        wrap.style.outline = ''
+        const fl = e.dataTransfer && e.dataTransfer.files
+        if (fl && fl.length) doUpload(fl[0])
+      })
+
+      refreshers.push(() => {
+        inp.disabled = !editable()
+        inp.style.opacity = editable() ? '1' : '0.55'
+        if (document.activeElement !== inp) inp.value = (cur.params || {})[f.key] || ''
+        // 只同步可写性（回放态禁用），不覆盖上传中的按钮文案
+        pick.disabled = uploadBusy || !editable()
+        pick.style.opacity = editable() ? '1' : '0.5'
+        showPreview()
+      })
+      wrap.append(inp, bar, picker, img, vid)
+      showPreview()
+      return wrap
     }
 
     const readParam = (key, dflt) => {
@@ -493,6 +637,168 @@ function createNodeWidget(spec) {
       return inp
     }
 
+    // ---- 曲线编辑器（kind:'curves'）：拖拽控制点编辑 "x,y;x,y;..." ----
+    // 语义与 image-curves 节点一致：x=输入亮度(0~255)、y=输出亮度(0~255)，
+    // 按 x 升序分段线性。交互：拖拽已有点 / 空白处双击加点 / 双击点删除 /
+    // 右键点删除 / ↺ 复位。写回的是曲线串（分辨率无关，纯参数，无额外状态）。
+    const CURVE_W = 236
+    const CURVE_H = 140
+    const parseCurve = (raw) => {
+      const pts = []
+      for (const part of String(raw === undefined || raw === null ? '' : raw).split(';')) {
+        const m = part.split(',')
+        if (m.length !== 2) continue
+        const x = Number(m[0])
+        const y = Number(m[1])
+        if (!isFinite(x) || !isFinite(y)) continue
+        pts.push([Math.min(255, Math.max(0, x)), Math.min(255, Math.max(0, y))])
+      }
+      pts.sort((a, b) => a[0] - b[0])
+      return pts.length ? pts : [[0, 0], [255, 255]]
+    }
+    const fmtCurve = (pts) => pts.map((p) => Math.round(p[0]) + ',' + Math.round(p[1])).join(';')
+
+    const curvesControl = (f) => {
+      const wrap = h('div', '')
+      const cv = h('canvas', 'width:100%;height:' + CURVE_H + 'px;border-radius:6px;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.12);touch-action:none;cursor:crosshair;display:block')
+      const val = h('div', 'font-size:9px;color:rgba(255,255,255,0.5);font-family:ui-monospace,Menlo,monospace;margin-top:3px;word-break:break-all')
+      const btns = h('div', 'display:flex;gap:4px;margin-top:4px')
+      const reset = h('button', BTN_CSS, '↺ 对角复位')
+      const inv = h('button', BTN_CSS, '⇅ 反相')
+      const hint = h('div', 'font-size:9px;color:rgba(255,255,255,0.3);margin-top:3px',
+        '拖拽控制点 · 空白双击加点 · 双击点删除')
+      let pts = parseCurve(readParam(f.key, f.default))
+      let drag = -1
+
+      // 画布坐标 ↔ 曲线坐标：y 轴向上为亮（y=255 在顶部）
+      const toCv = (p) => [p[0] / 255 * CURVE_W, CURVE_H - p[1] / 255 * CURVE_H]
+      const fromCv = (cx, cy) => [
+        Math.min(255, Math.max(0, cx / CURVE_W * 255)),
+        Math.min(255, Math.max(0, 255 - cy / CURVE_H * 255)),
+      ]
+      const lutOf = () => {
+        const lut = []
+        for (let i = 0; i < 256; i++) {
+          if (i <= pts[0][0]) { lut.push(pts[0][1]); continue }
+          if (i >= pts[pts.length - 1][0]) { lut.push(pts[pts.length - 1][1]); continue }
+          let v = i
+          for (let k = 0; k < pts.length - 1; k++) {
+            const [x0, y0] = pts[k]
+            const [x1, y1] = pts[k + 1]
+            if (x0 <= i && i <= x1) { v = x1 === x0 ? y1 : y0 + (i - x0) / (x1 - x0) * (y1 - y0); break }
+          }
+          lut.push(v)
+        }
+        return lut
+      }
+      const draw = () => {
+        const dpr = window.devicePixelRatio || 1
+        cv.width = CURVE_W * dpr
+        cv.height = CURVE_H * dpr
+        const g = cv.getContext('2d')
+        g.setTransform(dpr, 0, 0, dpr, 0, 0)
+        g.clearRect(0, 0, CURVE_W, CURVE_H)
+        g.strokeStyle = 'rgba(255,255,255,0.07)'
+        g.lineWidth = 1
+        for (let i = 1; i < 4; i++) {
+          g.beginPath(); g.moveTo(i * CURVE_W / 4, 0); g.lineTo(i * CURVE_W / 4, CURVE_H); g.stroke()
+          g.beginPath(); g.moveTo(0, i * CURVE_H / 4); g.lineTo(CURVE_W, i * CURVE_H / 4); g.stroke()
+        }
+        g.strokeStyle = 'rgba(255,255,255,0.16)'
+        g.beginPath(); g.moveTo(0, CURVE_H); g.lineTo(CURVE_W, 0); g.stroke()
+        const lut = lutOf()
+        g.strokeStyle = '#22d3ee'
+        g.lineWidth = 1.6
+        g.beginPath()
+        for (let i = 0; i < 256; i++) {
+          const x = i / 255 * CURVE_W
+          const y = CURVE_H - Math.min(255, Math.max(0, lut[i])) / 255 * CURVE_H
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y)
+        }
+        g.stroke()
+        pts.forEach((p) => {
+          const [x, y] = toCv(p)
+          g.fillStyle = '#0f172a'
+          g.strokeStyle = '#22d3ee'
+          g.lineWidth = 1.6
+          g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fill(); g.stroke()
+        })
+        val.textContent = fmtCurve(pts)
+      }
+      const commit = () => draw()
+      const save = () => { setParam(f.key, fmtCurve(pts)); refreshCurve() }
+      const hitIndex = (cx, cy) => {
+        for (let i = 0; i < pts.length; i++) {
+          const [x, y] = toCv(pts[i])
+          if ((cx - x) * (cx - x) + (cy - y) * (cy - y) <= 100) return i
+        }
+        return -1
+      }
+      // 报告上游参数变化（绑定串被外部改写 / 回放态切换）
+      const refreshCurve = () => {
+        const raw = (cur.params || {})[f.key]
+        if (isWired(raw)) {
+          // 绑定态：只读展示绑定来源，不参与编辑（与其它控件一致）
+          const next = parseCurve(resolveParam(f.key) === raw ? f.default : resolveParam(f.key))
+          pts = next
+        } else {
+          const next = parseCurve(raw !== undefined && raw !== '' ? raw : f.default)
+          pts = next
+        }
+        const locked = isWired((cur.params || {})[f.key])
+        cv.style.opacity = locked ? '0.45' : '1'
+        reset.disabled = inv.disabled = !editable() || locked
+        draw()
+      }
+      const evtPos = (e) => {
+        const r = cv.getBoundingClientRect()
+        return [
+          Math.min(CURVE_W, Math.max(0, e.clientX - r.left)),
+          Math.min(CURVE_H, Math.max(0, e.clientY - r.top)),
+        ]
+      }
+      const move = (i, cx, cy) => {
+        const [x, y] = fromCv(cx, cy)
+        const lo = i === 0 ? 0 : pts[i - 1][0]
+        const hi = i === pts.length - 1 ? 255 : pts[i + 1][0]
+        pts[i] = [Math.min(hi, Math.max(lo, x)), y]
+      }
+      cv.addEventListener('pointerdown', (e) => {
+        if (!editable() || isWired((cur.params || {})[f.key])) return
+        const [cx, cy] = evtPos(e)
+        const i = hitIndex(cx, cy)
+        if (e.button === 2 || e.detail === 2 && i > 0 && i < pts.length - 1) {
+          if (i > 0 && i < pts.length - 1) { pts.splice(i, 1); save() }
+          return
+        }
+        if (i >= 0) { drag = i } else {
+          const [x, y] = fromCv(cx, cy)
+          pts.push([x, y])
+          pts.sort((a, b) => a[0] - b[0])
+          drag = pts.findIndex((p) => p[0] === x && p[1] === y)
+        }
+        cv.setPointerCapture(e.pointerId)
+        commit()
+      })
+      cv.addEventListener('pointermove', (e) => {
+        if (drag < 0) return
+        const [cx, cy] = evtPos(e)
+        move(drag, cx, cy)
+        commit()
+      })
+      const endDrag = () => { if (drag >= 0) { drag = -1; save() } }
+      cv.addEventListener('pointerup', endDrag)
+      cv.addEventListener('pointercancel', endDrag)
+      cv.addEventListener('contextmenu', (e) => e.preventDefault())
+      reset.addEventListener('click', () => { pts = [[0, 0], [255, 255]]; save() })
+      inv.addEventListener('click', () => { pts = [[0, 255], [255, 0]]; save() })
+      refreshers.push(refreshCurve)
+      refreshCurve()
+      btns.append(reset, inv)
+      wrap.append(cv, val, btns, hint)
+      return wrap
+    }
+
     const controlOf = (f) => {
       // slider 的 label 内嵌在控件里（右侧带当前值），外层不再重复加 label
       if (f.kind === 'slider') return field('', sliderControl(f))
@@ -500,6 +806,8 @@ function createNodeWidget(spec) {
       if (f.kind === 'select') return field(f.label, selectControl(f))
       if (f.kind === 'model') return field(f.label, modelControl(f))
       if (f.kind === 'textarea') return field(f.label, textareaControl(f))
+      if (f.kind === 'curves') return field(f.label, curvesControl(f))
+      if (f.kind === 'file') return field(f.label, fileControl(f))
       return field(f.label, textControl(f))
     }
 
@@ -977,9 +1285,11 @@ function createNodeWidget(spec) {
 
       refreshers.push(() => {
         parseStrokes()
-        // 底图两条链：① 回放/执行态：resolved inputs + 节点级代理（同 compareInput）；
+        // 底图三条链：① 回放/执行态：resolved inputs + 节点级代理（同 compareInput）；
         // ② 编辑态：paramSources 运行时值解析出对象 id + 通用代理 blob 拉取
-        // （同模型下拉链路），执行过一次上游即可衬图绘制
+        // （同模型下拉链路），执行过一次上游即可衬图绘制；
+        // ③ 本地路径兜底（P.imagePathKey，如本节点自带的 image_path 参数）：直读
+        // Studio 媒体端点（目录白名单内），无需先执行上游即可衬图绘制
         const resolved = resolvedInputs()
         const rr = resolved && resolved[P.imageInput]
         let inId = rr && (typeof rr === 'string' ? rr : (rr.$id || rr.id || ''))
@@ -1013,12 +1323,277 @@ function createNodeWidget(spec) {
           } else {
             img.src = nodeProxyUrl('/images/' + inId, 'GET')
           }
+        } else if (!inId && P.imagePathKey) {
+          // ③ 本地路径兜底：无上游对象 id（尚未执行）时读节点自己的本地图参数
+          const lp = String((cur.params || {})[P.imagePathKey] || '')
+          const fileKey = lp && !isWired(lp) ? 'file:' + lp : ''
+          if (fileKey && fileKey !== baseFor) {
+            baseFor = fileKey
+            const img = new Image()
+            img.onload = () => { baseImg = img; thumbKey = ''; renderThumb(); updateHint() }
+            img.onerror = () => { if (baseFor === fileKey) { baseFor = ''; baseImg = null } }
+            img.src = mediaUrl(lp)
+          } else if (!fileKey && baseFor.indexOf('file:') === 0) {
+            baseFor = ''; baseImg = null
+          }
         }
         const key = ((cur.params || {})[P.strokesKey] || '') + '|' + baseFor + '|' + (baseImg ? 1 : 0)
         if (key !== thumbKey) { thumbKey = key; renderThumb() }
         editBtn.disabled = !editable()
         editBtn.style.opacity = editable() ? '1' : '0.5'
         updateHint()
+      })
+    }
+
+    // ---- 点/框选画布（spec.pointSelect）：SAM 交互式分割提示 ----
+    // 点=正样本、Shift/Alt/右键点=负样本、拖拽=框选；坐标以**原图坐标**写回
+    // points/box 参数（服务端无需换算）。底图走 compareInput 同款链路
+    // （outputs.__inputs_resolved + 节点级代理），结果蒙版有预览帧时叠加显示。
+    const psWrap = h('div', 'display:none;margin-bottom:6px')
+    if (spec.pointSelect) {
+      const P = spec.pointSelect
+      const psBox = h('div', 'position:relative;width:100%;border-radius:8px;overflow:hidden;background:rgba(0,0,0,0.35);user-select:none;touch-action:none')
+      const psBase = h('img', 'width:100%;display:block;pointer-events:none')
+      const psMask = h('img', 'position:absolute;inset:0;width:100%;height:100%;object-fit:fill;opacity:0.45;display:none;pointer-events:none')
+      const psCv = h('canvas', 'position:absolute;inset:0;width:100%;height:100%;touch-action:none')
+      const psTag = h('span', 'position:absolute;left:4px;top:4px;font-size:9px;background:rgba(0,0,0,0.6);border-radius:4px;padding:1px 5px;color:rgba(255,255,255,0.85);pointer-events:none', '点=正 / Shift点=负 / 拖拽=框选')
+      psBox.append(psBase, psMask, psCv, psTag)
+      const psHint = h('div', 'font-size:9px;color:rgba(255,255,255,0.4);margin-top:2px')
+      const psRow = h('div', 'display:flex;gap:6px;align-items:center;margin-top:4px')
+      const psClear = h('button', BTN_CSS, '清空提示')
+      const psMaskBtn = h('button', BTN_CSS, '显示结果蒙版')
+      psRow.append(psClear, psMaskBtn)
+      psWrap.append(psBox, psRow, psHint)
+
+      let psW = 0, psH = 0
+      let psPts = [], psBoxSel = null, psDragging = false, psStart = null, psMoved = false
+      const psParse = () => {
+        psPts = []
+        for (const chunk of String(readParam(P.pointsKey, '') || '').split(';')) {
+          const p = chunk.split(',').map((x) => x.trim()).filter((x) => x !== '')
+          if (p.length >= 2 && !isNaN(Number(p[0])) && !isNaN(Number(p[1]))) {
+            psPts.push([Number(p[0]), Number(p[1]), p.length > 2 ? Number(p[2]) : 1])
+          }
+        }
+        const b = String(readParam(P.boxKey, '') || '').split(',').map((x) => Number(x.trim())).filter((x) => !isNaN(x))
+        psBoxSel = b.length === 4 ? b : null
+      }
+      const psWrite = () => {
+        setParam(P.pointsKey, psPts.map((p) => `${Math.round(p[0])},${Math.round(p[1])},${p[2] ? 1 : 0}`).join(';'))
+        if (P.boxKey) setParam(P.boxKey, psBoxSel ? psBoxSel.map((v) => Math.round(v)).join(',') : '')
+      }
+      const psDraw = () => {
+        if (!psW || !psH) return
+        psCv.width = psW
+        psCv.height = psH
+        const c = psCv.getContext('2d')
+        c.clearRect(0, 0, psW, psH)
+        const r = Math.max(4, Math.round(Math.min(psW, psH) * 0.012))
+        if (psBoxSel) {
+          c.strokeStyle = '#ff4040'
+          c.lineWidth = Math.max(2, r / 2)
+          c.strokeRect(psBoxSel[0], psBoxSel[1], psBoxSel[2] - psBoxSel[0], psBoxSel[3] - psBoxSel[1])
+        }
+        for (const p of psPts) {
+          c.beginPath()
+          c.arc(p[0], p[1], r, 0, Math.PI * 2)
+          c.fillStyle = p[2] ? '#34d399' : '#ff4040'
+          c.fill()
+          c.lineWidth = Math.max(1, r / 4)
+          c.strokeStyle = '#000'
+          c.stroke()
+        }
+        const pos = psPts.filter((p) => p[2]).length
+        psHint.textContent = `正样本 ${pos} 点 / 负样本 ${psPts.length - pos} 点 / 框选 ${psBoxSel ? 1 : 0} 处`
+          + (editable() ? '；编辑后点「▶ 预览」看结果' : '（只读）')
+        psClear.disabled = !editable()
+        psClear.style.opacity = editable() ? '1' : '0.5'
+      }
+      const psToOrig = (e) => {
+        const rect = psCv.getBoundingClientRect()
+        const x = (e.clientX - rect.left) / Math.max(1, rect.width) * psW
+        const y = (e.clientY - rect.top) / Math.max(1, rect.height) * psH
+        return [Math.max(0, Math.min(psW - 1, x)), Math.max(0, Math.min(psH - 1, y))]
+      }
+      psCv.addEventListener('pointerdown', (e) => {
+        if (!editable() || !psW) return
+        psDragging = true
+        psMoved = false
+        psStart = psToOrig(e)
+        if (psCv.setPointerCapture) { try { psCv.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ } }
+      })
+      psCv.addEventListener('pointermove', (e) => {
+        if (!psDragging) return
+        const p = psToOrig(e)
+        if (Math.abs(p[0] - psStart[0]) + Math.abs(p[1] - psStart[1]) > Math.min(psW, psH) * 0.01) psMoved = true
+        if (psMoved) {
+          psBoxSel = [Math.min(psStart[0], p[0]), Math.min(psStart[1], p[1]),
+                      Math.max(psStart[0], p[0]), Math.max(psStart[1], p[1])]
+          psDraw()
+        }
+      })
+      psCv.addEventListener('pointerup', (e) => {
+        if (!psDragging) return
+        psDragging = false
+        if (psMoved) {
+          psWrite()
+        } else {
+          const p = psToOrig(e)
+          const neg = e.shiftKey || e.altKey || e.button === 2
+          psPts.push([p[0], p[1], neg ? 0 : 1])
+          psWrite()
+        }
+        psDraw()
+      })
+      psCv.addEventListener('contextmenu', (e) => e.preventDefault())
+      psClear.addEventListener('click', () => { psPts = []; psBoxSel = null; psWrite(); psDraw() })
+      let psMaskOn = false
+      psMaskBtn.addEventListener('click', () => {
+        psMaskOn = !psMaskOn
+        psMask.style.display = psMaskOn ? 'block' : 'none'
+        psMaskBtn.textContent = psMaskOn ? '隐藏结果蒙版' : '显示结果蒙版'
+      })
+      let psLoadedFor = ''
+      refreshers.push(() => {
+        const resolved = resolvedInputs()
+        const ref = resolved && resolved[P.baseImage]
+        const inId = ref && (typeof ref === 'string' ? ref : (ref.$id || ref.id || ''))
+        if (!inId || !cur.execution) { psWrap.style.display = 'none'; psLoadedFor = ''; return }
+        psWrap.style.display = 'block'
+        if (psLoadedFor !== inId) {
+          psLoadedFor = inId
+          psBase.onload = () => { psW = psBase.naturalWidth; psH = psBase.naturalHeight; psParse(); psDraw() }
+          psBase.onerror = () => { psHint.textContent = '底图加载失败（对象已驱逐或未执行过）' }
+          psBase.src = nodeProxyUrl('/images/' + inId, 'GET')
+        }
+        psParse()
+        psDraw()
+        if (psMaskOn) {
+          const pv = cur.preview
+          const url = replayImgUrl || (pv && pv.url)
+          if (url) psMask.src = url
+        }
+      })
+    }
+
+    // ---- 蒙版网格点选（spec.maskMontage）：自动分割结果挑选保留/排除 ----
+    // 服务端把各蒙版拼成编号网格图（montage_tile/montage_cols 由算子回传，
+    // 保证格子坐标与后端一致），点格子 → 切换 keep 下标 → setParam 写回。
+    const mmWrap = h('div', 'display:none;margin-bottom:6px')
+    if (spec.maskMontage) {
+      const P = spec.maskMontage
+      const mmGrid = h('img', 'width:100%;display:block;border-radius:6px;cursor:crosshair;background:rgba(0,0,0,0.3)')
+      const mmChips = h('div', 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px')
+      const mmHint = h('div', 'font-size:9px;color:rgba(255,255,255,0.4);margin-top:2px')
+      const mmSel = h('img', 'width:100%;display:block;border-radius:6px;margin-top:4px;background:rgba(0,0,0,0.3)')
+      mmWrap.append(mmGrid, mmChips, mmHint, mmSel)
+      let mmN = 0, mmCols = 1, mmTile = 160, mmLoadedFor = '', mmSelFor = ''
+      const mmKeep = () => {
+        const s = new Set()
+        for (const x of String(readParam(P.keepKey, '') || '').split(',')) {
+          const v = x.trim()
+          if (v !== '' && !isNaN(Number(v))) s.add(Number(v))
+        }
+        return s
+      }
+      const mmChipsRender = () => {
+        mmChips.textContent = ''
+        const ks = mmKeep()
+        mmHint.textContent = ks.size === 0
+          ? `${mmN} 个蒙版（未选择 = 全选）`
+          : `已选 ${ks.size}/${mmN}：${[...ks].sort((a, b) => a - b).join(', ')}（改完点「▶ 预览」重跑）`
+        for (let i = 0; i < Math.min(mmN, 64); i++) {
+          const on = ks.has(i)
+          const chip = h('span', `font-size:9px;padding:1px 5px;border-radius:4px;cursor:pointer;background:${on ? 'rgba(52,211,153,0.85)' : 'rgba(255,255,255,0.12)'};color:${on ? '#06251a' : 'rgba(255,255,255,0.7)'}`, String(i))
+          chip.addEventListener('click', () => {
+            const s = mmKeep()
+            if (s.has(i)) s.delete(i)
+            else s.add(i)
+            setParam(P.keepKey, [...s].sort((a, b) => a - b).join(','))
+            mmChipsRender()
+          })
+          mmChips.append(chip)
+        }
+      }
+      mmGrid.addEventListener('click', (e) => {
+        if (!editable() || !mmN) return
+        const rect = mmGrid.getBoundingClientRect()
+        const gx = (e.clientX - rect.left) / Math.max(1, rect.width) * mmGrid.naturalWidth
+        const gy = (e.clientY - rect.top) / Math.max(1, rect.height) * mmGrid.naturalHeight
+        const col = Math.floor(gx / mmTile)
+        const idx = Math.floor(gy / mmTile) * mmCols + col
+        if (col < 0 || col >= mmCols || idx < 0 || idx >= mmN) return
+        const s = mmKeep()
+        if (s.has(idx)) s.delete(idx)
+        else s.add(idx)
+        setParam(P.keepKey, [...s].sort((a, b) => a - b).join(','))
+        mmChipsRender()
+      })
+      refreshers.push(() => {
+        const o = cur.outputs || {}
+        mmN = Number(o.count || 0)
+        mmCols = Math.max(1, Number(o.montage_cols || 1))
+        mmTile = Math.max(1, Number(o.montage_tile || 160))
+        const mid = o[P.montageKey]
+        const sid = o[P.selectedKey]
+        if (!mid || !cur.execution || !mmN) { mmWrap.style.display = 'none'; mmLoadedFor = ''; mmSelFor = ''; return }
+        mmWrap.style.display = 'block'
+        if (mmLoadedFor !== mid) { mmLoadedFor = mid; mmGrid.src = nodeProxyUrl('/images/' + mid, 'GET') }
+        if (sid && mmSelFor !== sid) { mmSelFor = sid; mmSel.src = nodeProxyUrl('/images/' + sid, 'GET') }
+        mmChipsRender()
+      })
+    }
+
+    // ---- 检测框列表（spec.boxList）：标签 + 置信度 + 框尺寸 ----
+    const blWrap = h('div', 'display:none;margin-bottom:6px')
+    if (spec.boxList) {
+      const P = spec.boxList
+      const blList = h('div', 'font-size:10px;color:rgba(255,255,255,0.8);max-height:160px;overflow:auto')
+      blWrap.append(blList)
+      // 值可能带 '@' 负载信封（防 Studio 自动反序列化），解析前先剥掉
+      const blJ = (v) => {
+        const t = String(v == null ? '' : v)
+        try { return JSON.parse(t.startsWith('@') ? t.slice(1) : t) } catch (err) { return null }
+      }
+      refreshers.push(() => {
+        const o = cur.outputs || {}
+        const labs = blJ(o[P.labelsKey]) || []
+        const scs = blJ(o[P.scoresKey]) || []
+        const bxs = blJ(o[P.boxesKey]) || []
+        if (!bxs.length) { blWrap.style.display = 'none'; return }
+        blWrap.style.display = 'block'
+        blList.textContent = ''
+        blList.append(h('div', 'font-size:9px;color:rgba(255,255,255,0.45)', `命中 ${bxs.length} 个（门限内，按置信度降序）`))
+        bxs.forEach((b, i) => {
+          const sc = scs[i] !== undefined ? Number(scs[i]).toFixed(3) : '-'
+          const w = Math.round(b[2] - b[0])
+          const hh = Math.round(b[3] - b[1])
+          blList.append(h('div', 'padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.06)',
+            `#${i + 1} ${labs[i] || '?'}  ${sc}  [${Math.round(b[0])},${Math.round(b[1])} ${w}×${hh}]`))
+        })
+      })
+    }
+
+    // ---- 切片网格读数（spec.tileGridOverlay）：网格图 + 块数/行列/预估 ----
+    const tgWrap = h('div', 'display:none;margin-bottom:6px')
+    if (spec.tileGridOverlay) {
+      const P = spec.tileGridOverlay
+      const tgImg = h('img', 'width:100%;display:block;border-radius:6px;background:rgba(0,0,0,0.3)')
+      const tgInfo = h('div', 'font-size:10px;color:rgba(255,255,255,0.75);margin-top:2px')
+      tgWrap.append(tgImg, tgInfo)
+      let tgLoadedFor = ''
+      refreshers.push(() => {
+        const o = cur.outputs || {}
+        const gid = o[P.gridKey]
+        if (!gid || !cur.execution) { tgWrap.style.display = 'none'; tgLoadedFor = ''; return }
+        tgWrap.style.display = 'block'
+        if (tgLoadedFor !== gid) { tgLoadedFor = gid; tgImg.src = nodeProxyUrl('/images/' + gid, 'GET') }
+        const parts = []
+        if (o.tiles) parts.push(`块数 ${o.tiles}`)
+        if (o.rows) parts.push(`${o.rows}行×${o.cols}列`)
+        if (o.target_size) parts.push(`目标 ${o.target_size}`)
+        if (o.est_samples) parts.push(`预估采样步 ${o.est_samples}`)
+        tgInfo.textContent = parts.join('　')
       })
     }
 
@@ -1137,15 +1712,10 @@ function createNodeWidget(spec) {
     mediaBox.append(mediaImg, mediaVideo, mediaPlaceholder, mediaExpand)
     const mediaPath = h('div', 'color:rgba(255,255,255,0.4);margin-bottom:6px;word-break:break-all;font-size:10px')
 
-    let lightboxEl = null
-    const closeLightbox = () => { if (lightboxEl) { lightboxEl.remove(); lightboxEl = null } }
-    const onEsc = (e) => { if (e.key === 'Escape') closeLightbox() }
     if (spec.mediaImageParam || spec.mediaImageOutput || spec.mediaVideoOutput) {
-      document.addEventListener('keydown', onEsc)
       mediaImg.addEventListener('click', () => {
         if (!mediaImg.src || mediaImg.style.display === 'none') return
-        closeLightbox()
-        lightboxEl = buildImageLightbox(mediaImg.src, mediaPath.textContent, closeLightbox)
+        setLightbox(buildImageLightbox(mediaImg.src, mediaPath.textContent, closeLightbox))
       })
       mediaExpand.addEventListener('click', () => {
         if (!mediaVideo.src) return
@@ -1154,7 +1724,7 @@ function createNodeWidget(spec) {
           try { mediaVideo.currentTime = lb.video.currentTime } catch (_) {}
           closeLightbox()
         })
-        lightboxEl = lb.overlay
+        setLightbox(lb.overlay)
       })
       mediaImg.addEventListener('error', () => {
         mediaImg.style.display = 'none'
@@ -1170,7 +1740,7 @@ function createNodeWidget(spec) {
     // ▶重放、实时预览开关）→ 参数控件 → 输出。图像预览一律置顶，手机窄画布上
     // 不必往下滚就能看到结果；无预览/无媒体/无重放的节点这些块是 display:none，
     // 不占位也不改变观感。
-    el.append(header, prevWrap, cmpWrap, paintWrap, mediaBox, mediaPath, replayRow, peRow, controls, outBox)
+    el.append(header, prevWrap, cmpWrap, paintWrap, psWrap, mmWrap, blWrap, tgWrap, mediaBox, mediaPath, replayRow, peRow, controls, outBox)
     if (spec.note) el.append(h('div', 'font-size:9px;color:rgba(255,255,255,0.3);margin-top:4px', spec.note))
 
     let lastPreviewUrl = ''
@@ -1241,7 +1811,8 @@ function createNodeWidget(spec) {
         outBox.textContent = '等待执行…'
       } else {
         for (const [k, v] of entries) {
-          outBox.append(h('div', '', `${k}: ${String(v).slice(0, 80)}`))
+          const shown = String(v)
+          outBox.append(h('div', '', `${k}: ${(shown.startsWith('@') ? shown.slice(1) : shown).slice(0, 80)}`))
         }
       }
       refreshers.forEach((f) => f())
@@ -1261,12 +1832,11 @@ const WIDGET_SPEC = {
   icon: '🖼️',
   title: '加载图像',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
-    { key: 'image_path', label: 'FlowX 所在机器的本地图片路径（image_path）', kind: 'text', mono: true },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'image_path', label: '本地图片（可上传 / 拖入）', kind: 'file', accept: 'image/*', mono: true, placeholder: '~/flowx-input/xxx.png' },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  mediaImageParam: 'image_path',
-  note: '读取 FlowX 侧本地图片并上传到推理服务（源图直读预览，点击放大）',
+  note: '读取 FlowX 侧本地图片并上传到推理服务。点「📁 选择文件」或把图片拖进节点即上传到 ~/flowx-input/uploads/ 并写回路径；也可手工填本机路径',
 }
 
 export default createNodeWidget(WIDGET_SPEC)

@@ -3,9 +3,11 @@ const WIDGET_SPEC = {
   title: '蒙版手绘',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
-    { key: 'image', label: '原图对象 ID（image）', kind: 'text', mono: true },
+    { key: 'image_path', label: '本地底图（可上传 / 拖入）', kind: 'file', accept: 'image/*', mono: true, placeholder: '~/flowx-input/xxx.png' },
+    { key: 'image', label: '原图对象 ID（image，有上游时用）', kind: 'text', mono: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  paint: { strokesKey: 'strokes_json', imageInput: 'image' },
-  note: '点缩略图或「✏️ 编辑蒙版」手绘重绘区域（白=重绘/黑=保留）；执行时按原图实际分辨率光栅化。底图取自上次执行的输入图',
+  paint: { strokesKey: 'strokes_json', imageInput: 'image', imagePathKey: 'image_path' },
+  note: '点缩略图或「✏️ 编辑蒙版」手绘重绘区域（白=重绘/黑=保留）；执行时按原图实际分辨率光栅化。'
+    + '底图优先取上游 image；没接上游时直读 image_path（可「📁 选择文件」上传或拖入，需在 Studio 媒体目录白名单内）',
 }

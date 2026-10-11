@@ -1,0 +1,213 @@
+{
+  "name": "tiled-upscale-plan",
+  "displayName": "分块超分·切片规划",
+  "description": "分块重绘超分的切片规划：目标尺寸 + tile/overlap → 网格计划 JSON（喂 tiled-upscale-apply，保证「预览与执行同源」）+ 网格覆盖层预览。纯计算零 GPU，秒级返回，可反复调参看块数与预估采样步。服务端插件 tiled.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "upscale",
+    "tiled"
+  ],
+  "icon": "🧮",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待超分的图像对象 ID（只用其尺寸）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "scale",
+      "type": "float",
+      "description": "放大倍数（target_w/target_h 为 0 时生效）",
+      "default": 2.0
+    },
+    {
+      "name": "target_w",
+      "type": "integer",
+      "description": "目标宽（0=按 scale 计算；显式给则以目标尺寸为准）",
+      "default": 0
+    },
+    {
+      "name": "target_h",
+      "type": "integer",
+      "description": "目标高（0=按 scale 计算）",
+      "default": 0
+    },
+    {
+      "name": "tile",
+      "type": "integer",
+      "description": "块边长（px，对齐 8；8GB 卡建议 768，SDXL 触顶时降档）",
+      "default": 768
+    },
+    {
+      "name": "overlap",
+      "type": "integer",
+      "description": "块间重叠（px，需 < tile/2；越大接缝越稳越慢）",
+      "default": 96
+    },
+    {
+      "name": "pre",
+      "type": "string",
+      "description": "预放大方式：lanczos（默认）/ model（需 upscale_model 且走 apply）/ none（不放大，只注入细节）",
+      "default": "lanczos"
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "description": "每块重绘强度（0.3~0.5 常见；越大越自由越可能跑偏）",
+      "default": 0.35
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子（-1=随机；每块 seed=基种子+块序号）",
+      "default": -1
+    },
+    {
+      "name": "seam_fix",
+      "type": "string",
+      "description": "接缝修复：mask（默认，权重归一化融合）/ band（再接一遍低 denoise 重绘接缝带）/ off",
+      "default": "mask"
+    },
+    {
+      "name": "band_denoise",
+      "type": "float",
+      "description": "seam_fix=band 时接缝带的 denoise",
+      "default": 0.25
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "每块采样步数（仅用于预估）",
+      "default": 20
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "SCALE": "{{ Param.scale }}",
+    "TARGET_W": "{{ Param.target_w }}",
+    "TARGET_H": "{{ Param.target_h }}",
+    "TILE": "{{ Param.tile }}",
+    "OVERLAP": "{{ Param.overlap }}",
+    "PRE": "{{ Param.pre }}",
+    "DENOISE": "{{ Param.denoise }}",
+    "SEED": "{{ Param.seed }}",
+    "SEAM_FIX": "{{ Param.seam_fix }}",
+    "BAND_DENOISE": "{{ Param.band_denoise }}",
+    "STEPS": "{{ Param.steps }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "plan",
+      "type": "string",
+      "description": "切片计划 JSON（喂 tiled-upscale-apply 的 plan）"
+    },
+    {
+      "name": "grid_image",
+      "type": "string",
+      "description": "网格覆盖层预览图对象 ID"
+    },
+    {
+      "name": "tiles",
+      "type": "integer",
+      "description": "总块数"
+    },
+    {
+      "name": "rows",
+      "type": "integer",
+      "description": "行数"
+    },
+    {
+      "name": "cols",
+      "type": "integer",
+      "description": "列数"
+    },
+    {
+      "name": "target_w",
+      "type": "integer",
+      "description": "目标宽"
+    },
+    {
+      "name": "target_h",
+      "type": "integer",
+      "description": "目标高"
+    },
+    {
+      "name": "est_samples",
+      "type": "integer",
+      "description": "预估总采样步数（块数×steps，band 时×2）"
+    },
+    {
+      "name": "target_size",
+      "type": "string",
+      "description": "目标尺寸字符串 'WxH'"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

@@ -10,11 +10,13 @@
 mask 约定与 mask-from-image 一致 = 内容为灰度的 IMAGE 对象。
 """
 import json
+import os
 
-from flowx_client import emit, emit_result_preview, param, token
+from flowx_client import emit, emit_result_preview, param, post_bytes, token
 from image_io import get_pimg, post_pimg
 
 DEFAULT_REF = (512, 512)
+_MAX_BYTES = 32 * 1024 * 1024  # 与服务端 MAX_UPLOAD_MB 默认值对齐
 
 
 def parse_strokes(raw):
@@ -84,19 +86,50 @@ def coverage(mask):
     return sum(hist[128:]) / total if total else 0.0
 
 
+def upload_local(url, path, tok):
+    """本地图片 → 推理服务图像对象（等价 load-image 的上传链路）。
+
+    返回 (image_id, width, height)。"""
+    if not os.path.isfile(path):
+        raise RuntimeError(f"image file not found: {path}")
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) > _MAX_BYTES:
+        raise RuntimeError(f"image too large: {len(data)} bytes > {_MAX_BYTES}")
+    ctype = "image/png" if path.lower().endswith(".png") else "image/jpeg"
+    resp = post_bytes(url, "/images", data, tok, timeout=300, content_type=ctype)
+    return resp["id"], resp.get("width"), resp.get("height")
+
+
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
     strokes, rw, rh = parse_strokes(param("strokes_json", ""))
 
-    im = get_pimg(url, param("image"), tok)
-    mask = rasterize(strokes, im.width, im.height, rw, rh)
+    # 底图取法：image（上游对象 ID）优先；缺省时读 image_path 本地图自行上传
+    image_id = param("image", "").strip()
+    if image_id:
+        im = get_pimg(url, image_id, tok)
+        width, height = im.size
+    else:
+        path = os.path.expanduser(param("image_path", "").strip())
+        if not path:
+            raise RuntimeError("mask-paint needs image (服务端对象 ID) or "
+                               "image_path (本地图片路径)")
+        image_id, width, height = upload_local(url, path, tok)
+        if not width or not height:
+            width, height = get_pimg(url, image_id, tok).size
+        print(f"[mask-paint] uploaded {path} -> image={image_id} {width}x{height}",
+              flush=True)
+
+    mask = rasterize(strokes, width, height, rw, rh)
     cov = coverage(mask)
     oid = post_pimg(url, mask, tok)
-    print(f"[mask-paint] image={param('image')} strokes={len(strokes)} "
-          f"ref={rw}x{rh} -> mask={oid} {im.width}x{im.height} "
+    print(f"[mask-paint] image={image_id} strokes={len(strokes)} "
+          f"ref={rw}x{rh} -> mask={oid} {width}x{height} "
           f"coverage={cov:.1%}", flush=True)
-    emit(mask=oid, width=im.width, height=im.height, coverage=round(cov, 4))
+    emit(image=image_id, mask=oid, width=width, height=height,
+         coverage=round(cov, 4))
     emit_result_preview(url, oid, tok)
 
 

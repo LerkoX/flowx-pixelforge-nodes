@@ -1,0 +1,129 @@
+{
+  "name": "image-noise",
+  "displayName": "噪点叠加",
+  "description": "噪点叠加（对标 ComfyUI Image Noise / WAS 噪点）：gaussian（高斯，PIL effect_noise）/ uniform（均匀，seed 完全可复现）/ salt_pepper（盐椒点）。monochrome 为三通道同噪。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image",
+    "filter"
+  ],
+  "icon": "🎲",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py",
+    "image_filters.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "输入图像对象 ID"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "default": "gaussian",
+      "description": "噪点类型：gaussian（高斯）/ uniform（均匀）/ salt_pepper（盐椒点）"
+    },
+    {
+      "name": "amount",
+      "type": "float",
+      "default": 0.05,
+      "description": "噪点强度 0~1（0 = 不变；gaussian 映射为 sigma=amount×128，uniform 映射为 ±amount×255，salt_pepper 为盐椒点占比）"
+    },
+    {
+      "name": "monochrome",
+      "type": "boolean",
+      "default": false,
+      "description": "单色噪点（true = 三通道同噪，灰阶噪点；false = 各通道独立彩色噪点）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "default": 0,
+      "description": "随机种子（uniform / salt_pepper 完全可复现；gaussian 走 PIL C 实现，跨 Pillow 版本不保证逐像素一致）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "AMOUNT": "{{ Param.amount }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODE": "{{ Param.mode }}",
+    "MONOCHROME": "{{ Param.monochrome }}",
+    "SEED": "{{ Param.seed }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "处理后图像在推理服务的对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 300,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

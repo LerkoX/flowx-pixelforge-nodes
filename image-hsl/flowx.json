@@ -1,0 +1,122 @@
+{
+  "name": "image-hsl",
+  "displayName": "色相饱和度明度",
+  "description": "HSL 调整（对标 ComfyUI Image Hue/Saturation/Luminance）：色相偏移 -180~180 度、饱和度倍率、明度加性偏移。走 HSV 色彩空间转换，纯节点侧 PIL。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image",
+    "filter"
+  ],
+  "icon": "🎨",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py",
+    "image_filters.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "输入图像对象 ID"
+    },
+    {
+      "name": "hue",
+      "type": "float",
+      "default": 0.0,
+      "description": "色相偏移（度）-180~180（0 = 不变，180 = 反相色环）"
+    },
+    {
+      "name": "saturation",
+      "type": "float",
+      "default": 1.0,
+      "description": "饱和度倍率 0~2（1 = 不变，0 = 完全灰度）"
+    },
+    {
+      "name": "lightness",
+      "type": "float",
+      "default": 0.0,
+      "description": "明度加性偏移 -1~1（0 = 不变，按 ×255 加到 V 通道）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "HUE": "{{ Param.hue }}",
+    "IMAGE": "{{ Param.image }}",
+    "LIGHTNESS": "{{ Param.lightness }}",
+    "SATURATION": "{{ Param.saturation }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "处理后图像在推理服务的对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 300,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

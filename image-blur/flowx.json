@@ -1,0 +1,122 @@
+{
+  "name": "image-blur",
+  "displayName": "模糊",
+  "description": "模糊（对标 ComfyUI Image Blur / WAS 模糊）：gaussian（高斯）/ box（均值）/ motion（按角度方向运动拖影）。motion 由 5x5 线段核重复卷积实现，radius 为近似拖影长度。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image",
+    "filter"
+  ],
+  "icon": "💨",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py",
+    "image_filters.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "输入图像对象 ID"
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "default": "gaussian",
+      "description": "模糊类型：gaussian（高斯）/ box（均值）/ motion（方向运动模糊）"
+    },
+    {
+      "name": "radius",
+      "type": "float",
+      "default": 4.0,
+      "description": "模糊半径 0~64（0 = 不变；motion 下为拖影长度，内部按 /2 折算 5x5 核重复次数）"
+    },
+    {
+      "name": "angle",
+      "type": "float",
+      "default": 0.0,
+      "description": "运动模糊方向（度）-180~180（仅 mode=motion 生效；0 = 水平）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "ANGLE": "{{ Param.angle }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODE": "{{ Param.mode }}",
+    "RADIUS": "{{ Param.radius }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "处理后图像在推理服务的对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 300,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

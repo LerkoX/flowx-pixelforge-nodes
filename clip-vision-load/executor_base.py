@@ -32,7 +32,7 @@ import json
 import os
 
 from flowx_client import (emit_preview, ensure_plugin, get_json, host_base,
-                          param, submit_job, token, wait_job)
+                          param, submit_job, token, wait_job, yaml_scalar)
 
 _SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -49,12 +49,14 @@ def check_op_exists(url, tok, op_name):
 
 def ensure_op(url, tok, op_name):
     """节点目录带 server_op.py 时自注册（ensure_plugin 按内容 hash 幂等）；
-    未携带时回退为存在性校验。"""
+    未携带时回退为存在性校验。
+    **返回实际算子名**：F1 之后族注册名是 `<基名>@<族内容hash12>`，调用方必须用
+    返回名提交 job（见 dev-plan §47）。"""
     plugin = os.path.join(_SELF_DIR, "server_op.py")
     if os.path.isfile(plugin):
-        ensure_plugin(url, op_name, plugin_path=plugin, tok=tok)
-    else:
-        check_op_exists(url, tok, op_name)
+        return ensure_plugin(url, op_name, plugin_path=plugin, tok=tok)
+    check_op_exists(url, tok, op_name)
+    return op_name
 
 
 def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
@@ -64,7 +66,7 @@ def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
     url = param("service_url").rstrip("/")
     tok = token()
 
-    ensure_op(url, tok, op_name)
+    op_name = ensure_op(url, tok, op_name)  # F1：解析为服务端实际名（含版本）
 
     jid = submit_job(url, {"name": op_name, "inputs": inputs}, tok)
     print(f"[op] {op_name} job={jid[:8]}", flush=True)
@@ -101,10 +103,12 @@ def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
     print("```flowx-yaml")
     print(f"outputs_json: {json.dumps(flat, ensure_ascii=False)}")
     # 内部元数据（__ 前缀）：op-replay 重放用；widget 显示时过滤
-    print(f'__op_name: "{op_name}"')
+    print(f"__op_name: {yaml_scalar(op_name)}")
     print(f"__inputs_resolved: {json.dumps(inputs, ensure_ascii=False)}")
     for k in emit_keys:
         if k in flat:
-            print(f'{k}: "{flat[k]}"')
+            # YAML 安全标量：JSON 字符串输出（candidates/sizes/boxes）内含 \"，
+            # 裸拼会把 flowx-yaml 块解析打断（B3 真机复现 __extract_missing）
+            print(f"{k}: {yaml_scalar(flat[k])}")
     print("```")
     return flat

@@ -1,0 +1,108 @@
+{
+  "name": "grounding-dino-load",
+  "displayName": "GroundingDINO 装载",
+  "description": "装载 GroundingDINO（开放词汇目标检测）→ 模型键（STRING，形如 gd:tiny），供 grounding-detect 复用。权重在 GROUNDING_MODELS_DIR（默认 /models/grounding/<variant>/）；装载即注册进服务端 model_manager LRU。服务端插件 seg.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "segment",
+    "grounding"
+  ],
+  "icon": "📦",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "variant",
+      "type": "string",
+      "description": "变体：tiny（690MB，默认，实测 0.6s/次）/ base（934MB，更准）",
+      "default": "tiny"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "推理精度：fp32（默认）/ fp16 / auto",
+      "default": "fp32"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "VARIANT": "{{ Param.variant }}",
+    "DTYPE": "{{ Param.dtype }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "模型键（如 gd:tiny），喂 grounding-detect 的 model 参数"
+    },
+    {
+      "name": "params_mb",
+      "type": "integer",
+      "description": "参数量（MB）"
+    },
+    {
+      "name": "vram_mb",
+      "type": "integer",
+      "description": "权重显存占用估算（MB）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

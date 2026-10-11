@@ -5,6 +5,34 @@
 docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSION>` 的
 `/opt/flowx-nodes/<name>/` 直接运行，不再从 Studio 拉取代码。
 
+
+### B3（dev-plan §49）：SAM / GroundingDINO 分割 + 分块重绘超分
+
+**权重（宿主 `D:\flowx-data\models`，容器内挂载 `/models`）**
+
+| 目录 | 来源仓库 | 文件 | 体积 | 用途 |
+| --- | --- | --- | --- | --- |
+| `sam/vit_l` | `facebook/sam-vit-large` | `config.json` / `preprocessor_config.json` / `model.safetensors` | 1249MB | **默认** SAM 变体（精度/显存平衡，点选首次 1.65s） |
+| `sam/vit_h` | `facebook/sam-vit-huge` | 同上 | 2564MB | 更准但慢（点选首次 6.17s，装载 163s） |
+| `sam/vit_b` | `facebook/sam-vit-base` | 同上 | 375MB | 最省 |
+| `grounding/tiny` | `IDEA-Research/grounding-dino-tiny` | `config.json` / `preprocessor_config.json` / `model.safetensors` / tokenizer 若干 | 690MB | **默认** 文本检测（0.6s/次） |
+| `grounding/base` | `IDEA-Research/grounding-dino-base` | 同上 | 934MB | 更准 |
+
+- 环境变量：`SAM_MODELS_DIR`（默认 `/models/sam`）、`GROUNDING_MODELS_DIR`（默认 `/models/grounding`）
+- **零新增 Python 依赖**（`transformers==4.44.2` 已含 `SamModel`/`GroundingDinoForObjectDetection`，`timm` 由 B2 引入）⇒ **不重建推理镜像**
+- 精度纪律：默认 **fp32**（Pascal GP104 非张量 fp16 吞吐 = fp32 的 1/64），变体参数可切 `fp16`/`auto`
+
+**节点（7 个，id 212–218）**：`sam-load` / `sam-segment`（点·框选画布编辑器）/ `sam-auto-segment`（编号网格点选）
+/ `grounding-dino-load` / `grounding-detect`（文本→框→SAM 像素级）/ `tiled-upscale-plan`（切片网格覆盖层）
+/ `tiled-upscale-apply`（逐块重绘 + 权重归一化无缝融合 + 真实进度条）
+
+**算子族**：`_common/server_ops/seg.py`（5 算子）、`_common/server_ops/tiled.py`（2 算子）；
+模型经 `model_manager._register` 进 LRU（键 `sam:<variant>` / `gd:<variant>`，可 `model-unload`）。
+
+**验收**：wf 133–138 / exec 649–666（local+docker 双路径）；`_tools/verify_seg.py`（15 项）与
+`_tools/verify_tiled.py`（9 项）**FAILED = 0**；明细见 `flowx-dev-plan.md` §49.11。
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |
@@ -12,7 +40,12 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 | `Dockerfile` | **唯一事实源**：`COPY <dir>/*.py` 的行=该节点代码真的在镜像里 |
 | `BUNDLE_VERSION` | 镜像 tag（构建与同步都读它） |
 | `sync-flowx-json.py` | 按清单把 `image` / `executor.bundled` 写进各 `flowx.json`；清单外或 local-only 的节点清掉这两个字段 |
-| `check-bundle.py` | **发布门槛**：反向校验声明与清单一致（声明 docker ⇒ 必须在清单里且有 image；写了 image/bundled ⇒ 必须在清单里；local-only ⇒ 不许声明 docker/image/bundled） |
+| `check-bundle.py` | **发布门槛**：反向校验声明与清单一致（声明 docker ⇒ 必须在清单里且有 image；写了 image/bundled ⇒ 必须在清单里；local-only ⇒ 不许声明 docker/image/bundled；声明上传控件 ⇒ 必须 local-only），并串跑 gate J/L 与共享件漂移校验 |
+| `_tools/check-ops.py` | **发布门槛（gate J）**：算子族文件 `registry.register("<op>")` ↔ 成员节点 `main.py` 跑的算子一一对应、无孤儿、无跨文件重名；**F1 版本化**：族版本戳 == 内容 hash、`OP_FAMILY` == 文件 stem、`register()` 内注册必须在 `_VersionedRegistry` 包装之后 |
+| `test-op-versioning.py` | F1 单测（假服务端 + 真族文件 exec）：新旧版本并存、旧版顶不掉新版、幂等、旧族兼容、基名自动翻译 |
+| `_tools/purge-plugin-versions.py` | 清掉服务端 `plugins.d` 里**被取代**的族版本文件（默认 dry-run；判定依据是本地族版本戳，不碰历史未版本化文件） |
+| `_tools/check-node-params.py` | **发布门槛（gate M，由 check-bundle.py 串跑）**：`main.py`/`mock.py` 里的 `param("<name>")`、`env` 的 `{{ Param.<name> }}` 引用的名字必须在 `flowx.json` 的 `parameters` 里；声明了但没人读的参数给警告。**真机事故教训**：`matting-refine` 参数 `min_area` 改名 `despeckle` 时 flowx.json 与 widget 都改了、`main.py` 忘了改，本地单测与产物校验都发现不了，直到真机 e2e 报 `TypeError: unexpected keyword argument` 才暴露 |
+| `_tools/test-widget-ui.mjs` | **发布门槛（gate L，由 check-bundle.py 串跑）**：用 DOM stub 在 node 里真跑一遍 `ui/node-widget.js`——上传控件写回参数、绑定/回放态只读、未声明 `kind:'file'` 就不出上传入口、放大弹层的 ✕/点空白/Esc 三条关闭途径 ；**自定义 widget 通用回归**：凡 `ui/widget-def.js` 声明 `fields` 的节点（现 81 个）都按声明验控件渲染（slider/check/select/curves/textarea/text）、滑杆改动写回参数，声明 `replay` 的还验「▶ 预览」重放请求**原样带 `outputs.__op_name`** 走节点级代理 `/op`（F1 版本化算子名，dev-plan §47.9 A7；380 断言）|
 | `probe-image-nodes.py` | 镜像内启动探针：detached 起容器 + `docker logs` 逐个确认节点能跑起来（隧道上 attach 模式的输出会被截断，故不用 `docker run` 前台模式） |
 | `build-image.sh` | 构建 + 推送镜像（`SKIP_PUSH=1` 可只构建，指向远端 daemon 时用） |
 
@@ -24,13 +57,13 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 
 | 类 | 节点 | 声明 | 说明 |
 | --- | --- | --- | --- |
-| A 推理服务客户端 | 37 个（`checkpoint-loader`、`vae-load`、`controlnet-*`、`preprocess-*`、`image-upscale`、`detail-refine` …） | `supportedTypes: [local, docker]`，`preferredType: docker`，`bundled: true` + `image` | 只经 HTTP 调推理服务，镜像内 `python main.py` 即可跑（纯 stdlib） |
-| B Studio 侧图像/蒙版（PIL） | `image-rotate/flip/crop/composite`、`mask-*`（9 个） | 同上 | **图片本体经服务对象仓库传递**（`get_bytes /images/{id}` → PIL 计算 → `post_bytes /images`），不碰本地文件 ⇒ 进镜像 + 装 Pillow（离线 wheel，见下） |
-| C 读写宿主文件 | `save-image`、`save-video`、`load-image` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到 ⇒ **只能 local** |
+| A 推理服务客户端 | 79 个（`checkpoint-loader`、`vae-load`、`controlnet-*`、`preprocess-*`（10 个，含 G7 预处理器族）、`image-upscale`、`detail-refine` …） | `supportedTypes: [local, docker]`，`preferredType: docker`，`bundled: true` + `image` | 只经 HTTP 调推理服务，镜像内 `python main.py` 即可跑（纯 stdlib） |
+| B Studio 侧图像/蒙版/滤镜（PIL） | `image-rotate/flip/crop/composite`、`mask-*`（9 个）、G5 传统滤镜 8 个（`image-adjust` / `image-hsl` / `image-curves` / `image-blur` / `image-sharpen` / `image-noise` / `image-channel-extract` / `image-channel-merge`）、`image-pad`（扩画布） | 同上 | **图片本体经服务对象仓库传递**（`get_bytes /images/{id}` → PIL 计算 → `post_bytes /images`），不碰本地文件 ⇒ 进镜像 + 装 Pillow（离线 wheel，见下）；G5 滤镜族共享实现为 `_common/image_filters.py`（由 `_tools/sync-common.py` 分发，副本漂移即门槛失败） |
+| C 读写宿主文件 | `save-image`、`save-video`、`load-image`、`mask-paint` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到 ⇒ **只能 local**。`load-image`/`mask-paint` 的本地路径字段声明了画布侧上传控件（widget `kind:'file'`），上传物落在 `~/flowx-input/uploads/` |
 | — | `model-unload` | 常驻模型显式卸载（`[local, docker]`，偏好 docker） | 走 `POST /model/unload` 腾显存，配套 `inference-ensure` 的 `min_vram_mb` 闸门（dev-plan §21） |
 | `_common`/`_tools`/`_widget-template` | — | 非节点目录，不进镜像 |
 
-`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 C 这份名单（`save-image`、`save-video`、`load-image`），改分类时两处一起改。
+`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 C 这份名单（`save-image`、`save-video`、`load-image`、`mask-paint`），改分类时两处一起改。
 
 ## docker 节点的服务地址必须用内网
 
@@ -61,6 +94,67 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 `check-bundle.py` 的校验 I 守住这条：有画布侧读取的节点必须声明该参数，
 且直接上报预览帧的节点必须经 `host_base()` 构造 URL。
 
+### G7 预处理器权重清单（`/models/preprocessors/`，宿主 `D:\flowx-data\models\preprocessors`）
+
+G7 族算子（`preprocess.anyline/lineart/softedge/scribble/mlsd/normal/shuffle`）与既有
+`preprocess.openpose/depth` 一样，**权重全部本地加载（零网络访问）**，缺文件时报错直接点名缺哪个文件。
+任一权重缺失只影响对应那个算子，不影响其他算子与既有流水线。
+
+| 节点 | 权重目录 | 必需文件 | 上游仓库 | 大小 |
+| --- | --- | --- | --- | --- |
+| `preprocess-anyline` | `anyline/` | `MTEED.pth` | `TheMistoAI/MistoLine` → `Anyline/MTEED.pth` | 0.25MB |
+| `preprocess-lineart` | `lineart/` | `sk_model.pth`、`sk_model2.pth` | `lllyasviel/Annotators` | 17MB×2 |
+| ↑（variant=anime） | `lineart_anime/` | `netG.pth` | `lllyasviel/Annotators` | 218MB |
+| ↑（variant=standard） | — | 无权重（纯算法，无需下载） | — | — |
+| `preprocess-softedge`（pidi） | `pidi/` | `table5_pidinet.pth` | `lllyasviel/Annotators` | 2.9MB |
+| ↑（variant=hed） | `hed/` | `ControlNetHED.pth` | `lllyasviel/Annotators` | 29MB |
+| `preprocess-scribble` | `pidi/` | `table5_pidinet.pth`（与 softedge 共用） | `lllyasviel/Annotators` | — |
+| `preprocess-mlsd` | `mlsd/` | `mlsd_large_512_fp32.pth` | `lllyasviel/Annotators` | 6.3MB |
+| `preprocess-normal` | `normalbae/` | `scannet.pt` | `lllyasviel/Annotators` | 291MB |
+| `preprocess-shuffle` | — | 无权重（纯算法） | — | — |
+
+> G7 族算子实现集中在 `_common/server_ops/preprocess_g7.py`（7 算子一个文件，由 `_tools/sync-common.py` 分发到 7 个节点目录）；三算子族 canny/depth/openpose 仍在 `_common/server_ops/preprocess.py`——**两族必须分开**：服务端上传文件名 = 算子名（点换下划线），跨文件重名算子一律 409 全量回滚。
+| （既有）`preprocess-openpose` | `openpose/` | `body_pose_model.pth`、`hand_pose_model.pth`、`facenet.pth` | `lllyasviel/Annotators` | 510MB |
+| （既有）`preprocess-depth` | `midas/` | `dpt_hybrid-midas-501f0c75.pt` | `lllyasviel/Annotators` | 493MB |
+
+下载与落盘（本机无 GPU、无外网的环境：手机侧下载后离线送入宿主机）：
+
+```bash
+# 1) 有外网的一侧下载（huggingface.co；国内可换 hf-mirror.com，但 resolve 会 302 回 HF，
+#    实际要能连 huggingface.co）
+curl -L -O https://huggingface.co/lllyasviel/Annotators/resolve/main/scannet.pt
+# 2) 送入宿主机 D:\flowx-data\models\preprocessors/<子目录>/（大文件用分块或局域网 HTTP，
+#    docker cp 对 >100MB 文件在此隧道上会卡死）
+```
+
+### B2 权重清单（BiRefNet 抠图 + 人脸修复）
+
+两类权重都是**本地加载、零网络访问**，缺文件时报错点名缺哪个文件与目标目录。
+
+| 目录（`/models/`，宿主 `D:\flowx-data\models`） | 必需文件 | 上游 | 大小 | env 覆盖 |
+| --- | --- | --- | --- | --- |
+| `matting/lite/` | `config.json`、`birefnet.py`、`BiRefNet_config.py`、`model.safetensors` | HF `ZhengPeng7/BiRefNet_lite` | 178MB | `MATTING_MODELS_DIR` |
+| `matting/main/` | 同上 4 件 | HF `ZhengPeng7/BiRefNet` | 445MB | 同上 |
+| `matting/portrait/` | 同上 4 件 | HF `ZhengPeng7/BiRefNet-portrait` | 885MB | 同上 |
+| `facerestore/` | `GFPGANv1.3.pth`（或 v1.2）、`RestoreFormer.pth` | TencentARC GitHub release | 349MB / 291MB | `FACERESTORE_MODELS_DIR` |
+| `insightface/` | antelopev2 模型包（`models/antelopev2/*.onnx`） | insightface 官方 zip | 352MB | `INSIGHTFACE_HOME` |
+
+要点：
+
+- **matting 的 4 个文件必须同目录**：后三个是 `trust_remote_code` 的自定义建模代码，
+  `config.json` 里 `bb_pretrained=false` ⇒ 不会再拉 backbone 预训练权重（离线可用）。
+  下载后可用 `python -c "import json,struct;..."` 校验 safetensors 头（见 `_e2e` 复核脚本）。
+- **facerestore 只支持 GFPGAN / RestoreFormer**：spandrel 0.4.2（当前最新发布版）的
+  wheel 里没有 CodeFormer 架构，`face.restore(model='codeformer')` 会明确报错（dev-plan §48.7）。
+- insightface 模型包（antelopev2）：`FaceAnalysis` 首次调用会自动下载到 `INSIGHTFACE_HOME`；
+  **容器必须挂载 `/models`**，否则会下到容器临时层、重建即丢（踩过）。
+
+**TEED 未纳入**：`TheMistoAI/TEED` 仓库已私有（401），controlnet_aux 的 `TEEDdetector`
+在 0.0.10 里仅暴露类、拿不到可分发权重；软边缘需求由 `softedge(pidi/hed)` 覆盖。
+
+**seg 未纳入**：controlnet_aux 0.0.10 无语义分割检测器（`segment_anything` 的 SamDetector
+属 G2 批次），seg 语义由 G2 批次的 SAM 节点承接（见 dev-plan §四十四 G2）。
+
 ## Pillow：离线 wheel
 
 远端 docker 宿主**没有外网**（`pip install` 报 `Network is unreachable`），故把
@@ -80,7 +174,10 @@ cd nodes
 # 1. 改节点包代码或 flowx.json（新节点记得加进 Dockerfile COPY 清单）
 # 2. 同步 + 门槛校验（必须通过）
 python3 sync-flowx-json.py
-python3 check-bundle.py
+python3 check-bundle.py          # 串跑 gate J/L/M（算子族一致性 / widget 交互 / 参数引用一致性）
+#    只改 widget（_common/widget-base.js 或某个 ui/widget-def.js）时：
+python3 _tools/build-widget.py --all   # 重建产物（不重建 gate G 会拦）
+node _tools/test-widget-ui.mjs         # 交互回归（可选，check-bundle 已包含）
 # 3. bump 版本
 echo -n 1.6.3 > BUNDLE_VERSION && python3 sync-flowx-json.py && python3 check-bundle.py
 # 4. 构建（Docker Desktop 在本机时直接跑；远端 daemon 用 DOCKER_HOST 指向它）
@@ -91,12 +188,65 @@ DOCKER_HOST=tcp://<daemon>:2375 python3 probe-image-nodes.py
 flowx-studio node import --type folder --path nodes/<name> --overwrite
 ```
 
+## 画布侧 widget（`ui/node-widget.js`）
+
+每个节点包的画布控件是**预编译单文件 bundle**，由 `_common/widget-base.js`（通用渲染器）
+`+ ui/widget-def.js`（本节点声明）+ 页脚拼接而成（`_tools/build-widget.py`）。
+
+- **能力共享、展示声明制**：控件形态由 `widget-def.js` 的 `kind` 声明，渲染器只提供实现。
+  现支持 `text` / `slider` / `select` / `model`（模型下拉，需 `service_url_host`）/ `curves`
+  / `paint`（蒙版手绘）/ `file`（本机文件上传）；**未声明的节点界面上不会出现该入口**
+  （不做“看到 `*_path` 就自动加上传按钮”这类猜测——`save-image.output_dir` 会被误伤）。
+- `kind:'file'` 落地上传：跟 Studio 同源 `POST /api/v1/media/upload`（multipart、流式落盘、
+  扩展名白名单、图片 32MB/视频 512MB），返回本机路径写回参数。**因此只能用在 local-only 节点**
+  （gate K）：路径在 FlowX 那台机器上，docker/远端执行器看不见。上传目录 = Studio `media.roots`
+  里名为 `flowx-input` 的根下面的 `uploads/`（默认 `~/flowx-input/uploads/`）。
+- 预览/结果区直读本机文件（同源媒体端点 `/api/v1/media/file`），点击进可缩放弹层；
+  弹层生命周期集中在 `mount` 顶部共用（`setLightbox/closeLightbox`），**三条关闭途径
+  （✕ / 点遮罩空白 / Esc）必须全部可用**——1.3.0 因为漏传 `onClose` 且 Esc 监听挂在
+  `mediaImageParam` 分支里，出过“预览图放大后关不掉”的事故，现由 gate L 守住。
+- 改了 `widget-base.js` 或任一 `widget-def.js` ⇒ **必须重建全部 bundle**（`--all`），
+  否则 gate G 拦；重建后重导受影响节点（`?v=<updatedAt>` 变化，画布刷新即取新 bundle）。
+
+```bash
+python3 _tools/build-widget.py --all --check   # 只校验产物是否最新
+node _tools/test-widget-ui.mjs                  # 交互回归（自动扫描声明 kind:'file'/media*Output 的节点）
+```
+
 ## 已知的长期抖动（未修，记录在案）
 
 `flowx_client.py` 由各节点目录各持一份副本，目前有 3 个变体（按功能子集裁剪：
 带/不带 `ensure_plugin`、`emit_preview` 是否带 `base`/`job_id`）。调用 `ensure_plugin`
 的节点都自带该函数，不影响运行；但若后续要统一升级客户端（如新增协议字段），
 需要按目录逐个同步，或改为构建期注入单一副本。
+
+## 算子族文件与 F1 版本化（算子身份 = 实现内容，dev-plan §47）
+
+族文件（`_common/server_ops/<族>.py`，由 `_tools/sync-common.py` 分发为成员节点的
+`server_op.py`）顶部有 F1 合同，**改族文件时必须遵守**：
+
+```python
+OP_VERSION = "42636b08e915"   # 由 sync-common.py 依本文件内容自动改写（幂等），禁止手改
+OP_FAMILY = "preprocess_g7"   # 必须等于文件名 stem（gate J 校验）
+
+def register(registry):
+    registry = _VersionedRegistry(registry, OP_VERSION)   # ← 必须；注册名变 <基名>@<版本>
+```
+
+- **版本 = 族文件内容 hash 前 12 位**（计算时把 stamp 行归零，避免自引用）。改一行实现 ⇒
+  换版本 ⇒ 换算子名（`preprocess.anyline@42636b08e915`）⇒ 换落盘文件
+  （`preprocess_g7_42636b08e915.py`）。**没改的族跨版本同名**，不产生新条目。
+- **落盘名内容寻址**：同内容 = 同文件 = 幂等（并发自注册不再撞 409）；不同内容 = 不同文件 =
+  **新旧版本在服务端并存、互不顶替**（旧版跑多少次也顶不掉新版）。
+- **节点侧不用写版本**：`ensure_plugin` 返回服务端确认的实际算子名，`flowx_client` 内部把
+  基名翻译成实际名（`call_op`/`submit_job` 自动翻译）——节点 `main.py` 照旧写
+  `run_op("preprocess.anyline", …)` / `call_op(url, "sd.sample", …)` 即可。
+- **老 bundle 兼容**：未版本化的历史算子（如 `sd.sample`、`preprocess.canny` 所在的旧插件文件）
+  继续按基名工作；两种命名并存，无需停机或强制重导。
+- **清理**：`plugins.d` 会随发版累积版本文件，用
+  `python3 _tools/purge-plugin-versions.py [--apply]` 只删被取代的旧版本（默认 dry-run）。
+- **例外**：`inference-op`（手工逃生舱）不走 `ensure_plugin`，其 `op_name` 参数要填
+  `/ops` 里的**实际名**（含版本后缀）。
 
 ## 共享件单一事实源（`_common/` → 各节点目录）
 

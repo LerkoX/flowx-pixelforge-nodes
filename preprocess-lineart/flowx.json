@@ -1,0 +1,119 @@
+{
+  "name": "preprocess-lineart",
+  "displayName": "线稿提取（三档）",
+  "description": "controlnet_aux 线稿三档：lineart（写实插画线稿，sk_model）/ anime（动漫线稿，netG）/ standard（无权重轻量）。产出黑底白线提示图，供 ControlNet lineart / lineart_anime 控制采样；输出尺寸=输入尺寸，CPU 推理不占显存",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "preprocess",
+    "controlnet"
+  ],
+  "icon": "🖊️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧/重放/中断中转都由 Studio 发请求，用的是 Studio 的网络视角。docker 节点的 service_url 只能填容器内网地址（如 http://172.17.0.1:8100）——Studio 取不到；local 执行器填宿主机局域网地址（如 http://192.168.5.60:8100）。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待提取线稿的图像对象 ID（上游生成图）",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码/load-image 等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "variant",
+      "type": "string",
+      "description": "线稿档位：lineart（写实）/ anime（动漫）/ standard（轻量无权重）",
+      "required": false,
+      "default": "lineart"
+    },
+    {
+      "name": "detect_resolution",
+      "type": "integer",
+      "description": "检测分辨率（默认 512）",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "coarse",
+      "type": "boolean",
+      "description": "仅 lineart 档生效：true 出更粗松的线稿",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "VARIANT": "{{ Param.variant }}",
+    "DETECT_RESOLUTION": "{{ Param.detect_resolution }}",
+    "COARSE": "{{ Param.coarse }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "黑底白线线稿对象 ID（黑底白线/彩图 RGB），供 controlnet-apply 的 image 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 268,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

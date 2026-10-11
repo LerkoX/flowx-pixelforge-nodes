@@ -1,0 +1,274 @@
+{
+  "name": "tiled-upscale-apply",
+  "displayName": "分块超分·重绘执行",
+  "description": "分块重绘超分执行：按切片计划逐块 img2img 重绘 + **权重归一化无缝融合**（out=Σ块·W/ΣW，overlap 区权重和为 1，数学上无偏）→ 高分辨率图。整条在一块 job 内跑完并上报逐块进度（画布进度条有真实数据源）。服务端插件 tiled.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "upscale",
+    "tiled"
+  ],
+  "icon": "🔍",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待超分的图像对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "MODEL 句柄（checkpoint-loader 的 model_ref）",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model_ref",
+        "description": "由 checkpoint-loader 的 model_ref 输出提供"
+      }
+    },
+    {
+      "name": "pos",
+      "type": "string",
+      "description": "正向 COND",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由 clip-text-encode（正向）的 conditioning 输出提供"
+      }
+    },
+    {
+      "name": "neg",
+      "type": "string",
+      "description": "负向 COND",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "由 clip-text-encode（负向）的 conditioning 输出提供"
+      }
+    },
+    {
+      "name": "plan",
+      "type": "string",
+      "description": "切片计划 JSON（tiled-upscale-plan 的输出；留空=按本节点参数自算，算法同源）",
+      "default": ""
+    },
+    {
+      "name": "scale",
+      "type": "float",
+      "description": "放大倍数（plan 为空时生效）",
+      "default": 2.0
+    },
+    {
+      "name": "target_w",
+      "type": "integer",
+      "description": "目标宽（0=按倍数）",
+      "default": 0
+    },
+    {
+      "name": "target_h",
+      "type": "integer",
+      "description": "目标高（0=按倍数）",
+      "default": 0
+    },
+    {
+      "name": "tile",
+      "type": "integer",
+      "description": "块边长",
+      "default": 768
+    },
+    {
+      "name": "overlap",
+      "type": "integer",
+      "description": "重叠",
+      "default": 96
+    },
+    {
+      "name": "pre",
+      "type": "string",
+      "description": "预放大：lanczos / model（需 upscale_model）/ none",
+      "default": "lanczos"
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "description": "每块重绘强度",
+      "default": 0.35
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "-1=随机（抽一个作基种子，每块=基种子+序号）",
+      "default": -1
+    },
+    {
+      "name": "seam_fix",
+      "type": "string",
+      "description": "接缝修复：mask / band / off",
+      "default": "mask"
+    },
+    {
+      "name": "band_denoise",
+      "type": "float",
+      "description": "接缝带 denoise",
+      "default": 0.25
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数",
+      "default": 20
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "CFG 强度",
+      "default": 7.0
+    },
+    {
+      "name": "sampler_name",
+      "type": "string",
+      "description": "采样器（留空=服务默认 dpmpp_2m）",
+      "default": ""
+    },
+    {
+      "name": "scheduler",
+      "type": "string",
+      "description": "sigma 曲线：normal/karras/exponential/beta",
+      "default": "normal"
+    },
+    {
+      "name": "upscale_model",
+      "type": "string",
+      "description": "UPSCALE_MODEL 句柄（pre=model 时用）",
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODEL": "{{ Param.model }}",
+    "POS": "{{ Param.pos }}",
+    "NEG": "{{ Param.neg }}",
+    "PLAN": "{{ Param.plan }}",
+    "SCALE": "{{ Param.scale }}",
+    "TARGET_W": "{{ Param.target_w }}",
+    "TARGET_H": "{{ Param.target_h }}",
+    "TILE": "{{ Param.tile }}",
+    "OVERLAP": "{{ Param.overlap }}",
+    "PRE": "{{ Param.pre }}",
+    "DENOISE": "{{ Param.denoise }}",
+    "SEED": "{{ Param.seed }}",
+    "SEAM_FIX": "{{ Param.seam_fix }}",
+    "BAND_DENOISE": "{{ Param.band_denoise }}",
+    "STEPS": "{{ Param.steps }}",
+    "CFG": "{{ Param.cfg }}",
+    "SAMPLER_NAME": "{{ Param.sampler_name }}",
+    "SCHEDULER": "{{ Param.scheduler }}",
+    "UPSCALE_MODEL": "{{ Param.upscale_model }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "超分结果图对象 ID"
+    },
+    {
+      "name": "pre_upscaled",
+      "type": "string",
+      "description": "预放大图对象 ID（AB 对比用）"
+    },
+    {
+      "name": "seam_map",
+      "type": "string",
+      "description": "接缝权重图对象 ID（ΣW，复核接缝用）"
+    },
+    {
+      "name": "tiles",
+      "type": "integer",
+      "description": "实际块数"
+    },
+    {
+      "name": "coverage",
+      "type": "number",
+      "description": "覆盖率（ΣW>0 占比）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

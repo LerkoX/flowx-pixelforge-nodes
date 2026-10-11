@@ -1,0 +1,210 @@
+{
+  "name": "sam-auto-segment",
+  "displayName": "SAM 自动分割",
+  "description": "SAM1 自动全图分割：点阵提示 + IoU 去重 → 编号网格图（点格子挑选保留/排除）+ 选中并集蒙版 + 各蒙版对象 ID。适合批量抠主体/做区域蒙版素材。服务端插件 seg.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "segment",
+    "sam",
+    "mask"
+  ],
+  "icon": "🧩",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待分割的图像对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "SAM 模型键",
+      "default": "sam:vit_l"
+    },
+    {
+      "name": "points_per_side",
+      "type": "integer",
+      "description": "点阵密度（16 → 16×16 提示；越大越全越慢）",
+      "default": 16
+    },
+    {
+      "name": "pred_iou_thresh",
+      "type": "float",
+      "description": "预测质量门限（越大越少而稳）",
+      "default": 0.88
+    },
+    {
+      "name": "stability_score_thresh",
+      "type": "float",
+      "description": "稳定性门限（越大越少而稳）",
+      "default": 0.95
+    },
+    {
+      "name": "min_area",
+      "type": "integer",
+      "description": "最小面积（像素）过滤小块",
+      "default": 200
+    },
+    {
+      "name": "max_masks",
+      "type": "integer",
+      "description": "输出蒙版数上限",
+      "default": 64
+    },
+    {
+      "name": "keep",
+      "type": "string",
+      "description": "保留哪些编号（'0,2,5'；空=全选），由网格点选编辑器写入",
+      "default": ""
+    },
+    {
+      "name": "sort",
+      "type": "string",
+      "description": "编号排序：area（默认，大→小）/ score / index",
+      "default": "area"
+    },
+    {
+      "name": "overlay",
+      "type": "float",
+      "description": "选中并集的叠加透明度",
+      "default": 0.45
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODEL": "{{ Param.model }}",
+    "POINTS_PER_SIDE": "{{ Param.points_per_side }}",
+    "PRED_IOU_THRESH": "{{ Param.pred_iou_thresh }}",
+    "STABILITY_SCORE_THRESH": "{{ Param.stability_score_thresh }}",
+    "MIN_AREA": "{{ Param.min_area }}",
+    "MAX_MASKS": "{{ Param.max_masks }}",
+    "KEEP": "{{ Param.keep }}",
+    "SORT": "{{ Param.sort }}",
+    "OVERLAY": "{{ Param.overlay }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "masks",
+      "type": "string",
+      "description": "编号网格图对象 ID（点格子挑选保留/排除）"
+    },
+    {
+      "name": "selected",
+      "type": "string",
+      "description": "keep 下标并集蒙版对象 ID"
+    },
+    {
+      "name": "selected_overlay",
+      "type": "string",
+      "description": "并集彩色叠加预览图对象 ID"
+    },
+    {
+      "name": "mask_ids",
+      "type": "string",
+      "description": "各蒙版对象 ID 列表 JSON"
+    },
+    {
+      "name": "count",
+      "type": "integer",
+      "description": "去重后的蒙版数"
+    },
+    {
+      "name": "kept",
+      "type": "integer",
+      "description": "选中的蒙版数"
+    },
+    {
+      "name": "sizes",
+      "type": "string",
+      "description": "各蒙版明细 JSON（index/area/score/bbox/id）"
+    },
+    {
+      "name": "union_area",
+      "type": "integer",
+      "description": "选中并集面积（像素）"
+    },
+    {
+      "name": "bbox",
+      "type": "string",
+      "description": "并集外接框 JSON"
+    },
+    {
+      "name": "montage_cols",
+      "type": "integer",
+      "description": "网格列数（前端点选换算用）"
+    },
+    {
+      "name": "montage_tile",
+      "type": "integer",
+      "description": "网格格子边长 px（前端点选换算用）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

@@ -1,0 +1,164 @@
+{
+  "name": "sam-segment",
+  "displayName": "SAM 点/框选分割",
+  "description": "SAM1 交互式分割：在画布上点选（正/负样本）或框选 → 精确前景蒙版。点选编辑器直接写 points/box 参数；同一张图的连续点选复用 image embedding 缓存（实测首次 1.65s → 复选 0.08s）。服务端插件 seg.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "segment",
+    "sam",
+    "mask"
+  ],
+  "icon": "🖱️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待分割的图像对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "SAM 模型键（sam-load 的输出；也可直接填 sam:vit_l）",
+      "default": "sam:vit_l"
+    },
+    {
+      "name": "points",
+      "type": "string",
+      "description": "点提示：'x,y,label;x,y,label'（label 1=正样本 0=负样本），由画布点选编辑器写入",
+      "default": ""
+    },
+    {
+      "name": "box",
+      "type": "string",
+      "description": "框提示：'x1,y1,x2,y2'（可与点同时给），由画布框选写入",
+      "default": ""
+    },
+    {
+      "name": "multimask",
+      "type": "boolean",
+      "description": "输出 3 个候选蒙版（消解歧义），用 pick 选择",
+      "default": true
+    },
+    {
+      "name": "pick",
+      "type": "integer",
+      "description": "多候选时选第几个（0/1/2）",
+      "default": 0
+    },
+    {
+      "name": "overlay",
+      "type": "float",
+      "description": "叠加预览的蒙版透明度",
+      "default": 0.5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "MODEL": "{{ Param.model }}",
+    "POINTS": "{{ Param.points }}",
+    "BOX": "{{ Param.box }}",
+    "MULTIMASK": "{{ Param.multimask }}",
+    "PICK": "{{ Param.pick }}",
+    "OVERLAY": "{{ Param.overlay }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "前景蒙版对象 ID（灰度，0=背景 255=前景）"
+    },
+    {
+      "name": "candidates",
+      "type": "string",
+      "description": "候选列表 JSON（index/score/area）"
+    },
+    {
+      "name": "score",
+      "type": "number",
+      "description": "选中候选的 IoU 预测分"
+    },
+    {
+      "name": "annotated",
+      "type": "string",
+      "description": "叠加预览图对象 ID（原图+提示+蒙版）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "宽度"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "高度"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.14.0"
+}

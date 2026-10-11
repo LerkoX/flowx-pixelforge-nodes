@@ -26,6 +26,27 @@
 分发为各成员节点的 server_op.py，节点运行时经 ensure_plugin 自注册到推理服务
 （POST /admin/plugins，hash 幂等）。
 """
+
+# --- F1 族版本化（dev-plan §47）：算子身份 = 实现内容 ------------------------
+# 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
+# OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
+# 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
+OP_VERSION = "12c602d06ca2"
+OP_FAMILY = "ipadapter"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
+
+
+class _VersionedRegistry:
+    """包装注册表：族内注册名一律带上版本后缀。"""
+
+    def __init__(self, inner, version):
+        self._inner = inner
+        self._version = version
+
+    def register(self, name, inputs, outputs, description=""):
+        return self._inner.register(f"{name}@{self._version}", inputs, outputs,
+                                    description)
+# ---------------------------------------------------------------------------
+
 import os
 
 import torch
@@ -204,6 +225,7 @@ def ipadapter_apply(model, ipadapter, clip_vision, image, weight=1.0,
 
 
 def register(registry):
+    registry = _VersionedRegistry(registry, OP_VERSION)
     registry.register(
         "clip_vision.load",
         inputs={"name": "STRING", "dtype": "STRING"},

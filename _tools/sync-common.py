@@ -10,10 +10,34 @@
   python3 _tools/sync-common.py          # 分发（写各节点目录）
   python3 _tools/sync-common.py --check  # 只校验，不改文件（check-bundle 会调用）
 """
+import hashlib
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+# ---------- F1 族版本戳（dev-plan §47）----------
+# 算子身份 = 实现内容：族文件注册名统一加 "@<版本>" 后缀，版本 = 本文件内容 hash 前 12 位
+# （计算时把 stamp 行归零，避免自引用；幂等，重复执行结果相同）。
+# 效果：改过实现的族换名换文件 ⇒ 新旧版本在服务端并存、互不顶替；未改动的族跨版本同名。
+STAMP_RE = re.compile(r'^OP_VERSION\s*=\s*"[0-9a-f]*"', re.M)
+STAMP_ZERO = 'OP_VERSION = "000000000000"'
+
+
+def family_version(text: str) -> str:
+    """由族文件内容算版本（stamp 行归零后取 sha256 前 12 位）。"""
+    probe = STAMP_RE.sub(STAMP_ZERO, text, count=1)
+    return hashlib.sha256(probe.encode("utf-8")).hexdigest()[:12]
+
+
+def stamp_family(text: str, fam: str):
+    """写回族版本戳。返回 (新文本, 版本)；缺 stamp 行则报错（F1 合同）。"""
+    if not STAMP_RE.search(text):
+        raise SystemExit(
+            f"✗ 族文件 {fam} 缺 `OP_VERSION = \"...\"` 行（F1 合同，见 dev-plan §47）")
+    ver = family_version(text)
+    return STAMP_RE.sub(f'OP_VERSION = "{ver}"', text, count=1), ver
 
 # 共享件 → 分发到的节点目录判定
 def targets(name, node_dir):
@@ -23,6 +47,8 @@ def targets(name, node_dir):
         return True                      # 所有节点都调推理服务/emit
     if name == "executor_base.py":
         return "executor_base" in body   # 只有声明用它的节点需要
+    if name == "image_filters.py":
+        return "image_filters" in body   # 只有 G5 滤镜族节点需要
     return False
 
 
@@ -33,8 +59,15 @@ OP_FAMILIES = {
     "cond_latent.py": ["cond-average", "cond-combine", "cond-set-area",
                        "latent-composite", "latent-set-noise-mask",
                        "latent-upscale"],
+    # 三算子族（canny/depth/openpose）：与历史服务端已上传的 preprocess_canny.py
+    # 同内容 ⇒ hash 命中不重传
     "preprocess.py": ["preprocess-canny", "preprocess-depth",
                       "preprocess-openpose"],
+    # G7 预处理器族（7 算子）：独立文件 ⇒ 上传名 preprocess_<op>.py 不与三算子族撞车
+    "preprocess_g7.py": ["preprocess-anyline", "preprocess-lineart",
+                         "preprocess-softedge", "preprocess-scribble",
+                         "preprocess-mlsd", "preprocess-normal",
+                         "preprocess-shuffle"],
     "ipadapter.py": ["ipadapter-load", "ipadapter-apply", "clip-vision-load"],
     "flux.py": ["flux-clip-encode", "flux-detail-refine", "flux-dual-clip-load",
                 "flux-empty-latent", "flux-sampler", "flux-unet-load",
@@ -42,6 +75,15 @@ OP_FAMILIES = {
     "instantid.py": ["instantid-apply", "instantid-face-analyze",
                      "face-mask", "face-similarity"],
     "upscale.py": ["upscale-model-load", "upscale-model-apply"],
+    # G1 抠图族（B2，dev-plan §48）：BiRefNet 抠图（变换沿 refine/composite 走节点侧 PIL）
+    "matting.py": ["matting-birefnet"],
+    # G6 人脸修复族（B2，dev-plan §48）：spandrel GFPGAN/RestoreFormer + insightface 检测
+    "face_restore.py": ["face-restore"],
+    # G2 分割族（B3，dev-plan §49）：SAM1 点/框/自动分割 + GroundingDINO 文本检测
+    "seg.py": ["sam-load", "sam-segment", "sam-auto-segment",
+               "grounding-dino-load", "grounding-detect"],
+    # G4 分块重绘超分族（B3，dev-plan §49）：切片规划（纯计算）+ 逐块重绘与接缝融合
+    "tiled.py": ["tiled-upscale-plan", "tiled-upscale-apply"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
 }
 
@@ -65,7 +107,21 @@ def main():
                     dst.write_text(want)
                     wrote += 1
     # 算子族分发：_common/server_ops/<族>.py → 成员节点 server_op.py
+    # 分发前先按内容打版本戳（F1：算子名 = <基名>@<族内容 hash12>）
     fam_dir = ROOT / "_common" / "server_ops"
+    versions = {}
+    for fam in sorted(OP_FAMILIES):
+        src = fam_dir / fam
+        text = src.read_text()
+        stamped, ver = stamp_family(text, fam)
+        versions[fam] = ver
+        if stamped != text:
+            if check:
+                drift.append(f"_common/server_ops/{fam}（版本戳过期"
+                             f"：应为 {ver}）")
+            else:
+                src.write_text(stamped)
+                wrote += 1
     for fam, members in sorted(OP_FAMILIES.items()):
         src = fam_dir / fam
         want = src.read_text()
@@ -87,6 +143,7 @@ def main():
         return 0
     print(f"✓ 已同步共享件：写入 {wrote} 个文件（源：{', '.join(p.name for p in sources)}"
           f" + server_ops 族文件 {len(OP_FAMILIES)} 个）")
+    print("  族版本戳：" + ", ".join(f"{k}@{v}" for k, v in sorted(versions.items())))
     return 0
 
 

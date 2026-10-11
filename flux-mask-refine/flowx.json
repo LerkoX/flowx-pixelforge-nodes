@@ -1,0 +1,182 @@
+{
+  "name": "flux-mask-refine",
+  "displayName": "FLUX 蒙版局部重绘",
+  "description": "FLUX 蒙版局部重绘：根据输入的蒙版（如手绘衣服蒙版）自动外接框裁剪 → 局部放大 → FLUX img2img 重绘 → 组合蒙版与边缘羽化贴回原图。专用于多参考图换装、局部服装修改等场景，模特脸部与背景 100% 原样保留。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "inference",
+    "inpaint"
+  ],
+  "icon": "🎨",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.9.0",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待重绘的模特原图对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image"
+      }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "衣服重绘区域蒙版（灰度图，255/白=重绘区域），可来自 mask-paint / mask-feather",
+      "required": true,
+      "source": {
+        "nodeRef": "mask-feather",
+        "output": "mask"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "FLUX MODEL 组件引用（UNET）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-unet-load",
+        "output": "model"
+      }
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "FLUX VAE 组件引用",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-vae-load",
+        "output": "vae"
+      }
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "FLUX COND 条件引用（可经过多级 flux-redux-apply 注入参考图条件）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-redux-apply",
+        "output": "cond"
+      }
+    },
+    {
+      "name": "padding",
+      "type": "float",
+      "description": "蒙版外接框外扩比例（默认 0.3 即四周各扩 30%），给重绘留上下文环境",
+      "required": false,
+      "default": 0.3
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "description": "重绘去噪强度 0~1：换装建议 0.75~0.85，彻底擦除旧衣服纹理",
+      "required": false,
+      "default": 0.8
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "重绘采样步数，schnell 模型建议 8 步",
+      "required": false,
+      "default": 8
+    },
+    {
+      "name": "guidance",
+      "type": "float",
+      "description": "Guidance scale，schnell 固定 0.0",
+      "required": false,
+      "default": 0.0
+    },
+    {
+      "name": "guide_size",
+      "type": "integer",
+      "description": "裁剪区域放大重绘的目标尺寸（建议 768 或 512）",
+      "required": false,
+      "default": 768
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "description": "贴回原图时的边缘羽化像素，消除拼接硬边",
+      "required": false,
+      "default": 16
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子，-1 随机",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "重绘任务超时时间（秒）。默认 4h：FLUX schnell 8 步在 GTX 1080/1152px 上约 26min/步（实测 585 因 3600s 超时失败），慢卡/大分辨率请按需上调",
+      "required": false,
+      "default": 14400
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "重绘贴回后的完整图像对象 ID"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

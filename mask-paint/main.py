@@ -11,8 +11,8 @@ mask 约定与 mask-from-image 一致 = 内容为灰度的 IMAGE 对象。
 """
 import json
 
-from flowx_client import emit, param, token
-from image_io import get_pimg, post_pimg, thumb_data_url
+from flowx_client import emit, emit_result_preview, param, token
+from image_io import get_pimg, post_pimg
 
 DEFAULT_REF = (512, 512)
 
@@ -84,16 +84,6 @@ def coverage(mask):
     return sum(hist[128:]) / total if total else 0.0
 
 
-def overlay_thumb(im, mask):
-    """红罩叠加原图的预览缩略图（执行结果直接可核对涂抹位置）。"""
-    from PIL import Image
-
-    base = im.convert("RGB")
-    red = Image.new("RGB", base.size, (244, 63, 94))
-    a = mask.point(lambda v: int(v * 0.6))
-    return Image.composite(red, base, a)
-
-
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
@@ -106,8 +96,8 @@ def main():
     print(f"[mask-paint] image={param('image')} strokes={len(strokes)} "
           f"ref={rw}x{rh} -> mask={oid} {im.width}x{im.height} "
           f"coverage={cov:.1%}", flush=True)
-    emit(mask=oid, width=im.width, height=im.height, coverage=round(cov, 4),
-         thumb_b64=thumb_data_url(overlay_thumb(im, mask)))
+    emit(mask=oid, width=im.width, height=im.height, coverage=round(cov, 4))
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

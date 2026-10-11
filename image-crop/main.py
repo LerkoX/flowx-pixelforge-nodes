@@ -1,6 +1,6 @@
 """image-crop：矩形裁剪（对图像与蒙版通用——蒙版即灰度图像），纯客户端 PIL。"""
-from flowx_client import emit, param, token
-from image_io import get_pimg, post_pimg, thumb_data_url
+from flowx_client import emit, emit_result_preview, param, token
+from image_io import get_pimg, post_pimg
 
 
 def process(im, x, y, width, height):
@@ -27,8 +27,8 @@ def main():
     oid = post_pimg(url, out, tok)
     print(f"[crop] image={param('image')} ({x},{y},{w}x{h}) of {im.width}x{im.height} "
           f"-> image={oid}", flush=True)
-    emit(image=oid, width=out.width, height=out.height,
-         thumb_b64=thumb_data_url(out))
+    emit(image=oid, width=out.width, height=out.height)
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

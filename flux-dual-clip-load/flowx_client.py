@@ -6,6 +6,61 @@ import time
 import urllib.error
 import urllib.request
 
+# ---------------------------------------------------------------------------
+# 优雅退出：节点进程被终止时，回收自己提交的远程（推理服务）后台任务
+# ---------------------------------------------------------------------------
+# 触发路径：Studio「终止执行」/节点超时 → flowx 本地执行器对整棵进程树发 SIGTERM，
+# 宽限期（默认 10s，执行器 config.interruptGrace）内不退出才 SIGKILL。节点脚本必须
+# 在这个窗口内取消自己在服务端 running 的 job，否则远程任务变孤儿继续占 GPU。
+# 同时接管 SIGHUP：PTY 路径（script/bash 包装，Studio 默认执行器 pty=true）下包装
+# 进程先退出会关闭终端，内核补发 SIGHUP——不接管就会被默认动作杀死，清理跑不了一半。
+# SIGKILL（宽限期用尽/进程被直接强杀）无法捕获，此时依赖 Studio 侧按节点上报的
+# job_id 转发 /interrupt 兜底（见 flowx-studio CancelExecution）。
+_INFLIGHT = {}  # job_id -> (base, tok)：submit_job 登记，wait_job 终态注销
+_SIGNAL_HANDLERS_READY = False
+
+
+def _register_inflight(base, job_id, tok):
+    """登记进行中的远程任务，并确保终止信号处理器已安装。
+    信号只能在主线程注册；注册失败（非主线程/受限环境）时退化为依赖 Studio 侧
+    兜底转发 /interrupt。"""
+    global _SIGNAL_HANDLERS_READY
+    _INFLIGHT[job_id] = (base, tok)
+    if _SIGNAL_HANDLERS_READY:
+        return
+    import signal
+    import sys
+
+    def _on_signal(signum, _frame):
+        try:
+            signame = signal.Signals(signum).name
+        except ValueError:
+            signame = str(signum)
+        print(f"[flowx_client] 收到 {signame}：取消进行中的远程任务 "
+              f"({len(_INFLIGHT)} 个) 后退出", flush=True)
+        for job_id, (base, tok) in list(_INFLIGHT.items()):
+            _INFLIGHT.pop(job_id, None)
+            try:
+                # 短超时必须落在执行器宽限期内，否则会被 SIGKILL 打断
+                interrupt_job(base, job_id, tok, timeout=5)
+                print(f"[flowx_client] 已取消远程任务 {job_id[:8]}", flush=True)
+            except Exception as e:  # 尽力而为：清理失败不阻塞退出
+                print(f"[flowx_client] 取消远程任务 {job_id[:8]} 失败: {e}",
+                      flush=True)
+        sys.exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(sig, _on_signal)
+        except (ValueError, OSError, AttributeError):
+            # 非主线程（无法注册信号）或平台无此信号：跳过，由 Studio 侧兜底
+            pass
+    _SIGNAL_HANDLERS_READY = True
+
+
+def _unregister_inflight(job_id):
+    _INFLIGHT.pop(job_id, None)
+
 
 def param(name, default=None, cast=str):
     """读取节点参数：优先裸大写环境变量，兼容 FLOWX_PARAM_* 前缀。"""
@@ -170,8 +225,12 @@ def call_op(base, name, inputs, tok=None, timeout=1800, max_retries=3):
 
 
 def submit_job(base, payload, tok=None, timeout=60):
-    """提交异步任务：payload = {"nodes": ...} 或 {"name", "inputs"}；返回 job_id。"""
-    return post_json(base, "/jobs", payload, tok, timeout)["job_id"]
+    """提交异步任务：payload = {"nodes": ...} 或 {"name", "inputs"}；返回 job_id。
+    任务登记为进行中：进程收到终止信号（Studio 取消/超时）时会被定向 interrupt，
+    避免节点被终止后远程任务变孤儿。"""
+    job_id = post_json(base, "/jobs", payload, tok, timeout)["job_id"]
+    _register_inflight(base, job_id, tok)
+    return job_id
 
 
 def get_job(base, job_id, tok=None, timeout=30):
@@ -199,49 +258,53 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
     last = ""
     errors = 0
     err_t0 = 0.0
-    while True:
-        try:
-            v = get_job(base, job_id, tok)
-            errors = 0
-        except RuntimeError as e:
-            msg = str(e)
-            if "-> HTTP 4" in msg:  # 404 等：job 真不存在，重试无意义
-                raise
-            if errors == 0:
-                err_t0 = time.time()
-            errors += 1
-            elapsed = time.time() - err_t0
-            if log:
-                log(f"[job {job_id[:8]}] poll error ({errors}, "
-                    f"{elapsed:.0f}s/{error_window:.0f}s): {msg}")
-            if errors >= max_poll_errors and elapsed >= error_window:
-                raise RuntimeError(
-                    f"job {job_id} poll failed {errors} times over "
-                    f"{elapsed:.0f}s, last: {msg}")
+    try:
+        while True:
+            try:
+                v = get_job(base, job_id, tok)
+                errors = 0
+            except RuntimeError as e:
+                msg = str(e)
+                if "-> HTTP 4" in msg:  # 404 等：job 真不存在，重试无意义
+                    raise
+                if errors == 0:
+                    err_t0 = time.time()
+                errors += 1
+                elapsed = time.time() - err_t0
+                if log:
+                    log(f"[job {job_id[:8]}] poll error ({errors}, "
+                        f"{elapsed:.0f}s/{error_window:.0f}s): {msg}")
+                if errors >= max_poll_errors and elapsed >= error_window:
+                    raise RuntimeError(
+                        f"job {job_id} poll failed {errors} times over "
+                        f"{elapsed:.0f}s, last: {msg}")
+                time.sleep(poll)
+                continue
+            if on_poll is not None:
+                try:
+                    on_poll(v)
+                except Exception:
+                    pass
+            st = v.get("status")
+            p = v.get("progress") or {}
+            line = f"[job {job_id[:8]}] {st} {p.get('current', 0)}/{p.get('total', 0)}"
+            if log and line != last:
+                log(line)
+                last = line
+            if st == "done":
+                return v.get("result") or {}
+            if st in ("failed", "cancelled"):
+                raise RuntimeError(f"job {job_id} {st}: {v.get('error')}")
+            if time.time() - t0 > timeout:
+                try:
+                    interrupt_job(base, job_id, tok)
+                except RuntimeError:
+                    pass
+                raise RuntimeError(f"job {job_id} timeout after {timeout}s (interrupted)")
             time.sleep(poll)
-            continue
-        if on_poll is not None:
-            try:
-                on_poll(v)
-            except Exception:
-                pass
-        st = v.get("status")
-        p = v.get("progress") or {}
-        line = f"[job {job_id[:8]}] {st} {p.get('current', 0)}/{p.get('total', 0)}"
-        if log and line != last:
-            log(line)
-            last = line
-        if st == "done":
-            return v.get("result") or {}
-        if st in ("failed", "cancelled"):
-            raise RuntimeError(f"job {job_id} {st}: {v.get('error')}")
-        if time.time() - t0 > timeout:
-            try:
-                interrupt_job(base, job_id, tok)
-            except RuntimeError:
-                pass
-            raise RuntimeError(f"job {job_id} timeout after {timeout}s (interrupted)")
-        time.sleep(poll)
+    finally:
+        # 终态（或异常）：从进行中表注销，避免终止信号重复取消已结束的任务
+        _unregister_inflight(job_id)
 
 
 def ref(oid):
@@ -270,6 +333,14 @@ def host_base(url):
     host = (os.environ.get("SERVICE_URL_HOST")
             or os.environ.get("FLOWX_PARAM_SERVICE_URL_HOST") or "")
     return host.rstrip("/") or url
+
+
+def emit_result_preview(base, oid, tok=None):
+    """结果对象完成后上报一张预览帧（Studio 经 /preview-frame 中转拉取
+    {base}/images/{oid}）。媒体走 HTTP 二进制通道，**不得**把图片 base64 塞进
+    outputs/metadata（画布 widget 读 props.preview 渲染）。"""
+    host = host_base(base)
+    emit_preview(f"{host}/images/{oid}", 1.0, tok, base=host)
 
 
 def emit_preview(url, progress=None, tok=None, base=None, job_id=None):

@@ -2,7 +2,7 @@
   "name": "image-composite",
   "displayName": "图像合成",
   "description": "前景贴到底图（对标 ComfyUI Image Composite Masked）：可选蒙版控制贴合区域（蒙版尺寸不符前景时自动缩放），缺省蒙版则整张前景贴到指定偏移；越界部分自动裁掉",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -27,6 +27,13 @@
         "output": "service_url",
         "description": "推荐由健康检查节点输出提供"
       }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
     },
     {
       "name": "background",
@@ -76,7 +83,8 @@
     "FOREGROUND": "{{ Param.foreground }}",
     "MASK": "{{ Param.mask }}",
     "X": "{{ Param.x }}",
-    "Y": "{{ Param.y }}"
+    "Y": "{{ Param.y }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   },
   "outputs": [
     {
@@ -93,11 +101,6 @@
       "name": "height",
       "type": "integer",
       "description": "结果高度（像素）"
-    },
-    {
-      "name": "thumb_b64",
-      "type": "string",
-      "description": "结果缩略图 data URL（JPEG，画布 widget 预览用）"
     }
   ],
   "extract": {
@@ -123,5 +126,5 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.8.0"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.9.0"
 }

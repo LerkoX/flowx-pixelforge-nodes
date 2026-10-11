@@ -2,7 +2,7 @@
   "name": "mask-paint",
   "displayName": "蒙版手绘",
   "description": "画布手绘蒙版（对标 ComfyUI MaskEditor）：在节点上预览底图，点开编辑器用笔刷/矩形/橡皮涂抹任意区域，白=重绘、黑=保留。笔画以矢量存于 strokes_json 参数（分辨率无关，可再编辑），执行时按原图实际分辨率光栅化为灰度蒙版，可直接喂 mask-grow/feather/invert/latent-set-noise-mask",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -33,6 +33,13 @@
         "output": "service_url",
         "description": "推荐由健康检查节点输出提供"
       }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
     },
     {
       "name": "service_token",
@@ -75,11 +82,6 @@
       "name": "coverage",
       "type": "float",
       "description": "重绘区域占比（0~1，白区像素比例）"
-    },
-    {
-      "name": "thumb_b64",
-      "type": "string",
-      "description": "红罩叠加原图的预览缩略图 data URL（JPEG，画布 widget 预览用）"
     }
   ],
   "ui": {
@@ -92,5 +94,8 @@
   "mock": {
     "enabled": true,
     "entry": "mock.py"
+  },
+  "env": {
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   }
 }

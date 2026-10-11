@@ -1197,20 +1197,10 @@ function createNodeWidget(spec) {
           prevInfo.textContent = prog !== null ? `进度 ${Math.round(prog * 100)}%` : ''
         }
       } else {
-        // 无 preview 帧信号的老执行器：回退展示 emit 的 thumb_b64 结果缩略图
-        const thumb = (p.outputs || {}).thumb_b64
-        if (thumb && typeof thumb === 'string' && thumb.startsWith('data:')) {
-          prevWrap.style.display = 'block'
-          progOuter.style.display = 'none'
-          stopBtn.style.display = 'none'
-          if (thumb !== lastPreviewUrl) {
-            lastPreviewUrl = thumb
-            prevImg.src = thumb
-          }
-        } else {
-          prevWrap.style.display = 'none'
-          lastPreviewUrl = ''
-        }
+        // 无预览帧：不展示（媒体一律经预览帧中转 GET preview-frame 或媒体代理
+        // service-proxy 拉取；outputs/metadata 禁止内嵌 base64/data URL）
+        prevWrap.style.display = 'none'
+        lastPreviewUrl = ''
       }
       const o = p.outputs || {}
       // 本地媒体显示：参数源文件（load-image 类）或落盘结果（save-* 类）

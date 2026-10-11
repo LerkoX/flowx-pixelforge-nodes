@@ -57,6 +57,7 @@ COPY flux-redux-apply/*.py           /opt/flowx-nodes/flux-redux-apply/
 COPY flux-vae-decode/*.py            /opt/flowx-nodes/flux-vae-decode/
 COPY flux-vae-encode/*.py            /opt/flowx-nodes/flux-vae-encode/
 COPY flux-detail-refine/*.py         /opt/flowx-nodes/flux-detail-refine/
+COPY flux-mask-refine/*.py         /opt/flowx-nodes/flux-mask-refine/
 COPY latent-composite/*.py           /opt/flowx-nodes/latent-composite/
 COPY latent-set-noise-mask/*.py      /opt/flowx-nodes/latent-set-noise-mask/
 COPY latent-upscale/*.py             /opt/flowx-nodes/latent-upscale/

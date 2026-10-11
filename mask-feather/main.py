@@ -1,8 +1,8 @@
 """mask-feather：蒙版高斯羽化（对标 ComfyUI Feather Mask）。"""
 from PIL import ImageFilter
 
-from flowx_client import emit, param, token
-from image_io import get_pimg, post_pimg, thumb_data_url
+from flowx_client import emit, emit_result_preview, param, token
+from image_io import get_pimg, post_pimg
 
 
 def process(mask, radius=8.0):
@@ -22,8 +22,8 @@ def main():
     oid = post_pimg(url, out, tok)
     print(f"[mask-feather] mask={param('mask')} radius={radius} -> mask={oid}",
           flush=True)
-    emit(mask=oid, width=out.width, height=out.height,
-         thumb_b64=thumb_data_url(out))
+    emit(mask=oid, width=out.width, height=out.height)
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
   "name": "mask-invert",
   "displayName": "蒙版反相",
   "description": "蒙版反相（对标 ComfyUI Invert Mask）：黑白互换",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -29,6 +29,13 @@
       }
     },
     {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
       "name": "mask",
       "type": "string",
       "description": "推理服务端的蒙版对象 ID（灰度图像）",
@@ -45,7 +52,8 @@
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
-    "MASK": "{{ Param.mask }}"
+    "MASK": "{{ Param.mask }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   },
   "outputs": [
     {
@@ -62,11 +70,6 @@
       "name": "height",
       "type": "integer",
       "description": "结果高度（像素）"
-    },
-    {
-      "name": "thumb_b64",
-      "type": "string",
-      "description": "结果缩略图 data URL（JPEG，画布 widget 预览用）"
     }
   ],
   "extract": {
@@ -92,5 +95,5 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.8.0"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.9.0"
 }

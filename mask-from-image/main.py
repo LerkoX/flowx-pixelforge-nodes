@@ -3,8 +3,8 @@
 mask 约定 = 内容为灰度的 IMAGE 对象（上传后服务端转 RGB，灰度保留，
 下游读回 convert("L") 即还原）。
 """
-from flowx_client import emit, param, token
-from image_io import get_pimg, post_pimg, thumb_data_url
+from flowx_client import emit, emit_result_preview, param, token
+from image_io import get_pimg, post_pimg
 
 _CHANNELS = {"red": "R", "green": "G", "blue": "B"}
 
@@ -28,8 +28,8 @@ def main():
     oid = post_pimg(url, out, tok)
     print(f"[mask-from-image] image={param('image')} channel={channel} "
           f"-> mask={oid} {out.width}x{out.height}", flush=True)
-    emit(mask=oid, width=out.width, height=out.height,
-         thumb_b64=thumb_data_url(out))
+    emit(mask=oid, width=out.width, height=out.height)
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

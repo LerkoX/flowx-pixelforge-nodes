@@ -3,7 +3,6 @@
 mask 约定：内容为灰度的 IMAGE 对象。读入一律 convert("L")（服务端
 POST /images 会转 RGB，灰度信息保留在三个相同通道中，取 L 即可还原）。
 每个节点包通过 flowx.json 的 files 字段携带本文件。"""
-import base64
 import io
 
 from PIL import Image
@@ -33,16 +32,6 @@ def post_pimg(base, pil, tok=None):
     resp = post_bytes(base, "/images", buf.getvalue(), tok, timeout=300,
                       content_type="image/png")
     return resp["id"]
-
-
-def thumb_data_url(pil, max_side=256, quality=75):
-    """结果缩略图 data URL（JPEG），经 Metadata 带给画布 widget 预览——
-    媒体本体仍留在服务端对象仓库，缩略图仅做画布展示（save-video 旧内嵌路线）。"""
-    t = pil.copy().convert("RGB")
-    t.thumbnail((max_side, max_side))
-    buf = io.BytesIO()
-    t.save(buf, format="JPEG", quality=quality)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def pbool(raw):

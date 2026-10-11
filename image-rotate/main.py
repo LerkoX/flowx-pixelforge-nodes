@@ -1,6 +1,6 @@
 """image-rotate：任意角度旋转（对标 ComfyUI Image Rotate），纯客户端 PIL。"""
-from flowx_client import emit, param, token
-from image_io import RESAMPLE, get_pimg, pbool, post_pimg, thumb_data_url
+from flowx_client import emit, emit_result_preview, param, token
+from image_io import RESAMPLE, get_pimg, pbool, post_pimg
 
 
 def process(im, angle=0.0, expand=True, resample="bicubic"):
@@ -21,8 +21,8 @@ def main():
     oid = post_pimg(url, out, tok)
     print(f"[rotate] image={param('image')} angle={angle} expand={expand} "
           f"{im.width}x{im.height} -> image={oid} {out.width}x{out.height}", flush=True)
-    emit(image=oid, width=out.width, height=out.height,
-         thumb_b64=thumb_data_url(out))
+    emit(image=oid, width=out.width, height=out.height)
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

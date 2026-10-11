@@ -129,7 +129,7 @@ def main() -> int:
         wd = nd / "ui" / "widget-def.js"
         has_model_field = wd.is_file() and "kind: 'model'" in wd.read_text()
         needs_host = ("executor_base" in src or "emit_preview" in src
-                      or has_model_field)
+                      or "emit_result_preview" in src or has_model_field)
         if not needs_host:
             continue
         params = {p["name"] for p in
@@ -138,7 +138,9 @@ def main() -> int:
             problems.append(
                 f"{nd.name}: 有画布侧读取（模型下拉/预览帧）但 flowx.json 未声明 "
                 f"service_url_host 参数（docker 节点需另给 Studio 可达地址）")
-        if "emit_preview" in src and "host_base" not in src:
+        reports_preview = ("emit_preview" in src
+                            or "emit_result_preview" in src)
+        if reports_preview and "host_base" not in src and "emit_result_preview" not in src:
             problems.append(
                 f"{nd.name}: 直接上报预览帧必须经 flowx_client.host_base() 构造 "
                 f"Studio 宿主机可达的帧 URL")

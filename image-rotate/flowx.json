@@ -2,7 +2,7 @@
   "name": "image-rotate",
   "displayName": "旋转图像",
   "description": "任意角度旋转图像（对标 ComfyUI Image Rotate），纯客户端 PIL 处理：下载图像 → 旋转 → 传回推理服务，输出新图像对象 ID",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -27,6 +27,13 @@
         "output": "service_url",
         "description": "推荐由健康检查节点输出提供"
       }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
     },
     {
       "name": "image",
@@ -69,7 +76,8 @@
     "IMAGE": "{{ Param.image }}",
     "ANGLE": "{{ Param.angle }}",
     "EXPAND": "{{ Param.expand }}",
-    "RESAMPLE": "{{ Param.resample }}"
+    "RESAMPLE": "{{ Param.resample }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   },
   "outputs": [
     {
@@ -86,11 +94,6 @@
       "name": "height",
       "type": "integer",
       "description": "结果高度（像素）"
-    },
-    {
-      "name": "thumb_b64",
-      "type": "string",
-      "description": "结果缩略图 data URL（JPEG，画布 widget 预览用）"
     }
   ],
   "extract": {
@@ -116,5 +119,5 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.8.0"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.9.0"
 }

@@ -2,7 +2,7 @@
   "name": "mask-from-image",
   "displayName": "图像转蒙版",
   "description": "从图像提取蒙版（对标 ComfyUI Mask From Image）：取亮度或单通道生成灰度蒙版；蒙版 = 内容为灰度的 IMAGE 对象，可直接喂给扩缩/羽化/反相/合成节点",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -29,6 +29,13 @@
       }
     },
     {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
       "name": "image",
       "type": "string",
       "description": "推理服务端的图像对象 ID",
@@ -53,7 +60,8 @@
     "SERVICE_URL": "{{ Param.service_url }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
     "IMAGE": "{{ Param.image }}",
-    "CHANNEL": "{{ Param.channel }}"
+    "CHANNEL": "{{ Param.channel }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   },
   "outputs": [
     {
@@ -70,11 +78,6 @@
       "name": "height",
       "type": "integer",
       "description": "结果高度（像素）"
-    },
-    {
-      "name": "thumb_b64",
-      "type": "string",
-      "description": "结果缩略图 data URL（JPEG，画布 widget 预览用）"
     }
   ],
   "extract": {
@@ -100,5 +103,5 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.8.0"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.9.0"
 }

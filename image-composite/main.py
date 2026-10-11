@@ -3,8 +3,8 @@
 mask 可选：给定时按蒙版贴（蒙版尺寸不符前景时自动缩放到前景尺寸）；
 缺省时整张前景贴到 (x,y)。越界部分自动裁掉（PIL paste 语义）。
 """
-from flowx_client import emit, param, token
-from image_io import get_pimg, post_pimg, thumb_data_url
+from flowx_client import emit, emit_result_preview, param, token
+from image_io import get_pimg, post_pimg
 
 
 def process(background, foreground, mask=None, x=0, y=0):
@@ -35,8 +35,8 @@ def main():
     oid = post_pimg(url, out, tok)
     print(f"[composite] bg={param('background')} fg={param('foreground')} "
           f"mask={mask_id or '-'} at ({x},{y}) -> image={oid}", flush=True)
-    emit(image=oid, width=out.width, height=out.height,
-         thumb_b64=thumb_data_url(out))
+    emit(image=oid, width=out.width, height=out.height)
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

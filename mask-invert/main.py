@@ -1,8 +1,8 @@
 """mask-invert：蒙版反相（对标 ComfyUI Invert Mask）。"""
 from PIL import ImageOps
 
-from flowx_client import emit, param, token
-from image_io import get_pimg, post_pimg, thumb_data_url
+from flowx_client import emit, emit_result_preview, param, token
+from image_io import get_pimg, post_pimg
 
 
 def process(mask):
@@ -17,8 +17,8 @@ def main():
     out = process(m)
     oid = post_pimg(url, out, tok)
     print(f"[mask-invert] mask={param('mask')} -> mask={oid}", flush=True)
-    emit(mask=oid, width=out.width, height=out.height,
-         thumb_b64=thumb_data_url(out))
+    emit(mask=oid, width=out.width, height=out.height)
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

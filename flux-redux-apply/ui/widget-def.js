@@ -9,8 +9,9 @@ const WIDGET_SPEC = {
     { key: 'reducer', label: 'reducer 权重文件名', kind: 'text', mono: true, default: 'flux1-redux-dev.safetensors', advanced: true },
     { key: 'vision', label: 'vision 编码器目录', kind: 'text', mono: true, default: 'siglip-so400m-patch14-384', advanced: true },
     { key: 'release', label: 'release（用后释放）', kind: 'text', default: 0, advanced: true },
-    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 900, advanced: true },
+    { key: 'job_timeout', label: 'job_timeout（秒，异步任务超时）', kind: 'text', default: 1800, advanced: true },
+    { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  note: '输出 cond 接 flux-sampler；参考图构图/主体/风格注入文本条件序列',
+  note: '输出 cond 接 flux-sampler；参考图构图/主体/风格注入文本条件序列；异步 /jobs 轮询，隧道下也稳',
 }

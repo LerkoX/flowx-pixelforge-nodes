@@ -1,8 +1,8 @@
 {
   "name": "flux-redux-apply",
   "displayName": "FLUX Redux 参考图注入",
-  "description": "FLUX Redux 参考图生成（对标 ComfyUI Load Style Model + Apply Style Model）：SigLIP 编码参考图 → Redux 适配器投影 729 token → 拼到文本 COND 序列前，让生成结果保持参考图的构图/主体/风格语义。输出接 flux-sampler 的 cond。自包含节点：server_op.py 运行时自注册；服务端需预置 siglip-so400m-patch14-384（/models/clip_vision）与 flux1-redux-dev.safetensors（/models/flux）",
-  "version": "1.0.1",
+  "description": "FLUX Redux 参考图生成（对标 ComfyUI Load Style Model + Apply Style Model）：SigLIP 编码参考图 → Redux 适配器投影 729 token → 拼到文本 COND 序列前，让生成结果保持参考图的构图/主体/风格语义。输出接 flux-sampler 的 cond。1.1.0 起走异步 /jobs+轮询（冷路径装载 SigLIP/适配器实测 ~140s 静默，同步 /op 会被隧道空闲超时掐断）。自包含节点：server_op.py 运行时自注册；服务端需预置 siglip-so400m-patch14-384（/models/clip_vision）与 flux1-redux-dev.safetensors（/models/flux）",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -81,9 +81,16 @@
     {
       "name": "job_timeout",
       "type": "integer",
-      "description": "编码超时（秒；首次装载模型约 1~2 分钟）",
+      "description": "编码任务超时（秒；首次装载 SigLIP+适配器约 2~3 分钟，排队时更久）；1.1.0 起走异步 /jobs 通道（轮询不占长连接），超时后节点会 interrupt 任务",
       "required": false,
-      "default": 900
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
     },
     {
       "name": "service_token",
@@ -102,6 +109,7 @@
     "VISION": "{{ Param.vision }}",
     "RELEASE": "{{ Param.release }}",
     "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}"
   },
   "outputs": [
@@ -123,7 +131,7 @@
     "enabled": true,
     "entry": "mock.py"
   },
-  "timeout": 960,
+  "timeout": 2100,
   "executor": {
     "supportedTypes": [
       "local",

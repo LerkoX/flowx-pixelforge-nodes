@@ -52,6 +52,20 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 - 验收：`_tools/verify_colorize.py`（A1~A6，PASSED=26/FAILED=0）；明细见 dev-plan §50.8
 
 
+
+### B4/S2（dev-plan §50）：电商模板与 `image-watermark`
+
+- 新节点 **`image-watermark`**（纯节点侧 PIL，零 numpy）：文字/Logo 水印、九宫格定位、不透明度、描边、
+  旋转、平铺（防盗图样张）、Logo 缩放；输出 `box(x,y,w,h)` 作为「非水印区逐字节不变」判据的锚点。
+  ⚠️ 中文水印必须给 `font_path` 指向含 CJK 的 TTF（默认字体只有 ASCII）。
+- **3 条模板流水线**（`pipeline/`）：`ecom-white-bg`（白底主图 1:1）、`ecom-scene`（场景换底）、
+  `ecom-model-spec`（人脸修复 + RealESRGAN 4x + 水印）
+- 复核脚本：`_tools/verify_ecom.py`（C1 白底纯度 / C2 尺寸规格 / C3 水印只改水印区 / C4 场景合成保主体）
+- 运维事实：`matting-composite` 的 `feather=8` ≈ **24px 过渡带**（`feather` 在节点内部生效，
+  落盘的 mask 是未羽化的）；复核要按"腐蚀后的核心"或"远离轮廓的背景"判定
+- 明细见 dev-plan §50.9
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |

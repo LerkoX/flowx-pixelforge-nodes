@@ -1,0 +1,241 @@
+{
+  "name": "image-watermark",
+  "displayName": "水印（文字/Logo）",
+  "version": "1.0.0",
+  "description": "给图打水印（文字或 Logo）：九宫格定位 + 边距 + 不透明度 + 描边 + 旋转 + 平铺 + Logo 缩放。纯节点侧 PIL（零 numpy，手机本地执行器也能跑）；输出 box 便于复核「非水印区逐字节不变」。中文水印需给 font_path 指向含 CJK 的 TTF（容器/手机默认字体只有 ASCII）。",
+  "author": "flowx-team",
+  "tags": [
+    "image",
+    "watermark",
+    "ecommerce"
+  ],
+  "icon": "💧",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "输入图像对象 ID",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode / matting-composite 的 image 输出提供"
+      }
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "水印文字（与 logo 至少给一个；空=不画文字）"
+    },
+    {
+      "name": "logo",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Logo 图像对象 ID（给了 logo 就用 logo，忽略 text；透明度/定位/平铺共用同一套参数）"
+    },
+    {
+      "name": "position",
+      "type": "string",
+      "required": false,
+      "default": "bottom-right",
+      "description": "九宫格定位：top-left | top-center | top-right | middle-left | center | middle-right | bottom-left | bottom-center | bottom-right（tile=true 时忽略）"
+    },
+    {
+      "name": "margin",
+      "type": "integer",
+      "required": false,
+      "default": 24,
+      "description": "距边缘留白（px）"
+    },
+    {
+      "name": "opacity",
+      "type": "float",
+      "required": false,
+      "default": 0.6,
+      "description": "水印不透明度 0~1（只影响水印本身；非水印区像素逐字节不变）"
+    },
+    {
+      "name": "font_size",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "字号（px）；0=自动（短边/18，最小 12）"
+    },
+    {
+      "name": "font_path",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "字体文件路径（中文水印必须指定含 CJK 的 TTF；留空走内置候选，只有 ASCII）"
+    },
+    {
+      "name": "color",
+      "type": "string",
+      "required": false,
+      "default": "#FFFFFF",
+      "description": "文字颜色 #RRGGBB 或 #RRGGBBAA 或 r,g,b"
+    },
+    {
+      "name": "stroke_width",
+      "type": "integer",
+      "required": false,
+      "default": 2,
+      "description": "文字描边宽度（px，0=不描边）"
+    },
+    {
+      "name": "stroke_color",
+      "type": "string",
+      "required": false,
+      "default": "#000000",
+      "description": "描边颜色（深底浅字/浅底深字都能读）"
+    },
+    {
+      "name": "logo_scale",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "Logo 缩放倍数（0=自动取画布短边 12%）"
+    },
+    {
+      "name": "tile",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "平铺（防盗图样张）；配合 angle 斜铺"
+    },
+    {
+      "name": "angle",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "水印旋转角度（度，0~359）"
+    },
+    {
+      "name": "tile_gap",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "平铺间距（px）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "TEXT": "{{ Param.text }}",
+    "LOGO": "{{ Param.logo }}",
+    "POSITION": "{{ Param.position }}",
+    "MARGIN": "{{ Param.margin }}",
+    "OPACITY": "{{ Param.opacity }}",
+    "FONT_SIZE": "{{ Param.font_size }}",
+    "FONT_PATH": "{{ Param.font_path }}",
+    "COLOR": "{{ Param.color }}",
+    "STROKE_WIDTH": "{{ Param.stroke_width }}",
+    "STROKE_COLOR": "{{ Param.stroke_color }}",
+    "LOGO_SCALE": "{{ Param.logo_scale }}",
+    "TILE": "{{ Param.tile }}",
+    "ANGLE": "{{ Param.angle }}",
+    "TILE_GAP": "{{ Param.tile_gap }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "加水印后的图像对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高"
+    },
+    {
+      "name": "box",
+      "type": "string",
+      "description": "水印覆盖区域 x,y,w,h（平铺时为整图）"
+    },
+    {
+      "name": "box_w",
+      "type": "integer",
+      "description": "水印区宽"
+    },
+    {
+      "name": "box_h",
+      "type": "integer",
+      "description": "水印区高"
+    },
+    {
+      "name": "item_w",
+      "type": "integer",
+      "description": "水印图元宽（旋转后）"
+    },
+    {
+      "name": "item_h",
+      "type": "integer",
+      "description": "水印图元高（旋转后）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.15.1"
+}

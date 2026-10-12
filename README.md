@@ -33,6 +33,25 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 `_tools/verify_tiled.py`（9 项）**FAILED = 0**；明细见 `flowx-dev-plan.md` §49.11。
 
 
+
+### B4/S1（dev-plan §50）：DDColor 老照片上色
+
+**权重（宿主 `D:\flowx-data\models\colorize\<variant>\`，容器内 `/models/colorize`）**
+
+| 变体 | 上游仓库 | 体积 | 说明 |
+| --- | --- | --- | --- |
+| `modelscope` | `piddnad/ddcolor_modelscope` | 870MB | **默认**（清洗数据版，泛化最好） |
+| `paper` | `piddnad/ddcolor_paper` | 870MB | 论文版 |
+| `artistic` | `piddnad/ddcolor_artistic` | 870MB | 艺术风格版 |
+| `paper_tiny` | `piddnad/ddcolor_paper_tiny` | 211MB | 最轻量（convnext-t） |
+
+- 每个目录需 `config.json` + `pytorch_model.bin`；环境变量 `COLORIZE_MODELS_DIR`（默认 `/models/colorize`）
+- **零新增依赖**（torch + timm + cv2 已有）⇒ **不重建推理镜像**；上游 5 个模块逐行内联进 `server_ops/colorize.py`
+  的惰性工厂 `_ddclasses()`（保真对照：与官方 `ColorizationPipeline` **逐字节一致**）
+- 节点：`colorize-load`（预热/换变体）/ `colorize`（上色，保留原图 L 通道只预测 ab，确定性可逐字节回归）
+- 验收：`_tools/verify_colorize.py`（A1~A6，PASSED=26/FAILED=0）；明细见 dev-plan §50.8
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |

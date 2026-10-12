@@ -1,0 +1,147 @@
+{
+  "name": "colorize",
+  "displayName": "DDColor 上色",
+  "description": "DDColor 黑白/老照片上色（G8）：输入黑白或褪色图 → 彩色图。**保留原图 L 通道**、只预测 ab ⇒ 结构/亮度逐像素不变（不是重绘，是着色）。size 为内部推理边长（默认 512，须 32 的倍数）；saturation 在 Lab 空间缩放色度。chroma/chroma_in 是输出/输入色度均值，供落盘复核判据。服务端插件 colorize.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "colorize",
+    "color"
+  ],
+  "icon": "🎨",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "DDColor 模型键（colorize-load 的输出，如 ddcolor:modelscope）",
+      "required": true,
+      "source": {
+        "nodeRef": "colorize-load",
+        "output": "model",
+        "description": "由 colorize-load 的 model 输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "输入图像对象 ID（黑白/褪色图；彩色图也可，会重着色）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / vae-decode 的 image 输出提供"
+      }
+    },
+    {
+      "name": "size",
+      "type": "integer",
+      "description": "内部推理边长（128~1536 且为 32 的倍数；越大越慢、细节略好）",
+      "default": 512
+    },
+    {
+      "name": "saturation",
+      "type": "float",
+      "description": "色度增强倍数（Lab 空间缩放 ab；1.0=原样，>1 更艳，<1 更素）",
+      "default": 1.0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "MODEL": "{{ Param.model }}",
+    "IMAGE": "{{ Param.image }}",
+    "SIZE": "{{ Param.size }}",
+    "SATURATION": "{{ Param.saturation }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "上色结果图对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高"
+    },
+    {
+      "name": "chroma",
+      "type": "number",
+      "description": "输出色度均值（sqrt(a²+b²)，越大越彩）"
+    },
+    {
+      "name": "chroma_in",
+      "type": "number",
+      "description": "输入色度均值（灰度图≈0）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "运行信息 JSON（变体/精度/尺寸/色度/耗时）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.15.0"
+}

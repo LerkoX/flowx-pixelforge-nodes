@@ -84,6 +84,8 @@ OP_FAMILIES = {
                "grounding-dino-load", "grounding-detect"],
     # G4 分块重绘超分族（B3，dev-plan §49）：切片规划（纯计算）+ 逐块重绘与接缝融合
     "tiled.py": ["tiled-upscale-plan", "tiled-upscale-apply"],
+    # G8 上色族（B4，dev-plan §50）：DDColor（装载预热 + 上色推理）
+    "colorize.py": ["colorize-load", "colorize"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
 }
 

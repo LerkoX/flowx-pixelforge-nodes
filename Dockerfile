@@ -117,6 +117,8 @@ COPY grounding-dino-load/*.py               /opt/flowx-nodes/grounding-dino-load
 COPY grounding-detect/*.py                  /opt/flowx-nodes/grounding-detect/
 COPY tiled-upscale-plan/*.py                /opt/flowx-nodes/tiled-upscale-plan/
 COPY tiled-upscale-apply/*.py               /opt/flowx-nodes/tiled-upscale-apply/
+COPY colorize-load/*.py                   /opt/flowx-nodes/colorize-load/
+COPY colorize/*.py                        /opt/flowx-nodes/colorize/
 
 COPY image-pad/*.py                       /opt/flowx-nodes/image-pad/
 # Pillow 供图像/蒙版/滤镜族节点使用（image-* / mask-* 等）。远端 docker 宿主无外网，

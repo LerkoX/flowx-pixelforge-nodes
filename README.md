@@ -94,6 +94,16 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 改完 `main.py` 先跑：`python3 nodes/_tools/test-main-smoke.py <节点名>`。
 
 
+
+### B5/51.3：InstantID 量化基线（`pipeline/instantid-ab-baseline.yaml`，wf 152）
+
+受控 A/B（同底模/同参考脸/同 seed/同提示词，只改身份强度 0.8 → 0.0），用 `face.similarity`
+度量身份余弦：**开启 0.7457 / 关闭基线 0.0356（Δ=+0.7101）** ⇒ 现有 InstantID 身份保持很强。
+⚠️ 隧道下冷加载 SDXL(6.9GB)+CN(2.5GB) 实测 42 分钟 + >30 分钟；模型热了之后 512²/12 步
+每分支约 6 分钟。⚠️ 失败执行会留 lease 钉住模型（`/model/unload` 的字段是 `target`，
+对 pinned 项返回 `unloaded:(none)`），等 30 分钟自动过期。详见 dev-plan §51.3。
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |

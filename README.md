@@ -104,6 +104,23 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 对 pinned 项返回 `unloaded:(none)`），等 30 分钟自动过期。详见 dev-plan §51.3。
 
 
+
+### B5/52：服务端插件归属簿修复 + G11 批量节点
+
+- **服务端（已入库，未强制重启）**：修 `plugin_ops` 归属簿三个可证缺陷 —— ① 幽灵归属
+  （手工删插件文件后归属簿仍指向它 ⇒ 假 409 且 DELETE 反 404）② 陈旧算子泄漏（同文件重传后
+  改名/删掉的算子永久留在注册表）③ 回滚不补 `sys.modules`。新增
+  `plugins.stale_owners` / `plugins.reconcile` / `plugins.plugin_module_name`，测试
+  `inference-server/tests/test_plugin_registry.py`（15/15）。下次自然重启生效。
+- **新节点（local-only，不进镜像）**：`image-batch-load`(229) / `image-batch-save`(230) /
+  `image-montage`(231)；共享件 `_common/image_batch.py`、`_common/image_montage.py`。
+- **流水线**：`batch-montage-preview`(wf 153) / `batch-roundtrip`(wf 154)。
+- **复核**：`_tools/verify_batch.py`（10/10）：批量另存命名/等价性、拼图尺寸公式、格内逐字节保真。
+- ⚠️ 服务端上传会**归一化图像编码**（灰度模式图会上传后重编码，像素不变）⇒ 判据写"等价"而非
+  "字节一致"。⚠️ `image-montage` 的 `label=name` 必须接 `image-batch-load` 的 `names`。
+- 明细见 dev-plan §52.1/§52.3/§52.4。
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |

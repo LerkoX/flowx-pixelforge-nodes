@@ -1,0 +1,129 @@
+{
+  "name": "image-batch-save",
+  "displayName": "批量保存图像",
+  "description": "N 个图像对象 ID → N 个文件（G11 批量）。把多输出算子的产物真正全存下来（如 sam-auto 的 16 个蒙版；现在只能取 selected 一张）。文件名 <prefix>_<序号>.png，序号从 start_index 起、按 zero_pad 补零。纯节点侧标准库，只能 local 执行器",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "image",
+    "batch",
+    "io",
+    "local"
+  ],
+  "icon": "💾",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_batch.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（本机可达，如隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "images",
+      "type": "string",
+      "description": "图像对象 ID 列表（JSON 数组字符串；image-batch-load 的输出）",
+      "required": true
+    },
+    {
+      "name": "output_dir",
+      "type": "string",
+      "description": "输出目录（不存在则创建）",
+      "default": "~/flowx-e2e-out"
+    },
+    {
+      "name": "filename_prefix",
+      "type": "string",
+      "description": "文件名前缀",
+      "default": "batch"
+    },
+    {
+      "name": "start_index",
+      "type": "integer",
+      "description": "起始序号",
+      "default": 1
+    },
+    {
+      "name": "zero_pad",
+      "type": "integer",
+      "description": "序号补零位数（0=不补）",
+      "default": 3
+    },
+    {
+      "name": "ext",
+      "type": "string",
+      "description": "扩展名（png/jpg）",
+      "default": "png"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "IMAGES": "{{ Param.images }}",
+    "OUTPUT_DIR": "{{ Param.output_dir }}",
+    "FILENAME_PREFIX": "{{ Param.filename_prefix }}",
+    "START_INDEX": "{{ Param.start_index }}",
+    "ZERO_PAD": "{{ Param.zero_pad }}",
+    "EXT": "{{ Param.ext }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "count",
+      "type": "integer",
+      "description": "写出的文件数"
+    },
+    {
+      "name": "paths",
+      "type": "string",
+      "description": "绝对路径列表（JSON 数组）"
+    },
+    {
+      "name": "filenames",
+      "type": "string",
+      "description": "文件名列表（JSON 数组）"
+    },
+    {
+      "name": "dir",
+      "type": "string",
+      "description": "输出目录（绝对路径）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  }
+}

@@ -62,6 +62,15 @@ _NUM_KEYS = {"width", "height", "count", "params_mb", "vram_mb", "seed", "steps"
              "current", "total", "size", "batch", "index", "id_num", "sha"}
 
 
+def _tiny_png():
+    """真实可解码的小 PNG（node 的 main 里 Image.open 需要合法字节）。"""
+    from PIL import Image
+    import io as _io
+    buf = _io.BytesIO()
+    Image.new("RGB", (64, 48), (10, 20, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _meta_val(key):
     return {"id": f"stub-{key}", "value": f"stub-{key}", "type": "IMAGE"}
 
@@ -197,7 +206,7 @@ def make_stubs(node_dir, params, rec, verbose):
             if verbose:
                 print(f"    [stub] flowx_client.{name}({a}, {kw})")
             if "bytes" in name:
-                return b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+                return _tiny_png()
             if name.startswith("submit") or name.endswith("_job"):
                 return "0" * 16          # 节点会对 jid 做 jid[:8]
             if name.startswith(("get_", "post_", "put_", "wait_", "call_")):
@@ -215,7 +224,7 @@ def make_stubs(node_dir, params, rec, verbose):
     fc.wait_job = lambda *a, **kw: stub_raw()
     fc.get_json = lambda *a, **kw: stub_raw()
     fc.post_json = lambda *a, **kw: stub_raw()
-    fc.get_bytes = lambda *a, **kw: b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    fc.get_bytes = lambda *a, **kw: _tiny_png()
     fc.post_bytes = lambda *a, **kw: {"id": "stub-obj"}
     fc.put_bytes = lambda *a, **kw: {"id": "stub-obj"}
     fc.param = _param

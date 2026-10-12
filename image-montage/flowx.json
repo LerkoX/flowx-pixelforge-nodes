@@ -1,0 +1,171 @@
+{
+  "name": "image-montage",
+  "displayName": "图像拼图（联系表）",
+  "description": "N 张图 → 一张拼图（G11）。Studio 没有循环 ⇒ 这是把 N 张图合成一张、再喂给单图链（或直接给人眼验收）的正路。支持自动列数/自动格尺寸、可加序号/文件名标签、配色背景与边距。纯节点侧 PIL，零 numpy，只能 local 执行器",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "image",
+    "batch",
+    "compose",
+    "local"
+  ],
+  "icon": "🧩",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_batch.py",
+    "image_montage.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（本机可达，如隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧用），留空同 service_url"
+    },
+    {
+      "name": "images",
+      "type": "string",
+      "description": "图像对象 ID 列表（JSON 数组；image-batch-load 的输出）",
+      "required": true
+    },
+    {
+      "name": "names",
+      "type": "string",
+      "description": "文件名列表（JSON 数组，与 images 同序；label=name 时必给，直接接 image-batch-load 的 names 输出）",
+      "default": ""
+    },
+    {
+      "name": "cols",
+      "type": "integer",
+      "description": "列数（0=按张数自动，约 sqrt(n)）",
+      "default": 0
+    },
+    {
+      "name": "cell_w",
+      "type": "integer",
+      "description": "单元格宽（0=用所有图里最大的宽）",
+      "default": 0
+    },
+    {
+      "name": "cell_h",
+      "type": "integer",
+      "description": "单元格高（0=用所有图里最大的高）",
+      "default": 0
+    },
+    {
+      "name": "pad",
+      "type": "integer",
+      "description": "外边距/格间距（像素）",
+      "default": 10
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "description": "标签：none / index（序号）/ name（文件名）",
+      "default": "none"
+    },
+    {
+      "name": "label_h",
+      "type": "integer",
+      "description": "标签行高（label != none 时生效）",
+      "default": 18
+    },
+    {
+      "name": "bg",
+      "type": "string",
+      "description": "背景色 #RRGGBB",
+      "default": "#161618"
+    },
+    {
+      "name": "fit",
+      "type": "string",
+      "description": "缩放方式：fit（等比装入）/ cover（铺满裁切）",
+      "default": "fit"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGES": "{{ Param.images }}",
+    "NAMES": "{{ Param.names }}",
+    "COLS": "{{ Param.cols }}",
+    "CELL_W": "{{ Param.cell_w }}",
+    "CELL_H": "{{ Param.cell_h }}",
+    "PAD": "{{ Param.pad }}",
+    "LABEL": "{{ Param.label }}",
+    "LABEL_H": "{{ Param.label_h }}",
+    "BG": "{{ Param.bg }}",
+    "FIT": "{{ Param.fit }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "拼图对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "拼图宽"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "拼图高"
+    },
+    {
+      "name": "grid",
+      "type": "string",
+      "description": "网格 JSON [cols, rows]"
+    },
+    {
+      "name": "count",
+      "type": "integer",
+      "description": "参与拼图的张数"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  }
+}

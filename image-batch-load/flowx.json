@@ -1,0 +1,144 @@
+{
+  "name": "image-batch-load",
+  "displayName": "批量加载图像",
+  "description": "目录 → N 个图像对象 ID（G11 批量）。Studio **没有循环概念**，所以「批量」落在 I/O 上：本节点把一个目录里的图按 pattern 全部上传进对象仓库，输出 ID 列表（STRING + JSON 数组），供多输出算子、拼图节点或 image-batch-save 消费。纯节点侧标准库，零 numpy/零 GPU，只能 local 执行器",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "image",
+    "batch",
+    "io",
+    "local"
+  ],
+  "icon": "📂",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_batch.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（本机可达，如隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧用），留空同 service_url"
+    },
+    {
+      "name": "dir",
+      "type": "string",
+      "description": "目录路径（支持 ~ 展开）",
+      "default": "~/flowx-input"
+    },
+    {
+      "name": "pattern",
+      "type": "string",
+      "description": "文件名通配，多组用 ; 分隔（如 *.png;*.jpg）",
+      "default": "*.png"
+    },
+    {
+      "name": "sort",
+      "type": "string",
+      "description": "排序：name（文件名）/ mtime（修改时间）/ size（大小）",
+      "default": "name"
+    },
+    {
+      "name": "reverse",
+      "type": "string",
+      "description": "倒序（true 时最大的在最后）",
+      "default": "false"
+    },
+    {
+      "name": "limit",
+      "type": "integer",
+      "description": "最多取几张（0=全部）",
+      "default": 0
+    },
+    {
+      "name": "offset",
+      "type": "integer",
+      "description": "跳过前 N 张（分页用）",
+      "default": 0
+    },
+    {
+      "name": "recursive",
+      "type": "string",
+      "description": "递归子目录",
+      "default": "false"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "DIR": "{{ Param.dir }}",
+    "PATTERN": "{{ Param.pattern }}",
+    "SORT": "{{ Param.sort }}",
+    "REVERSE": "{{ Param.reverse }}",
+    "LIMIT": "{{ Param.limit }}",
+    "OFFSET": "{{ Param.offset }}",
+    "RECURSIVE": "{{ Param.recursive }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "images",
+      "type": "string",
+      "description": "图像对象 ID 列表（JSON 数组字符串，带 @ 信封前缀）"
+    },
+    {
+      "name": "count",
+      "type": "integer",
+      "description": "实际加载张数"
+    },
+    {
+      "name": "names",
+      "type": "string",
+      "description": "文件名列表（JSON 数组，与 images 同序）"
+    },
+    {
+      "name": "dir",
+      "type": "string",
+      "description": "实际扫描的目录（绝对路径）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  }
+}

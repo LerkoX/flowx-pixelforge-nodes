@@ -1,0 +1,22 @@
+const WIDGET_SPEC = {
+  icon: '🧩',
+  title: '图像拼图（联系表）',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'service_url_host', label: '画布可达 service_url_host（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'images', label: '对象 ID 列表（JSON）', kind: 'textarea', mono: true },
+    { key: 'names', label: '文件名列表（label=name 用）', kind: 'textarea', mono: true, advanced: true },
+    { key: 'cols', label: '列数（0=自动）', kind: 'slider', default: 0, min: 0, max: 8, step: 1 },
+    { key: 'cell_w', label: '单元格宽（0=自动）', kind: 'slider', default: 0, min: 0, max: 1024, step: 32 },
+    { key: 'cell_h', label: '单元格高（0=自动）', kind: 'slider', default: 0, min: 0, max: 1024, step: 32 },
+    { key: 'pad', label: '边距/格间距', kind: 'slider', default: 10, min: 0, max: 40, step: 1 },
+    { key: 'label', label: '标签', kind: 'select', options: ['none', 'index', 'name'], default: "none" },
+    { key: 'label_h', label: '标签行高', kind: 'slider', default: 18, min: 0, max: 40, step: 2 },
+    { key: 'bg', label: '背景色', kind: 'text', default: "#161618", mono: true },
+    { key: 'fit', label: '缩放方式', kind: 'select', options: ['fit', 'cover'], default: "fit" },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+  ],
+  replay: ['cols', 'cell_w', 'cell_h', 'pad', 'label'],
+  compareInput: 'image',
+  note: '输出尺寸公式：W = cols*cell_w + (cols+1)*pad；H = rows*cell_h + (rows+1)*pad + rows*label_h（复核脚本按此判据对表）',
+};

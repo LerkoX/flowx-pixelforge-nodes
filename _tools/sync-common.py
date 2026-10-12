@@ -49,6 +49,10 @@ def targets(name, node_dir):
         return "executor_base" in body   # 只有声明用它的节点需要
     if name == "image_filters.py":
         return "image_filters" in body   # 只有 G5 滤镜族节点需要
+    if name == "image_batch.py":
+        return "image_batch" in body     # 批量 I/O 族（B5/52.2）
+    if name == "image_montage.py":
+        return "image_montage" in body   # 拼图节点（B5/52.2）
     return False
 
 

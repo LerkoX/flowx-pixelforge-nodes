@@ -125,6 +125,16 @@ def main() -> int:
         problems.extend(line for line in
                         (r.stdout + r.stderr).strip().splitlines() if line.strip())
 
+    # N. main() 桩冒烟（gate N）——`node mock` 跑的是 mock.py，跑不到 main.py；
+    # 2026-10 连续两批真机事故（S2 的 NameError、S3 的可选参数）都是"只在 main.py
+    # 里、只有真机才暴露"。门禁用桩把每个节点 main() 真跑一遍。
+    r = subprocess.run([sys.executable, str(root / "_tools" / "test-main-smoke.py")],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        problems.extend(line for line in
+                        (r.stdout + r.stderr).strip().splitlines()
+                        if line.startswith("FAIL"))
+
     # G. widget 产物漂移（base + widget-def 重建对表）
     r = subprocess.run([sys.executable, str(root / "_tools" / "build-widget.py"),
                         "--all", "--check"], capture_output=True, text=True)

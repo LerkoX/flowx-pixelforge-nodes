@@ -84,6 +84,16 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 - ⚠️ 复现纪律：本族**显式传 `torch.Generator`** ⇒ 同种子逐字节可复现（含跨执行器）。
 
 
+
+### B5/51.1：gate N —— `main()` 桩冒烟
+
+`_tools/test-main-smoke.py`：对每个节点把 `flowx_client`/`image_io`/`executor_base` 换成桩，
+用 flowx.json 参数默认值真跑一遍 `main()`。**为什么需要**：`node mock` 跑的是 `mock.py`，
+跑不到 `main.py`（B4/S2 的 `NameError`、B4/S3 的可选参数问题都只在真机暴露）。
+已挂进 `check-bundle.py`；负例自检 `--selftest` 5/5。当前 99 节点 = PASS 98 / SKIP 1 / FAIL 0。
+改完 `main.py` 先跑：`python3 nodes/_tools/test-main-smoke.py <节点名>`。
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |

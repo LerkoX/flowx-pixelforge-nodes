@@ -5,8 +5,9 @@ iid = param("image", "")
 path = param("image_path", "")
 if not iid and path:
     iid = f"mock-upload-{path.rsplit('/', 1)[-1]}"
-raw = param("strokes_json", "")
+ref = param("strokes_ref", "")
+inline = param("strokes_json", "")
 print(f"[mask-paint][mock] image={iid or '(none)'} image_path={path or '-'} "
-      f"strokes_json={len(raw)} chars")
+      f"strokes_ref={ref or '-'} strokes_json={len(inline)} chars")
 emit(image=iid, mask=f"mock-mask-paint-out-{iid}",
      width=768, height=1280, coverage=0.1)

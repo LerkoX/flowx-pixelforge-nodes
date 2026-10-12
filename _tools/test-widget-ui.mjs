@@ -82,13 +82,20 @@ global.Image = class { set src(v) {} }
 global.URL = { createObjectURL: () => 'blob:x' }
 global.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' })
 let lastSentForm = null
+let lastUploadUrl = ''
 global.XMLHttpRequest = class {
   constructor() { this.upload = {}; this.status = 0 }
-  open() {} setRequestHeader() {}
+  open(_m, url) { this.url = url }
+  setRequestHeader() {}
   send(fd) {
     lastSentForm = fd
+    lastUploadUrl = String(this.url || '')
+    // 按落点返回不同文件名：paint 笔画走 subdir=strokes，加载类节点上传图片
+    const strokes = lastUploadUrl.includes('subdir=strokes')
     this.status = 200
-    this.responseText = JSON.stringify({ code: 200, data: { path: '~/flowx-input/uploads/T_x.png', name: 'T_x.png' } })
+    this.responseText = JSON.stringify({ code: 200, data: strokes
+      ? { path: '~/flowx-input/uploads/strokes/T_x.json', name: 'T_x.json' }
+      : { path: '~/flowx-input/uploads/T_x.png', name: 'T_x.png' } })
     this.onload && this.onload()
   }
 }
@@ -254,9 +261,20 @@ for (const [node, outKey, isVideo] of mediaNodes) {
 // replay→有「▶ 预览」按钮，且点击后把 outputs.__op_name **原样**付给节点级代理的
 // /op（F1：版本化算子名，dev-plan §47.9 A7 —— 名字带版本，重放不会被后来注册的
 // 同基名算子顶掉；这里用假名 x.y@v1 验"原样传递"这层契约，与真实版本号无关）。
-const fieldNodes = Object.keys(defs).filter((d) => {
-  try { return !!bundleSpec(d).WIDGET_SPEC } catch { return false }
-})
+// ⚠️ 解析失败的 bundle 必须**报 FAIL**，不能静默跳过：曾因为 widget-def 的 label
+// 里嵌了未转义的单引号（'文本提示（多类用 ' . ' 分隔）'），产物语法非法——Studio 侧
+// `import(bundleUrl)` 直接抛 SyntaxError，画布上该节点显示「UI 加载失败」，而这里
+// 的 try/catch 把它过滤掉后整条门槛仍然全绿（流水线 135 事故）。
+const fieldNodes = []
+for (const d of Object.keys(defs)) {
+  try { bundleSpec(d) } catch (e) {
+    check(`${d}: ui/node-widget.js 可解析（base+widget-def 拼接产物语法合法）`, false)
+    console.log(`      ${e.message}（跑 _tools/gen-widget-def.py 或修 widget-def.js 的引号）`)
+    continue
+  }
+  fieldNodes.push(d)
+}
+if (!fieldNodes.length) check('至少有一个节点 widget 可解析', false)
 function bundleSpec(node) {
   const file = path.join(NODES, node, 'ui', 'node-widget.js')
   const src = fs.readFileSync(file, 'utf8').replace(/^export default .*$/m, '')
@@ -321,6 +339,117 @@ for (const node of fieldNodes) {
   }
 }
 console.log(`自定义 widget 节点：${mounted}/${fieldNodes.length} 个完成通用回归\n`)
+
+// ---------- 7. 蒙版手绘：笔画抽稀 + 外置存储（strokes_ref）----------
+// 事故背景：手绘时 pointermove 每帧 push 一点，一笔可达数千点，一次 workflow 定义
+// 100KB+（workflow 113 执行 641：6 笔 7476 点 / 104KB，还随每次执行再复制一份到快照）。
+// 抽稀 + 外置后：参数里只留短路径。
+const paintNodes = Object.keys(defs).filter((d) => /strokesRefKey/.test(defs[d]))
+for (const node of paintNodes) {
+  const refKey = (defs[node].match(/strokesRefKey:\s*'([^']+)'/) || [])[1]
+  const jsonKey = (defs[node].match(/strokesKey:\s*'([^']+)'/) || [])[1]
+  check(`${node}: widget-def 能解析出 strokesRefKey/strokesKey`, !!refKey && !!jsonKey)
+
+  // A. 点密集折线 → RDP 抽稀后再存（保留首尾、去掉近似共线的点）
+  const simplify = bundleSpec(node).createNodeWidget.simplifyStrokes
+  check(`${node}: 暴露抽稀函数（测试出口）`, typeof simplify === 'function')
+  if (typeof simplify === 'function') {
+    const line = []
+    for (let x = 0; x <= 500; x += 1) line.push([x, 0])          // 501 点共线
+    const lineOut = simplify([{ type: 'brush', size: 40, points: line }])[0].points
+    check(`${node}: 共线 501 点抽稀成 2 点（首尾）`, lineOut.length === 2)
+    check(`${node}: 抽稀保留首尾坐标`,
+      lineOut[0][0] === 0 && lineOut[0][1] === 0
+      && lineOut[1][0] === 500 && lineOut[1][1] === 0)
+
+    const spike = line.slice()
+    spike[250] = [250, 12]                                       // 真拐点（远大于 ε=1.5）
+    const spikeOut = simplify([{ type: 'brush', size: 40, points: spike }])[0].points
+    check(`${node}: 保留真拐点且大幅降点（501 → ≤8）`,
+      spikeOut.length <= 8 && spikeOut.some((p) => p[1] === 12))
+    check(`${node}: 抽稀结果为整数坐标`,
+      spikeOut.every((p) => Number.isInteger(p[0]) && Number.isInteger(p[1])))
+
+    const dup = []
+    for (let i = 0; i < 200; i++) dup.push([5, 5])
+    check(`${node}: 完全重复的 200 点去重成 1 点`,
+      simplify([{ type: 'erase', size: 20, points: dup }])[0].points.length === 1)
+
+    const rect = simplify([{ type: 'rect', x: 1.4, y: 2.6, w: 10.2, h: -3.6 }])
+    check(`${node}: rect 抽稀后仍为 rect 且取整`,
+      rect.length === 1 && rect[0].type === 'rect' && rect[0].x === 1 && rect[0].h === -4)
+    check(`${node}: 未知类型笔画原样保留`, simplify([{ type: 'polygon', points: [[1, 2]] }]).length === 1)
+    check(`${node}: 空笔画数组不报错`, simplify([]).length === 0 && simplify(null).length === 0)
+  }
+
+  // B. 参数里是外置路径 → 异步读回文件并渲染（缩略图提示反映笔数）
+  const payload = JSON.stringify({
+    strokes: [{ type: 'brush', size: 40, points: [[10, 10], [20, 20]] }],
+    image_size: [768, 1280],
+  })
+  let fetched = ''
+  global.fetch = async (u) => {
+    fetched = decodeURIComponent(String(u))
+    return { ok: true, status: 200, text: async () => payload }
+  }
+  const elRef = mount(node, {
+    params: { [refKey]: '~/flowx-input/uploads/strokes/x.json' },
+    onParamsChange: () => {},
+  })
+  await new Promise((r) => setTimeout(r, 10))
+  check(`${node}: 外置路径经 /media/file 读取`, fetched.includes('/api/v1/media/file?') && fetched.includes('x.json'))
+  check(`${node}: 读回后提示“1 笔”`,
+    findAllByTag(elRef, 'span').some((s) => /1 笔/.test(s._text)))
+  check(`${node}: 读回后允许编辑`, findByText(elRef, '✏️ 编辑蒙版').disabled === false)
+
+  // C. 读不回来 → 明确报错并禁用编辑（不得用空笔画覆盖用户内容）
+  global.fetch = async () => ({ ok: false, status: 404, text: async () => '' })
+  const elErr = mount(node, {
+    params: { [refKey]: '~/flowx-input/uploads/strokes/gone.json' },
+    onParamsChange: () => {},
+  })
+  await new Promise((r) => setTimeout(r, 10))
+  check(`${node}: 读取失败提示 ❌`, findAllByTag(elErr, 'span').some((s) => /读取失败/.test(s._text)))
+  check(`${node}: 读取失败时禁用编辑`, findByText(elErr, '✏️ 编辑蒙版').disabled === true)
+
+  // D. 编辑器保存：画几笔 → ✔ 完成 → 抽稀后上传成 JSON，写回 ref 并清空内联
+  let written = null
+  const elSave = mount(node, { params: {}, onParamsChange: (p) => { written = p } })
+  document.body.children.length = 0
+  fire(findByText(elSave, '✏️ 编辑蒙版'), 'click')
+  const overlay = overlays()[0]
+  check(`${node}: 点「✏️ 编辑蒙版」打开全屏编辑器`, !!overlay)
+  if (overlay) {
+    const areaEl = findAllByTag(overlay, 'div').find((d) => d._h.pointerdown)
+    const pev = (x, y) => ({
+      pointerId: 1, clientX: x, clientY: y,
+      preventDefault() {}, stopPropagation() {},
+      target: { closest: () => null },
+    })
+    if (areaEl) {
+      fire(areaEl, 'pointerdown', pev(10, 10))
+      for (let x = 11; x <= 60; x += 1) fire(areaEl, 'pointermove', pev(x, 10))
+      fire(areaEl, 'pointerup', pev(60, 10))
+    }
+    lastSentForm = null
+    fire(findByText(overlay, '✔ 完成'), 'click')
+    await new Promise((r) => setTimeout(r, 20))
+    const up = lastSentForm && lastSentForm.entries[0]
+    check(`${node}: 保存走 /media/upload?subdir=strokes`,
+      !!lastUploadUrl && lastUploadUrl.includes('/api/v1/media/upload') && lastUploadUrl.includes('subdir=strokes'))
+    check(`${node}: 上传体是 JSON 文件`, !!up && up[0] === 'file' && up[1] && String(up[1].type).includes('json'))
+    if (up && up[1] && up[1].text) {
+      const body = JSON.parse(await up[1].text())
+      check(`${node}: 上传的笔画已抽稀（50 点共线 → ≤3 点）`,
+        (body.strokes[0].points || []).length <= 3)
+      check(`${node}: 上传体带 image_size`, Array.isArray(body.image_size) && body.image_size.length === 2)
+    }
+    check(`${node}: 写回外置路径 ${refKey}`, !!written && !!written[refKey])
+    check(`${node}: 同时清空旧的内联 ${jsonKey}`, !!written && written[jsonKey] === '')
+  }
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' })
+}
+if (!paintNodes.length) console.log('! 未发现声明 strokesRefKey 的 paint 节点（跳过第 7 节）')
 
 console.log(fails ? `\n✗ ${fails} 项失败` : '\n✓ widget UI 回归全部通过')
 process.exit(fails ? 1 : 0)

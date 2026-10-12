@@ -167,12 +167,19 @@ def main() -> int:
                 f"{nd.name}: 直接上报预览帧必须经 flowx_client.host_base() 构造 "
                 f"Studio 宿主机可达的帧 URL")
 
-    # K. 上传控件（widget kind:'file'）只能声明在 local-only 节点
-    #    上传物落在 FlowX 机器（Studio 的 media.roots，默认 ~/flowx-input/uploads/），
-    #    路径参数由节点读盘；docker/远端执行器看不到这台机器的磁盘 ⇒ 声明了就是
-    #    “能上传但一跑就 FileNotFound”的坑。需要上传语义的节点必须 supportedTypes: [local]
+    # K. 上传控件（widget kind:'file'）与笔画外置存储（paint.strokesRefKey）只能声明在
+    #    local-only 节点。上传物与笔画 JSON 都落在 FlowX 机器（Studio 的 media.roots，
+    #    默认 ~/flowx-input/uploads/），路径参数由节点读盘；docker/远端执行器看不到
+    #    这台机器的磁盘 ⇒ 声明了就是“能画能传但一跑就 FileNotFound”的坑。
+    #    需要上传/外置存储语义的节点必须 supportedTypes: [local]。
     for wd in sorted(root.glob("*/ui/widget-def.js")):
-        if "kind: 'file'" not in wd.read_text():
+        src = wd.read_text()
+        declares = []
+        if "kind: 'file'" in src:
+            declares.append("kind:'file'（本机上传）")
+        if "strokesRefKey" in src:
+            declares.append("paint.strokesRefKey（笔画 JSON 外置到本机文件）")
+        if not declares:
             continue
         nd = wd.parent.parent
         fj = nd / "flowx.json"
@@ -182,8 +189,8 @@ def main() -> int:
         types = ex.get("supportedTypes") or []
         if "docker" in types:
             problems.append(
-                f"{nd.name}: widget 声明了 kind:'file'（本机上传）但 executor. "
-                f"supportedTypes={types} 含 docker/远端 —— 上传物在本机，"
+                f"{nd.name}: widget 声明了{'、'.join(declares)}但 executor."
+                f"supportedTypes={types} 含 docker/远端 —— 上传物/笔画文件在本机，"
                 f"容器里读不到；请改为 supportedTypes: [local]")
 
     # L. widget 交互回归（DOM stub 里真跑 bundle；产物字节合法 ≠ 点得动）

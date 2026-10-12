@@ -1,8 +1,8 @@
 {
   "name": "mask-paint",
   "displayName": "蒙版手绘",
-  "description": "画布手绘蒙版（对标 ComfyUI MaskEditor）：可直接读本地图片（image_path，无需先跑上游）或接上游图像对象 ID，在节点上预览底图，点开编辑器用笔刷/矩形/橡皮涂抹任意区域，白=重绘、黑=保留。笔画以矢量存于 strokes_json 参数（分辨率无关，可再编辑），执行时按原图实际分辨率光栅化为灰度蒙版，可直接喂 mask-grow/feather/invert/latent-set-noise-mask（image 输出透传底图对象 ID）",
-  "version": "1.3.0",
+  "description": "画布手绘蒙版（对标 ComfyUI MaskEditor）：可直接读本地图片（image_path，无需先跑上游）或接上游图像对象 ID，在节点上预览底图，点开编辑器用笔刷/矩形/橡皮涂抹任意区域，白=重绘、黑=保留。笔画以矢量存储（分辨率无关，可再编辑），保存时自动抽稀并落盘为本地 JSON 文件（strokes_ref，参数里只留短路径，不把体量大的编辑态文本写进流水线 YAML/执行快照/SSE）；旧的内联 strokes_json 仍兼容。执行时按原图实际分辨率光栅化为灰度蒙版，可直接喂 mask-grow/feather/invert/latent-set-noise-mask（image 输出透传底图对象 ID）",
+  "version": "1.4.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -68,9 +68,16 @@
       "default": ""
     },
     {
+      "name": "strokes_ref",
+      "type": "string",
+      "description": "手绘笔画 JSON 文件路径（推荐，由节点 widget 的蒙版编辑器保存时写入）：编辑器「✔ 完成」后笔画抽稀并上传为 ~/flowx-input/uploads/strokes/<时间戳>_strokes.json，本参数只存该短路径。非空时优先于 strokes_json；执行时读该文件光栅化（读不到只告警并出空蒙版，不中断流水线）",
+      "required": false,
+      "default": ""
+    },
+    {
       "name": "strokes_json",
       "type": "string",
-      "description": "画布手绘笔画（JSON 矢量，由节点 widget 的蒙版编辑器写入；白=重绘区域）。格式 {strokes:[{type:brush|rect|erase,...}], image_size:[w,h]}，执行时按原图分辨率缩放光栅化",
+      "description": "画布手绘笔画的内联 JSON（旧写法，保留兼容；strokes_ref 非空时忽略）。格式 {strokes:[{type:brush|rect|erase,...}], image_size:[w,h]}，执行时按原图分辨率缩放光栅化。笔画多时体积很大（一笔可达数千点），建议改用 strokes_ref",
       "required": false,
       "default": ""
     }

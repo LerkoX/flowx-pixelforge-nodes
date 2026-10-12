@@ -5,7 +5,7 @@ const WIDGET_SPEC = {
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
     { key: 'image', label: '输入图像对象 ID（image）', kind: 'text', mono: true },
     { key: 'model', label: 'GroundingDINO 模型键', kind: 'text', default: "gd:tiny", mono: true },
-    { key: 'prompt', label: '文本提示（多类用 ' . ' 分隔）', kind: 'text', default: "person" },
+    { key: 'prompt', label: "文本提示（多类用 ' . ' 分隔）", kind: 'text', default: "person" },
     { key: 'box_threshold', label: '框门限', kind: 'slider', default: 0.35, min: 0.05, max: 0.9, step: 0.05 },
     { key: 'text_threshold', label: '文本门限', kind: 'slider', default: 0.25, min: 0.05, max: 0.9, step: 0.05 },
     { key: 'max_boxes', label: '最多框数', kind: 'slider', default: 10, min: 1, max: 20, step: 1 },

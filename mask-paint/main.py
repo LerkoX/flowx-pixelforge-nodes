@@ -1,10 +1,16 @@
 """mask-paint：画布手绘蒙版（对标 ComfyUI MaskEditor）。
 
-笔画以矢量存于 strokes_json 参数（widget 蒙版编辑器写入）：
-  {"strokes":[{"type":"brush","size":40,"points":[[x,y],...]},
-              {"type":"rect","x":..,"y":..,"w":..,"h":..},
-              {"type":"erase","size":40,"points":[...]}],
-   "image_size":[w,h]}        # 绘制时的参照分辨率
+笔画以矢量存储，两种形式（widget 的 paint 控件默认写外置）：
+
+  strokes_ref  本地 JSON 文件路径（推荐）：widget 经 Studio 的
+               POST /api/v1/media/upload 落盘后把短路径写进参数，形如
+               ~/flowx-input/uploads/strokes/20261012T063111Z_strokes.json。
+               好处：workflow YAML / 执行快照 / SSE 里只有短路径，不被笔画文本撞大。
+  strokes_json 内联 JSON（旧写法，保留兼容）：
+               {"strokes":[{"type":"brush","size":40,"points":[[x,y],...]},
+                           {"type":"rect","x":..,"y":..,"w":..,"h":..},
+                           {"type":"erase","size":40,"points":[...]}],
+                "image_size":[w,h]}      # 绘制时的参照分辨率
 
 执行时按原图实际分辨率缩放光栅化为灰度蒙版（255=重绘/0=保留），
 mask 约定与 mask-from-image 一致 = 内容为灰度的 IMAGE 对象。
@@ -20,11 +26,30 @@ _MAX_BYTES = 32 * 1024 * 1024  # 与服务端 MAX_UPLOAD_MB 默认值对齐
 
 
 def parse_strokes(raw):
-    """解析 strokes_json；空串/坏 JSON → 空笔画。返回 (strokes, ref_w, ref_h)。"""
+    """解析笔画定义；空串/坏 JSON/文件读不到 → 空笔画。返回 (strokes, ref_w, ref_h)。
+
+    raw 首字符为 '{' 时按内联 JSON 解（旧写法），否则当作本地文件路径读取
+    （strokes_ref 外置写法；支持 ~ 展开）。文件读不到只告警不抛错——
+    宁可出一张空蒙版让用户看到，也不要让整条流水线断在参数上。
+    """
     if not raw:
         return [], *DEFAULT_REF
+    txt = str(raw).strip()
+    if not txt:
+        return [], *DEFAULT_REF
+    if txt[0] != "{":
+        path = os.path.expanduser(txt)
+        try:
+            if os.path.getsize(path) > _MAX_BYTES:
+                print(f"[mask-paint] strokes file too large, ignored: {path}", flush=True)
+                return [], *DEFAULT_REF
+            with open(path, "r", encoding="utf-8") as f:
+                txt = f.read()
+        except OSError as e:
+            print(f"[mask-paint] strokes file unreadable: {path} ({e})", flush=True)
+            return [], *DEFAULT_REF
     try:
-        data = json.loads(raw)
+        data = json.loads(txt)
     except (ValueError, TypeError):
         return [], *DEFAULT_REF
     strokes = data.get("strokes") or []
@@ -34,6 +59,14 @@ def parse_strokes(raw):
     except (TypeError, ValueError, IndexError):
         rw, rh = DEFAULT_REF
     return [s for s in strokes if isinstance(s, dict)], rw, rh
+
+
+def resolve_strokes(ref, inline):
+    """笔画取数：strokes_ref（外置文件）优先，为空时回退 strokes_json（内联）。"""
+    ref = str(ref or "").strip()
+    if ref:
+        return parse_strokes(ref)
+    return parse_strokes(inline)
 
 
 def rasterize(strokes, width, height, ref_w=None, ref_h=None):
@@ -104,7 +137,7 @@ def upload_local(url, path, tok):
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
-    strokes, rw, rh = parse_strokes(param("strokes_json", ""))
+    strokes, rw, rh = resolve_strokes(param("strokes_ref", ""), param("strokes_json", ""))
 
     # 底图取法：image（上游对象 ID）优先；缺省时读 image_path 本地图自行上传
     image_id = param("image", "").strip()

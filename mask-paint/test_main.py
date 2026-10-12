@@ -36,6 +36,29 @@ check("正常解析 + 参照尺寸", len(s) == 1 and (w, h) == (256, 128))
 s, w, h = m.parse_strokes('{"strokes":[{"type":"rect"},42,null],"image_size":"x"}')
 check("非字典笔画被滤除 + 坏 image_size 兜底", len(s) == 1 and (w, h) == (512, 512))
 
+# ---- parse_strokes：外置文件（strokes_ref）----
+import json as _json
+import tempfile as _tempfile
+
+with _tempfile.TemporaryDirectory() as td:
+    fp = pathlib.Path(td) / "strokes.json"
+    fp.write_text(_json.dumps({"strokes": [{"type": "brush", "size": 40,
+                                             "points": [[1, 2], [3, 4]]}],
+                               "image_size": [768, 1280]}), encoding="utf-8")
+    s, w, h = m.parse_strokes(str(fp))
+    check("文件路径 → 解析笔画与参照尺寸", len(s) == 1 and (w, h) == (768, 1280))
+    s, w, h = m.parse_strokes("~/definitely/not/here.json")
+    check("文件不存在 → 空笔画兜底（不抛错）", s == [] and (w, h) == (512, 512))
+    bad = pathlib.Path(td) / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    s, w, h = m.parse_strokes(str(bad))
+    check("文件内容坏 JSON → 空笔画兜底", s == [] and (w, h) == (512, 512))
+    # resolve_strokes：ref 非空优先于内联
+    s, w, h = m.resolve_strokes(str(fp), '{"strokes":[],"image_size":[10,10]}')
+    check("ref 优先于内联", len(s) == 1 and (w, h) == (768, 1280))
+    s, w, h = m.resolve_strokes("", '{"strokes":[],"image_size":[10,10]}')
+    check("ref 为空 → 回退内联", s == [] and (w, h) == (10, 10))
+
 # ---- rasterize：矩形 ----
 mask = m.rasterize([{"type": "rect", "x": 10, "y": 10, "w": 20, "h": 30}], 100, 100)
 check("rect 全白区域", mask.crop((10, 10, 30, 40)).getextrema() == (255, 255))

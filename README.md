@@ -121,6 +121,17 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 - 明细见 dev-plan §52.1/§52.3/§52.4。
 
 
+
+### B5/52.5：运维工具
+
+- `_tools/purge-plugin-versions.py`（既有）：清理 `plugins.d` 里被取代的族版本文件（dry-run 默认）。
+  本轮实测：插件文件 47→44、算子 113→104（删 seg 两个旧版 + tiled 一个旧版；当前版本完好）。
+  未版本化的历史插件**不动**（老 bundle 还在用）。
+- `_tools/index-e2e-out.py`（新增，**只读不搬文件**）：给 `~/flowx-e2e-out/` 建 `INDEX.md` ——
+  按前缀报份数/最新一份/sha256/「不同 sha 个数」（= 同参数多次运行是否逐字节稳定的直接观测）。
+  实测 143 组 / 269 文件 / 58.5MB。⚠️ 复核脚本按"最新一份"取产物 ⇒ 该目录**不能搬移归档**。
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |

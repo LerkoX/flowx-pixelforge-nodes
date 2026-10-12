@@ -1,8 +1,8 @@
 {
   "name": "flux-unet-load",
   "displayName": "FLUX UNET 加载",
-  "description": "FLUX 扩散模型（transformer）加载（对标 ComfyUI UNETLoader）：GGUF Q4_K_S 单独装载（fp16 compute），输出 MODEL 组件引用供采样/局部重绘节点消费。自包含节点：server_op.py 运行时自注册（需服务端配置 INFERENCE_TOKEN）",
-  "version": "1.1.0",
+  "description": "FLUX 扩散模型（transformer）加载（对标 ComfyUI UNETLoader）：GGUF Q4_K_S 单独装载（fp16 compute），输出 MODEL 组件引用供采样/局部重绘节点消费。1.2.0 起走异步 /jobs+轮询（冷加载数分钟，同步 /op 会被隧道空闲超时掐断）。自包含节点：server_op.py 运行时自注册（需服务端配置 INFERENCE_TOKEN）",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -49,13 +49,29 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "加载任务超时（秒），冷加载需读盘数分钟，且与同层其它加载在服务端 FIFO 排队；1.2.0 起走异步 /jobs 通道（轮询不占长连接），超时后节点会 interrupt 任务",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
     }
   ],
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
     "TRANSFORMER": "{{ Param.transformer }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
-    "DTYPE": "{{ Param.dtype }}"
+    "DTYPE": "{{ Param.dtype }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}"
   },
   "outputs": [
     {
@@ -78,7 +94,7 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "timeout": 1800,
+  "timeout": 2100,
   "executor": {
     "supportedTypes": [
       "local",

@@ -1,8 +1,8 @@
 {
   "name": "flux-vae-load",
   "displayName": "FLUX VAE 加载",
-  "description": "FLUX VAE 加载（对标 ComfyUI Load VAE）：装载 FLUX 专用 AutoencoderKL（FLUX_DIR/vae，fp16），输出 VAE 组件引用供 VAE 编解码/局部重绘节点消费。自包含节点：server_op.py 运行时自注册",
-  "version": "1.1.0",
+  "description": "FLUX VAE 加载（对标 ComfyUI Load VAE）：装载 FLUX 专用 AutoencoderKL（FLUX_DIR/vae，fp16），输出 VAE 组件引用供 VAE 编解码/局部重绘节点消费。1.2.0 起走异步 /jobs+轮询（常与 UNET 冷加载同层并发、在服务端排队）。自包含节点：server_op.py 运行时自注册",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -49,13 +49,29 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "加载任务超时（秒）：VAE 装载本身秒级，但同层并发时本任务可能在服务端排在冷加载 UNET 之后，需给队首留足时间；1.2.0 起走异步 /jobs 通道",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
     }
   ],
   "env": {
     "SERVICE_URL": "{{ Param.service_url }}",
     "NAME": "{{ Param.name }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
-    "DTYPE": "{{ Param.dtype }}"
+    "DTYPE": "{{ Param.dtype }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}"
   },
   "outputs": [
     {
@@ -78,7 +94,7 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "timeout": 600,
+  "timeout": 2100,
   "executor": {
     "supportedTypes": [
       "local",

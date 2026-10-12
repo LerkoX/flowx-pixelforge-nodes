@@ -6,6 +6,8 @@ const WIDGET_SPEC = {
     { key: 'name', label: 'VAE 目录名', kind: 'text', mono: true, default: 'vae' },
     { key: 'dtype', label: 'VAE 精度（dtype）', kind: 'select', options: ['auto', 'fp16', 'bf16', 'fp32'], default: 'auto' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'job_timeout', label: 'job_timeout（秒，异步任务超时）', kind: 'text', default: 1800, advanced: true },
+    { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5, advanced: true },
   ],
-  note: 'FLUX 专用 AutoencoderKL（fp16，~0.3GB）',
+  note: 'FLUX 专用 AutoencoderKL（fp16，~0.3GB）；异步 /jobs 轮询（同层并发时在服务端排队）',
 }

@@ -51,11 +51,19 @@
  *                    （同上媒体端点 + lightbox）
  *   mediaVideoOutput （可选）输出键名（如 'file_path'）：内嵌 <video> 播放
  *                    落盘视频 + ⛶ 放大 lightbox（含全屏按钮）
- *   paint         （可选）蒙版手绘：{ strokesKey, imageInput, imagePathKey? }。
+ *   paint         （可选）蒙版手绘：{ strokesKey, imageInput, imagePathKey?, strokesRefKey?,
+ *                   strokesSubdir? }。
  *                   节点上显示底图+红罩缩略，点「✏️ 编辑蒙版」弹全屏编辑器
  *                   （笔刷/矩形/橡皮/撤销/清除，捏合缩放平移）。笔画以矢量存
  *                   strokesKey 参数（{strokes:[...], image_size:[w,h]}，分辨率
- *                   无关，可再编辑）。底图三条链：① 回放/执行态 __inputs_resolved
+ *                   无关，可再编辑）。保存时自动抽稀（RDP + 取整，实测 5.5x 减体积）。
+ *                   **外置存储（推荐）**：给了 strokesRefKey 就改存本地 JSON 文件——
+ *                   保存时 POST /api/v1/media/upload?subdir=<strokesSubdir>（默认
+ *                   strokes）拿回路径写进 strokesRefKey，并清空内联 strokesKey；
+ *                   读取走 GET /api/v1/media/file（异步，读不回来则禁止编辑，
+ *                   避免用空笔画覆盖原内容）。适合笔画体量大、不想把编辑态文本
+ *                   写进 workflow YAML / 执行快照 / SSE 的节点。
+ *                   底图三条链：① 回放/执行态 __inputs_resolved
  *                   经节点级代理拉取（同 compareInput 链路）；② 编辑态从参数解析
  *                   出对象 id 走通用代理；③ imagePathKey 指定的本地路径参数直读
  *                   （Studio 媒体端点，未经执行也能衬图绘制）。三条链都无底图时
@@ -90,6 +98,82 @@ function h(tag, style, text) {
 }
 
 const isWired = (v) => typeof v === 'string' && v.indexOf('{{') >= 0
+
+// ---- 笔画抽稀（mask-paint 等 paint 控件的存储瘦身）----
+// 手绘时 pointermove 每帧都会 push 一个点（一笔可达数千点，实测 6 笔 7476 点 =
+// 104KB 文本），而笔画在局部近似直线，绝大多数点是冗余的。保存前用
+// Ramer–Douglas–Peucker 抽稀 + 坐标取整，实测降到 18.8KB（5.5x）且肉眼无差。
+// ε 按笔刷直径自适应（小笔刷用更小容差，避免粗笔看得出的折线偏差）。
+const STROKE_EPS_MIN = 0.75
+const STROKE_EPS_MAX = 1.5
+function strokeEps(st) {
+  const size = Number(st && st.size) || 40
+  return Math.min(STROKE_EPS_MAX, Math.max(STROKE_EPS_MIN, size / 24))
+}
+
+// simplifyPoints：RDP 折线抽稀（保留首尾；容差 eps 为图像像素）
+function simplifyPoints(pts, eps) {
+  // 先去掉完全重复的相邻点（pointermove 会因抖动产生）
+  const src = []
+  for (const p of pts || []) {
+    const x = Number(p[0]), y = Number(p[1])
+    if (!isFinite(x) || !isFinite(y)) continue
+    const last = src[src.length - 1]
+    if (last && last[0] === x && last[1] === y) continue
+    src.push([x, y])
+  }
+  if (src.length <= 2) return src.map((p) => [Math.round(p[0]), Math.round(p[1])])
+  const keep = new Array(src.length).fill(false)
+  keep[0] = keep[src.length - 1] = true
+  const stack = [[0, src.length - 1]]
+  while (stack.length) {
+    const [i, j] = stack.pop()
+    if (j <= i + 1) continue
+    const [x1, y1] = src[i]
+    const [x2, y2] = src[j]
+    const dx = x2 - x1, dy = y2 - y1
+    const len = Math.hypot(dx, dy) || 1e-9
+    let best = -1, bestIdx = -1
+    for (let k = i + 1; k < j; k++) {
+      const [x0, y0] = src[k]
+      const dist = Math.abs(dy * x0 - dx * y0 + x2 * y1 - y2 * x1) / len
+      if (dist > best) { best = dist; bestIdx = k }
+    }
+    if (best > eps) {
+      keep[bestIdx] = true
+      stack.push([i, bestIdx], [bestIdx, j])
+    }
+  }
+  const out = []
+  for (let i = 0; i < src.length; i++) {
+    if (keep[i]) out.push([Math.round(src[i][0]), Math.round(src[i][1])])
+  }
+  return out
+}
+
+// simplifyStrokes：对 {type,size,points} 笔画数组抽稀；rect 与未知类型原样保留。
+function simplifyStrokes(strokes) {
+  const out = []
+  for (const st of strokes || []) {
+    if (!st || typeof st !== 'object') continue
+    if (st.type === 'rect') {
+      out.push({
+        ...st,
+        x: Math.round(Number(st.x) || 0), y: Math.round(Number(st.y) || 0),
+        w: Math.round(Number(st.w) || 0), h: Math.round(Number(st.h) || 0),
+      })
+      continue
+    }
+    if (st.type === 'brush' || st.type === 'erase') {
+      const pts = simplifyPoints(st.points, strokeEps(st))
+      if (!pts.length) continue
+      out.push({ ...st, points: pts })
+      continue
+    }
+    out.push(st)
+  }
+  return out
+}
 
 // Studio 本地媒体文件端点（同源，浏览器自动携带认证）；读取 FlowX 所在机器
 // 的本地文件（目录白名单由 Studio 配置），用于 load-image 源图预览与
@@ -284,6 +368,15 @@ function createNodeWidget(spec) {
     const setParam = (key, value) => {
       if (!editable()) return
       const params = { ...(cur.params || {}), [key]: String(value) }
+      cur = { ...cur, params }
+      cur.onParamsChange(params)
+    }
+    // setParams：一次写回多个参数（全量替换后统一提交，避免分次写回产生中间态，
+    // 如 mask-paint 保存笔画时要同时写 strokes_ref 并清空旧的内联 strokes_json）
+    const setParams = (patch) => {
+      if (!editable()) return
+      const params = { ...(cur.params || {}) }
+      for (const k of Object.keys(patch)) params[k] = String(patch[k])
       cur = { ...cur, params }
       cur.onParamsChange(params)
     }
@@ -967,17 +1060,28 @@ function createNodeWidget(spec) {
     }
 
     // ---- 蒙版手绘区（spec.paint）：节点缩略预览 + ✏️弹窗编辑器 ----
-    // 笔画矢量存 strokesKey 参数；底图走 compareInput 同款链路（上次执行
-    // __inputs_resolved + 节点级代理 GET /images/{id}）；未执行过给 512x512
-    // 空白参照系，执行器按原图分辨率缩放光栅化。
+    // 笔画矢量有两个存放位：
+    //   P.strokesRefKey —— 外置文件路径（推荐）：保存时经 POST /api/v1/media/upload
+    //     落盘成 JSON（data 类，路径形如 ~/flowx-input/uploads/strokes/xxx.json），
+    //     参数里只留短路径 ⇒ workflow YAML / 执行快照 / SSE 不会被笔画文本撞大。
+    //     读取走 GET /api/v1/media/file（异步）。
+    //   P.strokesKey —— 内联 JSON（旧写法，保留兼容）；外置键非空时以外置为准，
+    //     保存外置后旧内联值会被清空。
+    // 底图走 compareInput 同款链路（上次执行 __inputs_resolved + 节点级代理
+    // GET /images/{id}）；未执行过给 512x512 空白参照系，执行器按原图分辨率缩放光栅化。
     let closePaintEditor = null
     const paintWrap = h('div', 'display:none;margin-bottom:6px')
     if (spec.paint) {
       const P = spec.paint
+      const REF_KEY = P.strokesRefKey || ''
+      const SUBDIR = P.strokesSubdir || 'strokes'
       let strokes = []
       let refW = 512, refH = 512
       let baseImg = null, baseFor = ''
       let thumbKey = ''
+      let strokesSrc = null    // 已加载（或已尝试加载）的原始参数值
+      let strokesErr = ''      // 读取失败信息：失败时禁止编辑，避免用空笔画覆盖原内容
+      let strokesLoading = false
       const thumb = h('canvas', 'width:100%;border-radius:8px;display:block;background:#0b1220')
       const bar = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
       const editBtn = h('button', BTN_CSS + ';color:#f472b6;border-color:rgba(244,114,182,0.4)', '✏️ 编辑蒙版')
@@ -987,15 +1091,77 @@ function createNodeWidget(spec) {
       paintWrap.append(thumb, bar)
       paintWrap.style.display = 'block'
 
-      const parseStrokes = () => {
-        const raw = (cur.params || {})[P.strokesKey]
-        if (!raw || isWired(raw)) { strokes = []; return }
-        try {
-          const d = JSON.parse(raw)
-          strokes = Array.isArray(d.strokes) ? d.strokes : []
-          const sz = d.image_size
-          if (Array.isArray(sz) && Number(sz[0]) > 0 && Number(sz[1]) > 0) { refW = Number(sz[0]); refH = Number(sz[1]) }
-        } catch (_) { strokes = [] }
+      // 有效笔画来源：外置引用非空时优先，否则回退内联（兼容旧 workflow）
+      const strokesValue = () => {
+        const ref = REF_KEY ? String((cur.params || {})[REF_KEY] || '') : ''
+        if (ref !== '') return ref
+        return String((cur.params || {})[P.strokesKey] || '')
+      }
+
+      // 解析笔画文本（内联 JSON 或外置文件内容）；解析失败不改动现有 strokes
+      const applyStrokesJSON = (txt) => {
+        const d = JSON.parse(txt)
+        strokes = Array.isArray(d.strokes) ? d.strokes : []
+        const sz = d.image_size
+        if (Array.isArray(sz) && Number(sz[0]) > 0 && Number(sz[1]) > 0) {
+          refW = Number(sz[0]); refH = Number(sz[1])
+        }
+        return strokes
+      }
+
+      const syncStrokes = () => {
+        const raw = strokesValue()
+        if (raw === strokesSrc) return
+        strokesSrc = raw
+        strokesErr = ''
+        strokesLoading = false
+        strokes = []
+        if (!raw) return
+        if (isWired(raw)) return              // 绑定上游：只读，不解析
+        const txt = raw.trim()
+        if (txt.charAt(0) === '{') {          // 内联 JSON（旧写法）
+          try { applyStrokesJSON(txt) } catch (_) { strokesErr = '内联 JSON 解析失败'; strokes = [] }
+          return
+        }
+        // 外置文件：异步读回（studio 同源媒体端点，目录白名单由 Studio 配置）
+        strokesLoading = true
+        const want = raw
+        fetch(mediaUrl(want), { credentials: 'same-origin' })
+          .then((r) => {
+            if (!r.ok) throw new Error('HTTP ' + r.status)
+            return r.text()
+          })
+          .then((t) => {
+            if (strokesSrc !== want) return    // 期间参数又变了，丢弃过期响应
+            try { applyStrokesJSON(t) } catch (e) { strokes = []; strokesErr = '笔画文件解析失败' }
+            strokesLoading = false
+            thumbKey = ''; renderThumb(); updateHint()
+          })
+          .catch((e) => {
+            if (strokesSrc !== want) return
+            strokesLoading = false
+            strokes = []
+            strokesErr = '读取失败（' + String((e && e.message) || e) + '）'
+            thumbKey = ''; renderThumb(); updateHint()
+          })
+      }
+
+      // 保存：抽稀后落盘成外置 JSON（REF_KEY 存在）或写回内联参数
+      const saveStrokes = (payload, done) => {
+        if (!REF_KEY) { setParam(P.strokesKey, payload); done(null, ''); return }
+        const fd = new FormData()
+        fd.append('file', new Blob([payload], { type: 'application/json' }), 'strokes.json')
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', '/api/v1/media/upload?subdir=' + encodeURIComponent(SUBDIR))
+        xhr.onload = () => {
+          let body = null
+          try { body = JSON.parse(xhr.responseText) } catch (_) { body = null }
+          const path = body && body.data && body.data.path
+          if (xhr.status >= 200 && xhr.status < 300 && path) done(null, path)
+          else done((body && body.message) || ('HTTP ' + xhr.status), '')
+        }
+        xhr.onerror = () => done('网络错误', '')
+        xhr.send(fd)
       }
 
       // 画一笔到 ctx（k = 画布像素 / 图像像素）；erase 用 destination-out 挖洞，
@@ -1025,6 +1191,17 @@ function createNodeWidget(spec) {
       }
 
       const updateHint = () => {
+        // 编辑按钮的可用性跟提示同步刷新：异步读回完成/失败不会触发宿主 update()，
+        // 若只在 refreshers 里刷新，按钮会停在「笔画读取中」的禁用态直到下次 props 变化。
+        const canEdit = editable() && !strokesLoading && !strokesErr
+        editBtn.disabled = !canEdit
+        editBtn.style.opacity = canEdit ? '1' : '0.5'
+        editBtn.title = !editable() ? '回放态只读，无法写回参数'
+          : strokesLoading ? '笔画读取中…'
+            : strokesErr ? '笔画读取失败，已禁止编辑（避免覆盖原内容）：' + strokesErr
+              : '打开蒙版编辑器：笔刷/矩形涂抹重绘区域（白=重绘、黑=保留），橡皮修正'
+        if (strokesLoading) { paintHint.textContent = '⏳ 读取笔画…'; return }
+        if (strokesErr) { paintHint.textContent = '❌ ' + strokesErr; return }
         paintHint.textContent = strokes.length
           ? `${strokes.length} 笔 · ${refW}×${refH}${baseImg ? '' : '（空白参照）'}`
           : (baseImg
@@ -1054,6 +1231,7 @@ function createNodeWidget(spec) {
       // ---- 全屏编辑器 ----
       const openEditor = () => {
         if (closePaintEditor) return
+        if (strokesLoading || strokesErr) return   // 笔画没读回来就不进编辑器（免得空笔画覆盖）
         // 工作坐标系 = 当前底图分辨率（无底图沿用存储参照）；与存储参照不同时
         // 先把已有笔画换算过来，保存时以当前坐标系为准
         const W0 = baseImg ? baseImg.naturalWidth : refW
@@ -1108,12 +1286,13 @@ function createNodeWidget(spec) {
         clearBtn.title = '清空全部笔画'
         clearBtn.addEventListener('click', () => { wk.length = 0; redraw() })
         const spacer = h('span', 'flex:1')
+        const saveMsg = h('span', 'font-size:10px;color:#fb7185;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap')
         const cancelBtn = h('button', TB_BTN, '取消')
         cancelBtn.addEventListener('click', () => close(false))
         const doneBtn = h('button', TB_BTN + ';color:#34d399;border-color:rgba(52,211,153,0.5)', '✔ 完成')
         doneBtn.title = '保存笔画并关闭（Esc = 取消）'
         doneBtn.addEventListener('click', () => close(true))
-        tb.append(sizeLab, sizeRng, undoBtn, clearBtn, spacer, cancelBtn, doneBtn)
+        tb.append(sizeLab, sizeRng, undoBtn, clearBtn, spacer, saveMsg, cancelBtn, doneBtn)
 
         // 画布区：底图 canvas + 笔画 canvas 双层绝对定位，view 变换同步两层
         const area = h('div', 'position:relative;flex:1;overflow:hidden;touch-action:none')
@@ -1262,17 +1441,38 @@ function createNodeWidget(spec) {
         let closed = false
         const close = (save) => {
           if (closed) return
-          closed = true
-          document.removeEventListener('keydown', onKey)
-          overlay.remove()
-          closePaintEditor = null
-          if (save) {
-            setParam(P.strokesKey, JSON.stringify({ strokes: wk, image_size: [W0, H0] }))
-            parseStrokes()
+          if (!save) {
+            closed = true
+            document.removeEventListener('keydown', onKey)
+            overlay.remove()
+            closePaintEditor = null
+            return
+          }
+          // 保存：先抽稀（实测 5.5x 减体积），再落盘/写回
+          const payload = JSON.stringify({ strokes: simplifyStrokes(wk), image_size: [W0, H0] })
+          doneBtn.disabled = true
+          doneBtn.textContent = '⏳ 保存…'
+          saveMsg.textContent = ''
+          saveStrokes(payload, (err, path) => {
+            if (err) {
+              // 失败不关弹窗、不写参数：宁可让用户重试，也不能丢掉已画内容
+              doneBtn.disabled = false
+              doneBtn.textContent = '✔ 完成'
+              saveMsg.textContent = '❌ 保存失败：' + err
+              return
+            }
+            closed = true
+            document.removeEventListener('keydown', onKey)
+            overlay.remove()
+            closePaintEditor = null
+            if (REF_KEY) setParams({ [P.strokesKey]: '', [REF_KEY]: path })
+            // 重新从参数解析（外置：按新路径重读，保证缩略图 = 磁盘内容）
+            strokesSrc = null
+            syncStrokes()
             thumbKey = ''
             renderThumb()
-            paintHint.textContent = `${wk.length} 笔 · ${W0}×${H0}${baseImg ? '' : '（空白参照）'}`
-          }
+            updateHint()
+          })
         }
         closePaintEditor = () => close(false)
 
@@ -1284,7 +1484,7 @@ function createNodeWidget(spec) {
       thumb.addEventListener('click', () => { if (editable()) openEditor() })
 
       refreshers.push(() => {
-        parseStrokes()
+        syncStrokes()
         // 底图三条链：① 回放/执行态：resolved inputs + 节点级代理（同 compareInput）；
         // ② 编辑态：paramSources 运行时值解析出对象 id + 通用代理 blob 拉取
         // （同模型下拉链路），执行过一次上游即可衬图绘制；
@@ -1337,10 +1537,9 @@ function createNodeWidget(spec) {
             baseFor = ''; baseImg = null
           }
         }
-        const key = ((cur.params || {})[P.strokesKey] || '') + '|' + baseFor + '|' + (baseImg ? 1 : 0)
+        const key = strokesSrc + '|' + (strokesLoading ? 'L' : '') + '|' + strokesErr + '|'
+          + strokes.length + '|' + baseFor + '|' + (baseImg ? 1 : 0)
         if (key !== thumbKey) { thumbKey = key; renderThumb() }
-        editBtn.disabled = !editable()
-        editBtn.style.opacity = editable() ? '1' : '0.5'
         updateHint()
       })
     }
@@ -1827,6 +2026,11 @@ function createNodeWidget(spec) {
   }
 }
 
+// 测试出口（_tools/test-widget-ui.mjs 直接验抽稀效果；发布产物为单文件 bundle，
+// 多挂一个静态属性不影响运行时行为）
+createNodeWidget.simplifyStrokes = simplifyStrokes
+createNodeWidget.simplifyPoints = simplifyPoints
+
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
   icon: '🌈',
@@ -1836,8 +2040,10 @@ const WIDGET_SPEC = {
     { key: 'name', label: 'VAE 目录名', kind: 'text', mono: true, default: 'vae' },
     { key: 'dtype', label: 'VAE 精度（dtype）', kind: 'select', options: ['auto', 'fp16', 'bf16', 'fp32'], default: 'auto' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'job_timeout', label: 'job_timeout（秒，异步任务超时）', kind: 'text', default: 1800, advanced: true },
+    { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5, advanced: true },
   ],
-  note: 'FLUX 专用 AutoencoderKL（fp16，~0.3GB）',
+  note: 'FLUX 专用 AutoencoderKL（fp16，~0.3GB）；异步 /jobs 轮询（同层并发时在服务端排队）',
 }
 
 export default createNodeWidget(WIDGET_SPEC)

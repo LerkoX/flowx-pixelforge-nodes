@@ -86,6 +86,8 @@ OP_FAMILIES = {
     "tiled.py": ["tiled-upscale-plan", "tiled-upscale-apply"],
     # G8 上色族（B4，dev-plan §50）：DDColor（装载预热 + 上色推理）
     "colorize.py": ["colorize-load", "colorize"],
+    # G9 重打光族（B4，dev-plan §50）：IC-Light（装载预热 + 重打光推理）
+    "iclight.py": ["iclight-load", "iclight"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
 }
 

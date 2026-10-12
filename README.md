@@ -66,6 +66,24 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 - 明细见 dev-plan §50.9
 
 
+
+### B4/S3（dev-plan §50.10–§50.11）：IC-Light 重打光
+
+- **权重**（宿主 `/models`）：`iclight/iclight_sd15_fc.safetensors`（1639MB，默认）与
+  `iclight/iclight_sd15_fbc.safetensors`（1639MB），来自 HF `lllyasviel/ic-light`（`gated=False`）；
+  基座复用宿主既存的 **diffusers 目录格式 SD1.5** `/models/v1-5-pruned-emaonly-fp16`（零下载）。
+- **算子族** `_common/server_ops/iclight.py`：`iclight.load`（变体→`iclight:<fc|fbc>`，进 LRU）
+  + `iclight.relight`（重打光，两阶段）。关键机制（官方逐行等价）：UNet `conv_in` 扩到 8/12 通道、
+  权重按 **delta（origin+offset）** `strict=True` 加载、猴子补丁 `unet.forward` 注入 `concat_conds`。
+- **节点**：`iclight-load`（id 227）/ `iclight`（id 228）；`light_dir=none|left|right|top|bottom`，
+  给了 `mask` 就按官方公式合成 127 灰底；`fbc` 可给 `bg` 图作为背景条件。
+- **流水线**：`iclight-e2e-local`（wf 150）/ `iclight-e2e`（wf 151，docker 路径）。
+- **复核**：`_tools/verify_iclight.py`（A1 尺寸 / A2 逐字节确定性 / A3 光方向物理判据 /
+  A4 相对输入位移 / A5 再抠图 IoU / A6 highres 生效 / A7 执行器无关）——**17/17**。
+- ⚠️ 常驻 4.07GB，与 flux（pinned 6.47GB）在 8GB 卡上互斥；fc/fbc 不要同时装载。
+- ⚠️ 复现纪律：本族**显式传 `torch.Generator`** ⇒ 同种子逐字节可复现（含跨执行器）。
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |

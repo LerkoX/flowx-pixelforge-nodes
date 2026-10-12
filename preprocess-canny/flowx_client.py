@@ -1,5 +1,6 @@
 """FlowX 节点共享 HTTP 客户端（纯标准库，零依赖）。
 每个节点包通过 flowx.json 的 files 字段携带本文件。"""
+import http.client
 import json
 import os
 import time
@@ -137,15 +138,24 @@ def _retriable(err):
 def _with_retry(fn, retries=None):
     """对瞬态错误重试（线性退避，对齐 call_op）。仅用于幂等调用（GET、
     内容寻址的幂等上传）；非幂等调用（如 POST /jobs 提交任务，重试会
-    产生重复任务）不得走这里。"""
+    产生重复任务）不得走这里。
+
+    B4/S3 修正：隧道下只读回一半 body 会抛 `http.client.IncompleteRead`
+    （`HTTPException` 子类），而旧实现只捕 `RuntimeError` ⇒ 直接失败
+    （真机在 `GET /ops` 上踩过两次）。改为捕获 `(RuntimeError, OSError,
+    http.client.HTTPException)`；`URLError`/`ConnectionError` 都是 OSError 子类。
+    """
     n = max(1, int(retries if retries is not None else HTTP_RETRIES))
+    last = None
     for attempt in range(1, n + 1):
         try:
             return fn()
-        except RuntimeError as e:
+        except (RuntimeError, OSError, http.client.HTTPException) as e:
+            last = e
             if not _retriable(e) or attempt >= n:
                 raise
             time.sleep(min(5 * attempt, 15))
+    raise last
 
 
 

@@ -1,0 +1,127 @@
+{
+  "name": "iclight-load",
+  "displayName": "IC-Light 重打光装载",
+  "description": "装载 IC-Light 重打光模型（G9）→ 模型键（STRING，形如 iclight:fc），供 iclight 复用。实现 = SD1.5 diffusers 基座（默认 /models/v1-5-pruned-emaonly-fp16）+ IC-Light delta 权重（UNet conv_in 扩到 8/12 通道后 origin+offset 严格加载）。权重在 ICLIGHT_MODELS_DIR（默认 /models/iclight/iclight_sd15_<variant>.safetensors）。装载即注册进服务端 model_manager LRU，可用既有 model-unload 节点卸载。dtype=auto 在算力<7.0 取 fp32（Pascal fp16 吞吐仅 1/64）。服务端插件 iclight.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "iclight",
+    "relight"
+  ],
+  "icon": "📦",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "variant",
+      "type": "string",
+      "description": "IC-Light 变体：fc（1.64GB，默认，前景条件版，光方向由 light_dir+prompt 决定）/ fbc（1.64GB，前景+背景条件版，给 bg 图则主体按该背景打光）",
+      "default": "fc"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "推理精度：auto（默认，算力<7.0 取 fp32）/ fp32 / fp16",
+      "default": "auto"
+    },
+    {
+      "name": "weights",
+      "type": "string",
+      "description": "权重文件路径覆盖（留空用 <ICLIGHT_MODELS_DIR>/iclight_sd15_<variant>.safetensors）",
+      "default": ""
+    },
+    {
+      "name": "reload",
+      "type": "string",
+      "description": "true=强制卸载重装（换权重文件或改精度后用）",
+      "default": "false"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "VARIANT": "{{ Param.variant }}",
+    "DTYPE": "{{ Param.dtype }}",
+    "WEIGHTS": "{{ Param.weights }}",
+    "RELOAD": "{{ Param.reload }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "模型键（如 iclight:fc），喂 iclight 的 model 参数"
+    },
+    {
+      "name": "params_mb",
+      "type": "integer",
+      "description": "权重合计显存占用（MB，含 SD1.5 基座三件套）"
+    },
+    {
+      "name": "vram_mb",
+      "type": "integer",
+      "description": "同上（MB）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "装载诊断 JSON（变体/精度/conv_in 通道/权重键数/是否命中常驻）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.16.0"
+}

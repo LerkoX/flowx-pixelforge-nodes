@@ -119,6 +119,8 @@ COPY tiled-upscale-plan/*.py                /opt/flowx-nodes/tiled-upscale-plan/
 COPY tiled-upscale-apply/*.py               /opt/flowx-nodes/tiled-upscale-apply/
 COPY colorize-load/*.py                   /opt/flowx-nodes/colorize-load/
 COPY colorize/*.py                        /opt/flowx-nodes/colorize/
+COPY iclight-load/*.py                    /opt/flowx-nodes/iclight-load/
+COPY iclight/*.py                         /opt/flowx-nodes/iclight/
 COPY image-watermark/*.py                 /opt/flowx-nodes/image-watermark/
 
 COPY image-pad/*.py                       /opt/flowx-nodes/image-pad/

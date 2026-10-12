@@ -1,0 +1,255 @@
+{
+  "name": "iclight",
+  "displayName": "IC-Light 重打光",
+  "description": "IC-Light 重打光（G9）：给主体换光/换光位（顺光/侧光/顶光/底光）或按目标背景图打光。image 给原图、mask 给抠图蒙版 ⇒ 节点内按官方公式合成 127 灰底（等价官方 run_rmbg）；不给 mask 则直接把 image 当已抠好的前景。fc 变体用 light_dir 造 i2i 初始梯度图；fbc 变体把 bg 图作为背景条件（未给 bg 时 light_dir 造 32~224 梯度、none 用 64 灰）。两阶段：低清去噪 + 可选高清（highres_scale）。light_balance 是输出主体左/右平均亮度差（落盘复核判据）；同种子**逐字节可复现**。服务端插件 iclight.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "iclight",
+    "relight"
+  ],
+  "icon": "💡",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如 http隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "IC-Light 模型键（iclight-load 的输出，如 iclight:fc）",
+      "required": true,
+      "source": {
+        "nodeRef": "iclight-load",
+        "output": "model",
+        "description": "由 iclight-load 的 model 输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "输入图像对象 ID（原图或已抠好的前景图）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / 上游节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "可选抠图蒙版对象 ID（灰度；给了就按 127 灰底合成，需与 image 同尺寸）",
+      "default": "",
+      "source": {
+        "nodeRef": "matting-birefnet",
+        "output": "mask",
+        "description": "由 matting-birefnet 的 mask 输出提供（给了就自动合成 127 灰底）"
+      }
+    },
+    {
+      "name": "bg",
+      "type": "string",
+      "description": "可选背景图对象 ID（仅 fbc 变体用：作为背景条件，主体按该图打光）",
+      "default": ""
+    },
+    {
+      "name": "light_dir",
+      "type": "string",
+      "description": "光方向：none（默认，fc=纯文生图；fbc=64 灰底）/ left / right / top / bottom",
+      "default": "none"
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "光照/主体描述（英文；如 'sunshine from window'、'soft studio lighting'）",
+      "default": "beautiful woman, detailed face, soft studio lighting"
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "description": "负面提示词",
+      "default": "lowres, bad anatomy, bad hands, cropped, worst quality"
+    },
+    {
+      "name": "a_prompt",
+      "type": "string",
+      "description": "附加正面提示词（官方 best quality）",
+      "default": "best quality"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "推理宽（0=按输入尺寸；非 0 时对齐到 64 的倍数；64~2048）",
+      "default": 0
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "推理高（0=按输入尺寸；同上）",
+      "default": 0
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数（1~100，官方默认 25）",
+      "default": 25
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "CFG 强度（1~32，官方默认 2.0）",
+      "default": 2.0
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子（同种子逐字节可复现）",
+      "default": 12345
+    },
+    {
+      "name": "denoise_low",
+      "type": "float",
+      "description": "低清阶段去噪强度（仅 fc+light_dir 的 i2i 初始图用，0.1~1.0）",
+      "default": 0.9
+    },
+    {
+      "name": "denoise_high",
+      "type": "float",
+      "description": "高清阶段去噪强度（0.1~1.0）",
+      "default": 0.5
+    },
+    {
+      "name": "highres_scale",
+      "type": "float",
+      "description": "高清阶段放大倍数（1.0~3.0）",
+      "default": 1.5
+    },
+    {
+      "name": "highres",
+      "type": "string",
+      "description": "true=跑第二阶段高清（更慢更细）/ false=只跑低清",
+      "default": "true"
+    },
+    {
+      "name": "scheduler",
+      "type": "string",
+      "description": "采样器：dpmpp（默认，官方）/ ddim（更保守）",
+      "default": "dpmpp"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "MODEL": "{{ Param.model }}",
+    "IMAGE": "{{ Param.image }}",
+    "MASK": "{{ Param.mask }}",
+    "BG": "{{ Param.bg }}",
+    "LIGHT_DIR": "{{ Param.light_dir }}",
+    "PROMPT": "{{ Param.prompt }}",
+    "NEGATIVE_PROMPT": "{{ Param.negative_prompt }}",
+    "A_PROMPT": "{{ Param.a_prompt }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "STEPS": "{{ Param.steps }}",
+    "CFG": "{{ Param.cfg }}",
+    "SEED": "{{ Param.seed }}",
+    "DENOISE_LOW": "{{ Param.denoise_low }}",
+    "DENOISE_HIGH": "{{ Param.denoise_high }}",
+    "HIGHRES_SCALE": "{{ Param.highres_scale }}",
+    "HIGHRES": "{{ Param.highres }}",
+    "SCHEDULER": "{{ Param.scheduler }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "重打光结果图对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高"
+    },
+    {
+      "name": "light_balance",
+      "type": "number",
+      "description": "主体左/右平均亮度差（正=左侧亮；落盘复核判据）"
+    },
+    {
+      "name": "lum_left",
+      "type": "number",
+      "description": "主体左半平均亮度（0~255）"
+    },
+    {
+      "name": "lum_right",
+      "type": "number",
+      "description": "主体右半平均亮度（0~255）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "运行信息 JSON（变体/光方向/采样器/种子/尺寸/明暗平衡/耗时）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.16.0"
+}

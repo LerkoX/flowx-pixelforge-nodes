@@ -475,7 +475,15 @@ function createNodeWidget(spec) {
     const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi)$/i
     const fileControl = (f) => {
       const raw = (cur.params || {})[f.key]
-      if (isWired(raw)) return wiredControl(f.key, raw)
+      const psrc = (cur.paramSources || {})[f.key] || {}
+      // 绑定值分两类（props.paramSources 区分）：
+      //  · kind='node'（或来源未知）＝绑上游节点输出 ⇒ 值由上游运行时决定，只读；
+      //  · kind='workflow'＝绑**流水线参数** ⇒ 仍给上传/直填入口：上传即把该参数从绑定
+      //    改为直填字面量（画布只有 onParamsChange 改节点参数，没有改 Param 的钩子）。
+      //    为什么必须这样做：模板节点普遍写 image_path: "{{ Param.xxx }}"，
+      //    若一律只读，用户在图里既不能上传也看不到预览（wf157 反馈）。
+      const boundToParam = isWired(raw) && psrc.kind === 'workflow'
+      if (isWired(raw) && !boundToParam) return wiredControl(f.key, raw)
       const wrap = h('div', '')
       const inp = h('input', INPUT_CSS + ';font-family:ui-monospace,Menlo,monospace')
       inp.type = 'text'
@@ -498,8 +506,15 @@ function createNodeWidget(spec) {
       vid.muted = true
       vid.playsInline = true
 
+      // 有效路径：字面量直接用；绑流水线参数时用参数的当前值（paramValue）
+      const effPath = () => {
+        const v = (cur.params || {})[f.key] || ''
+        if (!isWired(v)) return v
+        const s2 = (cur.paramSources || {})[f.key] || {}
+        return s2.kind === 'workflow' ? (s2.paramValue || '') : ''
+      }
       const showPreview = () => {
-        const p = (cur.params || {})[f.key] || ''
+        const p = effPath()
         const none = !p || isWired(p)
         const wantVid = !none && VIDEO_EXT_RE.test(String(p))
         img.style.display = 'none'
@@ -521,6 +536,12 @@ function createNodeWidget(spec) {
       // 路径越出白名单/文件不存在：静默隐藏预览（参数本身仍可手填）
       img.addEventListener('error', () => { img.style.display = 'none' })
       vid.addEventListener('error', () => { vid.style.display = 'none' })
+
+      const bindHint = h('div', 'font-size:9px;color:rgba(251,191,36,0.85);line-height:1.35;margin-top:3px')
+      if (boundToParam) {
+        bindHint.textContent = '↳ 来自流水线参数 ' + (psrc.paramName || '?')
+          + '（上传或直接填写将解除绑定，改为本节点直填路径）'
+      }
 
       let uploadBusy = false
       const setPickState = (busy) => {
@@ -552,6 +573,7 @@ function createNodeWidget(spec) {
           if (xhr.status >= 200 && xhr.status < 300 && path) {
             setParam(f.key, path)   // 上传物即参数值（本机路径），执行器直接读盘
             status.textContent = '✅ ' + (body.data.name || path)
+              + (boundToParam ? '（已解除绑定，改为直填）' : '')
             showPreview()
           } else {
             fail((body && body.message) || ('HTTP ' + xhr.status))
@@ -577,13 +599,19 @@ function createNodeWidget(spec) {
       refreshers.push(() => {
         inp.disabled = !editable()
         inp.style.opacity = editable() ? '1' : '0.55'
-        if (document.activeElement !== inp) inp.value = (cur.params || {})[f.key] || ''
+        if (document.activeElement !== inp) {
+          inp.value = boundToParam
+            ? (((cur.paramSources || {})[f.key] || {}).paramValue || '')
+            : ((cur.params || {})[f.key] || '')
+        }
         // 只同步可写性（回放态禁用），不覆盖上传中的按钮文案
         pick.disabled = uploadBusy || !editable()
         pick.style.opacity = editable() ? '1' : '0.5'
         showPreview()
       })
-      wrap.append(inp, bar, picker, img, vid)
+      wrap.append(inp)
+      if (boundToParam) wrap.append(bindHint)
+      wrap.append(bar, picker, img, vid)
       showPreview()
       return wrap
     }

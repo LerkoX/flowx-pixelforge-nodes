@@ -3,7 +3,8 @@ import os
 import time
 import urllib.error
 
-from flowx_client import emit, ensure_plugin, param, post_bytes, token
+from flowx_client import (emit, emit_result_preview, ensure_plugin, param,
+                          post_bytes, token)
 
 _MAX_BYTES = 32 * 1024 * 1024  # 与服务端 MAX_UPLOAD_MB 默认值对齐
 
@@ -53,7 +54,11 @@ def main():
     resp = _upload_with_retry(url, data, tok, ctype)
     print(f"[upload] {path} ({len(data)} bytes) -> image={resp['id']} "
           f"{resp.get('width')}x{resp.get('height')}", flush=True)
-    emit(image=resp["id"])
+    emit(image=resp["id"], width=resp.get("width") or 0,
+         height=resp.get("height") or 0)
+    # 结果预览帧：画布立刻显示"到底加载了哪张图"（wf157 反馈：加载节点看不到图）。
+    # host_base() 优先 SERVICE_URL_HOST（docker 节点容器内不可达时由 workflow 绑 Param.service_url）
+    emit_result_preview(url, resp["id"], tok)
 
 
 if __name__ == "__main__":

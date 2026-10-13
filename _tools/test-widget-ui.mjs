@@ -186,10 +186,36 @@ for (const node of fileNodes.filter((d) => targets.includes(d))) {
     check(`${node}: 上传后状态显示 ✅`, !!findByText(el, '✅ T_x.png'))
   }
 
-  // B. 绑定态：换成只读来源标注，不出现上传入口
-  const elW = mount(node, { params: { [key]: '{{ SomeNode.file }}' } })
-  check(`${node}: 绑定态不出现上传入口`,
+  // B. 绑**上游节点输出**（paramSources.kind='node'）：只读来源标注，不出现上传入口
+  const elW = mount(node, {
+    params: { [key]: '{{ SomeNode.file }}' },
+    paramSources: { [key]: { kind: 'node', nodeId: 'SomeNode', nodeName: 'SomeNode', field: 'file' } },
+    onParamsChange: () => {},
+  })
+  check(`${node}: 绑上游节点输出时不出现上传入口（只读）`,
     !findByText(elW, '📁 选择文件') && !findAllByTag(elW, 'input').some((i) => i.type === 'file'))
+
+  // B2. 绑**流水线参数**（paramSources.kind='workflow'）：仍要有上传入口 + 用参数当前值出预览
+  //     （模板普遍写 image_path: "{{ Param.xxx }}"；一律只读会让用户没法换图 —— wf157 反馈）
+  let writtenP = null
+  const elP = mount(node, {
+    params: { [key]: '{{ Param.src }}' },
+    paramSources: { [key]: { kind: 'workflow', paramName: 'src', paramValue: '~/flowx-input/ecom/prod.png' } },
+    onParamsChange: (pp) => { writtenP = pp },
+  })
+  const pickP = findAllByTag(elP, 'input').find((i) => i.type === 'file')
+  check(`${node}: 绑流水线参数时仍有上传入口`, !!pickP && !!findByText(elP, '📁 选择文件'))
+  check(`${node}: 绑流水线参数时提示参数名`,
+    !!findByText(elP, '↳ 来自流水线参数 src（上传或直接填写将解除绑定，改为本节点直填路径）'))
+  const prevP = findAllByTag(elP, 'img').find((i) => i.dataset.path)
+  check(`${node}: 绑流水线参数时按参数当前值出预览图`, !!prevP)
+  if (pickP) {
+    lastSentForm = null
+    pickP.files = [{ name: 'y.png', size: 1024 }]
+    fire(pickP, 'change')
+    check(`${node}: 绑流水线参数时上传可写回（解除绑定改为直填）`,
+      !!writtenP && writtenP[key] === '~/flowx-input/uploads/T_x.png')
+  }
 
   // C. 回放态（onParamsChange 缺省）：入口仍在但必须禁用
   const elR = mount(node, { params: { [key]: '~/flowx-input/a.png' } })

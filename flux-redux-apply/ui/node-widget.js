@@ -2064,6 +2064,7 @@ const WIDGET_SPEC = {
   icon: '🧬',
   title: 'FLUX Redux 参考图',
   fields: [
+    { key: 'service_url_host', label: '画布可达地址 service_url_host（docker 用）', kind: 'text', mono: true, advanced: true },
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
     { key: 'cond', label: 'cond（FLUX 文本编码）', kind: 'text', mono: true },
     { key: 'image', label: 'image（load-image 参考图）', kind: 'text', mono: true },

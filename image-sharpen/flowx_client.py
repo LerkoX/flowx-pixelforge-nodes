@@ -97,8 +97,12 @@ def lease_id():
 
 
 def _req(method, base, path, payload=None, tok=None, timeout=1800,
-         content_type="application/json"):
-    """payload 为 bytes（已编码）；GET/无 body 时传 None。"""
+         content_type="application/json", headers=None):
+    """payload 为 bytes（已编码）；GET/无 body 时传 None。
+
+    headers：调用方显式附加的请求头（**覆盖**同名自动头，如
+    `{"X-FlowX-Lease": "724"}` 以指定租约视角清理别人留下的常驻条目，
+    见 vram-ops 节点与 dev-log §58.9）。"""
     url = base.rstrip("/") + path
     req = urllib.request.Request(url, data=payload, method=method)
     if payload is not None:
@@ -109,6 +113,8 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800,
     if lid:
         # 执行租约（§43.2）：加载/淘汰按租约隔离，并发执行排队而非互踩
         req.add_header("X-FlowX-Lease", lid)
+    for hk, hv in (headers or {}).items():
+        req.add_header(hk, hv)   # 显式头最后加：同名时覆盖自动注入值
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
@@ -159,21 +165,24 @@ def _with_retry(fn, retries=None):
 
 
 
-def post_json(base, path, payload, tok=None, timeout=1800):
+def post_json(base, path, payload, tok=None, timeout=1800, headers=None):
     data = json.dumps(payload).encode()
-    return json.loads(_req("POST", base, path, data, tok, timeout))
+    return json.loads(_req("POST", base, path, data, tok, timeout,
+                           headers=headers))
 
 
 def post_bytes(base, path, data, tok=None, timeout=300,
-               content_type="application/octet-stream"):
+               content_type="application/octet-stream", headers=None):
     """上传原始字节（如图片文件），返回解析后的 JSON 响应。"""
-    return json.loads(_req("POST", base, path, data, tok, timeout, content_type))
+    return json.loads(_req("POST", base, path, data, tok, timeout, content_type,
+                           headers=headers))
 
 
-def get_json(base, path, tok=None, timeout=60, retries=None):
+def get_json(base, path, tok=None, timeout=60, retries=None, headers=None):
     """GET 幂等：瞬态错误自动重试（隧道抖动兜底，4xx 不重试）。"""
     return _with_retry(lambda: json.loads(_req("GET", base, path, None, tok,
-                                             timeout)), retries)
+                                               timeout, headers=headers)),
+                       retries)
 
 
 def get_bytes(base, path, tok=None, timeout=300, retries=None):

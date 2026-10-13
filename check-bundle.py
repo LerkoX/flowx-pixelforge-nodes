@@ -53,6 +53,65 @@ DEAD_ENDPOINTS = ("/inference/models-files", "/input-image",
                   "/op-replay", "/interrupt-inference")
 
 
+def check_flowx_json_schema(root: pathlib.Path):
+    """gate P：flowx.json **结构**校验（导入 API 的硬要求，手写节点最容易错）。
+
+    为什么需要（2026-10-13 实测）：手写新节点时把 `mock`/`ui` 写成了字符串路径，
+    Studio `POST /nodes/import` 直接 400（`cannot unmarshal string into Go struct
+    field NodePackage.mock`）——这类错误本可以在提交前拦下。校验：
+      必填 name/version/entry/parameters/outputs/executor；
+      entry/mock.entry/ui.entry 为**对象**且指向真实存在的文件；
+      parameters[].name 唯一；executor.supportedTypes 非空。
+    """
+    errs, warns = [], []
+    for fj in sorted(root.glob("*/flowx.json")):
+        node = fj.parent.name
+        try:
+            d = json.loads(fj.read_text())
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"{node}: flowx.json 不是合法 JSON（{e}）")
+            continue
+        # 硬要求字段（导入 API 会 400 或生态硬依赖；实测 `language` 缺 ⇒ 400）
+        for key in ("name", "displayName", "description", "version", "author", "icon",
+                    "tags", "language", "entry", "files", "ui", "executor",
+                    "parameters", "outputs"):
+            if key not in d:
+                errs.append(f"{node}: 缺字段 {key}（导入 API / 生态约定要求）")
+        # 约定字段：缺省不报错（默认行为可用），但提示 —— 便于新节点与存量对齐
+        for key in ("extract", "timeout", "env", "mock"):
+            if key not in d and (fj.parent / "mock.py").is_file() if key == "mock" else key not in d:
+                warns.append(f"{node}: 未声明 {key}（走默认；mask-paint/flux-mask-refine 等"
+                             f"历史节点同样缺省，属已知口径）")
+        if not isinstance(d.get("executor"), dict) or not d["executor"].get("supportedTypes"):
+            errs.append(f"{node}: executor.supportedTypes 缺失或为空")
+        # entry / mock / ui 必须是结构体（不是字符串路径）
+        if not isinstance(d.get("entry"), str) or not (fj.parent / str(d.get("entry"))).is_file():
+            errs.append(f"{node}: entry={d.get('entry')!r} 不存在")
+        # mock/ui 在 Go 结构里是 omitempty（可缺省）；**存在时**必须是对象且文件在
+        mk = d.get("mock")
+        if mk is not None and not isinstance(mk, dict):
+            errs.append(f"{node}: mock 存在但不是对象 {{enabled,entry}}（导入 API 要求；"
+                        f"got {type(mk).__name__}）")
+        elif isinstance(mk, dict) and mk.get("entry") \
+                and not (fj.parent / mk["entry"]).is_file():
+            errs.append(f"{node}: mock.entry={mk['entry']!r} 文件不存在")
+
+        ui = d.get("ui")
+        if ui is not None and not isinstance(ui, dict):
+            errs.append(f"{node}: ui 存在但不是对象 {{entry,width,height}}"
+                        f"（got {type(ui).__name__}）")
+        elif isinstance(ui, dict) and ui.get("entry") \
+                and not (fj.parent / ui["entry"]).is_file():
+            errs.append(f"{node}: ui.entry={ui['entry']!r} 文件不存在")
+        names = [p.get("name") for p in d.get("parameters") or []]
+        dup = {n for n in names if names.count(n) > 1}
+        if dup:
+            errs.append(f"{node}: parameters 名字重复 {sorted(dup)}")
+        if any(not n for n in names):
+            errs.append(f"{node}: parameters 有空 name")
+    return errs, warns
+
+
 def in_image_dirs(root: pathlib.Path) -> dict[str, str]:
     """解析 Dockerfile 的 COPY <dir>/*.py → {节点目录: 目标目录}"""
     out: dict[str, str] = {}
@@ -218,6 +277,11 @@ def main() -> int:
                 f"supportedTypes={types} 含 docker/远端 —— 上传物/笔画文件在本机，"
                 f"容器里读不到；请改为 supportedTypes: [local]")
 
+    # P. flowx.json 结构（导入 API 的硬要求：entry/mock/ui 形状 + 文件存在）
+    schema_errs, schema_warns = check_flowx_json_schema(root)
+    problems.extend(schema_errs)
+    schema_warns = [] if quiet else schema_warns
+
     # L. widget 交互回归（DOM stub 里真跑 bundle；产物字节合法 ≠ 点得动）
     node_bin = shutil.which("node")
     if node_bin:
@@ -229,6 +293,8 @@ def main() -> int:
     elif not quiet:
         print("! 未找到 node，跳过 widget UI 回归（gate L）", file=sys.stderr)
 
+    for w in schema_warns:
+        print(f"! {w}", file=sys.stderr)
     if problems:
         print(f"✗ 清单不一致（{len(problems)} 处）：", file=sys.stderr)
         for p in problems:

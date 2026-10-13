@@ -2,6 +2,7 @@ const WIDGET_SPEC = {
   icon: '⬜',
   title: 'FLUX 空 Latent',
   fields: [
+    { key: 'service_url_host', label: '画布可达地址 service_url_host（docker 用）', kind: 'text', mono: true, advanced: true },
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
     { key: 'width', label: '宽度', kind: 'select', options: ['512', '768', '1024'], default: '768' },
     { key: 'height', label: '高度', kind: 'select', options: ['512', '768', '1024', '1280'], default: '768' },

@@ -1,8 +1,8 @@
 {
   "name": "flux-vae-decode",
   "displayName": "FLUX VAE 解码",
-  "description": "FLUX VAE 解码（对标 ComfyUI VAE Decode）：消费 flux-sampler 的 LATENT（packed）解码输出图像（unpack + 反归一化 + decode）。自包含节点：server_op.py 运行时自注册。v1.1.0：改用任务式调用（submit_job+轮询，超时 2100s）：隧道在排队期零字节不会掐断、节点取消时定向 interrupt 不留孤儿 GPU 任务；新增 poll_interval。",
-  "version": "1.1.0",
+  "description": "FLUX VAE 解码（对标 ComfyUI VAE Decode）：消费 flux-sampler 的 LATENT（packed）解码输出图像（unpack + 反归一化 + decode）。自包含节点：server_op.py 运行时自注册。v1.1.0：改用任务式调用（submit_job+轮询，超时 2100s）：隧道在排队期零字节不会掐断、节点取消时定向 interrupt 不留孤儿 GPU 任务；新增 poll_interval。v1.2.0：提交 job 后上报 job 标记（base+job_id）——Studio 取消时可**定向转发** /interrupt，不再依赖节点进程能否收到 SIGTERM（实测有竞态）。",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -16,7 +16,7 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.18.1",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.1",
   "parameters": [
     {
       "name": "service_url",
@@ -28,6 +28,13 @@
         "output": "service_url",
         "description": "推荐由健康检查节点输出提供"
       }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布/取消兜底）可达的服务地址；docker 节点跑在远端宿主时 service_url 是容器内地址，必须另绑本参数（留空则同 service_url）"
     },
     {
       "name": "vae",
@@ -78,7 +85,8 @@
     "VAE": "{{ Param.vae }}",
     "LATENT": "{{ Param.latent }}",
     "JOB_TIMEOUT": "{{ Param.job_timeout }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   },
   "outputs": [
     {

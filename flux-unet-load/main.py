@@ -11,12 +11,13 @@ GGUF Q4_K_S transformer 单独装载（fp16 compute），输出 MODEL 组件引�
 """
 import time
 
-from flowx_client import (emit, ensure_plugin, param, submit_job, token,
-                          wait_job)
+from flowx_client import (emit, emit_preview, ensure_plugin, host_base, param,
+                          submit_job, wait_job, token)
 
 
 def main():
     url = param("service_url").rstrip("/")
+    pbase = host_base(url)   # Studio 侧可达地址（取消兜底/预览帧中转用）
     tok = token()
     transformer = param("transformer", "flux1-schnell-Q4_K_S.gguf")
 
@@ -27,6 +28,12 @@ def main():
         "transformer": transformer,
         "dtype": param("dtype", "auto"),
     }}, tok)
+
+    # 上报 job 标记（base + job_id）：Studio 取消/超时时据此**定向转发**
+    # POST /interrupt（dev-log §60：实测节点 SIGTERM 与执行器杀进程存在竞态，
+    # 3 次取消只有 2 次由节点自己取消成功；带标记后由 Studio 兜底，确定性）。
+    # 本节点无逐帧预览，url 仅占位（画布拉不到帧时静默无图，不影响执行）。
+    emit_preview(f"{pbase}/preview/{jid}", 0.0, tok, base=pbase, job_id=jid)
     print(f"[flux-unet-load] job={jid} submitted (transformer={transformer})",
           flush=True)
     result = wait_job(url, jid, tok,

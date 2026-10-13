@@ -79,6 +79,7 @@ COPY upscale-model-load/*.py         /opt/flowx-nodes/upscale-model-load/
 COPY vae-decode-video/*.py           /opt/flowx-nodes/vae-decode-video/
 COPY vae-load/*.py                   /opt/flowx-nodes/vae-load/
 COPY video-sample-latent/*.py        /opt/flowx-nodes/video-sample-latent/
+COPY vram-ops/*.py                /opt/flowx-nodes/vram-ops/
 
 # --- Studio 侧图像/蒙版（PIL；图片本体经服务对象仓库传递，不在本地文件系统上） ---
 COPY image-composite/*.py                /opt/flowx-nodes/image-composite/
@@ -122,6 +123,8 @@ COPY colorize/*.py                        /opt/flowx-nodes/colorize/
 COPY iclight-load/*.py                    /opt/flowx-nodes/iclight-load/
 COPY iclight/*.py                         /opt/flowx-nodes/iclight/
 COPY image-watermark/*.py                 /opt/flowx-nodes/image-watermark/
+# 文本渲染字体随节点包进镜像（local/docker 逐字节一致；gate 只解析 *.py 行故不计入目录数）
+COPY image-watermark/fonts/                /opt/flowx-nodes/image-watermark/fonts/
 
 COPY image-shadow/*.py                    /opt/flowx-nodes/image-shadow/
 COPY catvton-load/*.py                      /opt/flowx-nodes/catvton-load/

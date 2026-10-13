@@ -1,8 +1,8 @@
 {
   "name": "image-watermark",
   "displayName": "水印（文字/Logo）",
-  "version": "1.0.0",
-  "description": "给图打水印（文字或 Logo）：九宫格定位 + 边距 + 不透明度 + 描边 + 旋转 + 平铺 + Logo 缩放。纯节点侧 PIL（零 numpy，手机本地执行器也能跑）；输出 box 便于复核「非水印区逐字节不变」。中文水印需给 font_path 指向含 CJK 的 TTF（容器/手机默认字体只有 ASCII）。",
+  "version": "1.1.0",
+  "description": "给图打水印（文字或 Logo）：九宫格定位 + 边距 + 不透明度 + 描边 + 旋转 + 平铺 + Logo 缩放。纯节点侧 PIL（零 numpy，手机本地执行器也能跑）；输出 box 便于复核「非水印区逐字节不变」。中文水印需给 font_path 指向含 CJK 的 TTF（容器/手机默认字体只有 ASCII）。v1.1.0：随包内置固定字体 fonts/DroidSansChinese.ttf 并优先使用 ⇒ local/docker 渲染逐字节一致（字体可复现）；font_path 仍可覆盖。",
   "author": "flowx-team",
   "tags": [
     "image",
@@ -93,7 +93,7 @@
       "type": "string",
       "required": false,
       "default": "",
-      "description": "字体文件路径（中文水印必须指定含 CJK 的 TTF；留空走内置候选，只有 ASCII）"
+      "description": "自定义字体文件路径（留空 = 用节点包内置 DroidSansChinese.ttf，local/docker 一致）"
     },
     {
       "name": "color",
@@ -237,5 +237,5 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.18.1"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.1"
 }

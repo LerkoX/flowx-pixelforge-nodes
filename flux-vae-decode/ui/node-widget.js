@@ -2064,6 +2064,7 @@ const WIDGET_SPEC = {
   icon: '🖼',
   title: 'FLUX VAE 解码',
   fields: [
+    { key: 'service_url_host', label: '画布可达地址 service_url_host（docker 用）', kind: 'text', mono: true, advanced: true },
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
     { key: 'vae', label: 'vae（FLUX VAE 加载）', kind: 'text', mono: true },
     { key: 'latent', label: 'latent（FLUX 采样）', kind: 'text', mono: true },

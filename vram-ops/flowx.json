@@ -1,0 +1,143 @@
+{
+  "name": "vram-ops",
+  "displayName": "显存/租约运维（VRAM Ops）",
+  "description": "显存/常驻/租约/策略运维（status/leases/unload/interrupt/policy_get/policy_set）。用于排查「冷加载等 300s 失败」这类租约残留问题，以及单流水线串行时的策略实验。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "icon": "🧮",
+  "tags": [
+    "inference",
+    "infra",
+    "ops"
+  ],
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 520,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "ACTION": "{{ Param.action }}",
+    "TARGET": "{{ Param.target }}",
+    "LEASE": "{{ Param.lease }}",
+    "JOB_ID": "{{ Param.job_id }}",
+    "POLICY_JSON": "{{ Param.policy_json }}"
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.1",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "action",
+      "type": "string",
+      "required": false,
+      "default": "status",
+      "description": "动作：status|leases|unload|interrupt|policy_get|policy_set"
+    },
+    {
+      "name": "target",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "unload 的目标模型文件名（空 = 全部）"
+    },
+    {
+      "name": "lease",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "X-FlowX-Lease 租约标识（unload 时指定；空 = 以无名租约视角操作）"
+    },
+    {
+      "name": "job_id",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "interrupt 的任务 id（空 = 取消全部 running/pending）"
+    },
+    {
+      "name": "policy_json",
+      "type": "string",
+      "required": false,
+      "default": "{}",
+      "description": "policy_set 的 body（如 {\"vram_reserve_mb\": 768}）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "ok",
+      "type": "string",
+      "description": "是否成功执行（true/false）"
+    },
+    {
+      "name": "action",
+      "type": "string",
+      "description": "实际执行的动作"
+    },
+    {
+      "name": "detail",
+      "type": "string",
+      "description": "人类可读摘要"
+    },
+    {
+      "name": "resident_count",
+      "type": "integer",
+      "description": "常驻模型条目数（status/unload）"
+    },
+    {
+      "name": "lease_count",
+      "type": "integer",
+      "description": "活跃租约数（leases）"
+    },
+    {
+      "name": "vram_free_mb",
+      "type": "integer",
+      "description": "显存余量 MB（status）"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "description": "策略快照（k=v,k=v，policy_get/set）"
+    }
+  ]
+}

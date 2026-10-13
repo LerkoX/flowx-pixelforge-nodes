@@ -3,8 +3,9 @@
 纯节点侧 PIL（**零 numpy** ⇒ 手机本地执行器也能跑）。要点：
 - `position` 九宫格定位 + `margin` 边距；`tile=True` 时按 `angle` 平铺（防盗图样张）。
 - `opacity` 0~1 控制水印整体不透明度（用 RGBA 合成，不改动非水印区域像素）。
-- `font_size=0` 自动取 `max(12, 短边/18)`；中文水印需给 `font_path` 指向含 CJK 的 TTF
-  （容器/手机默认字体只有 ASCII，见 dev-plan §50.9 的已知限制）。
+- `font_size=0` 自动取 `max(12, 短边/18)`；字体默认取**节点包内自带**的
+  `fonts/DroidSansChinese.ttf`（含 CJK），`font_path` 可显式覆盖 ⇒ local 与 docker
+  渲染逐字节一致（此前两边字体不同，产物不可比，见 dev-plan §50.9 与 dev-log §60）。
 - 文字带 `stroke_width`/`stroke_color` 描边，深浅背景都可读。
 - 输出 `box`（水印覆盖区域 x,y,w,h）⇒ 复核判据"非水印区逐字节不变"直接可用。
 
@@ -21,10 +22,18 @@ POSITIONS = ("top-left", "top-center", "top-right",
              "middle-left", "center", "middle-right",
              "bottom-left", "bottom-center", "bottom-right")
 
+# 随节点包分发的固定字体（dev-log §60：local/docker 字体不同会让文本渲染产物不可比，
+# A7 逐字节判据对文本节点不成立）。**首选**它 ⇒ 同一节点包在手机与容器里渲染一致；
+# `font_path` 参数仍可覆盖（用户自带字体时按显式路径走）。
+_BUNDLED_FONT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "fonts", "DroidSansChinese.ttf")
+
 # 常见字体候选（按顺序取第一个存在的；都没有则用 Pillow 内置可缩放默认字体）
 FONT_CANDIDATES = (
+    _BUNDLED_FONT,
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/system/fonts/DroidSansChinese.ttf",
     "/system/fonts/NotoSansCJK-Regular.ttc",
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/arial.ttf",

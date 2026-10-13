@@ -277,6 +277,15 @@ def main() -> int:
                 f"supportedTypes={types} 含 docker/远端 —— 上传物/笔画文件在本机，"
                 f"容器里读不到；请改为 supportedTypes: [local]")
 
+    # Q. pipeline/*.yaml 的节点引用与参数声明（引擎展开阶段是硬校验：
+    #    "config.params references undeclared parameter" 会让整跑在展开期失败）
+    r = subprocess.run([sys.executable, str(root / "_tools" / "check-pipeline.py")],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        problems.extend([ln for ln in (r.stdout + r.stderr).splitlines()
+                         if ln.strip().startswith("-")] or
+                        ["pipeline 校验失败（跑 python3 nodes/_tools/check-pipeline.py 看详情）"])
+
     # P. flowx.json 结构（导入 API 的硬要求：entry/mock/ui 形状 + 文件存在）
     schema_errs, schema_warns = check_flowx_json_schema(root)
     problems.extend(schema_errs)

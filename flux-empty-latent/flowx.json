@@ -1,8 +1,8 @@
 {
   "name": "flux-empty-latent",
   "displayName": "FLUX 空 Latent",
-  "description": "FLUX 空 Latent（对标 ComfyUI Empty Latent Image）：只携带尺寸/批次（samples=None），初始噪声由 flux-sampler 按 seed 生成。宽高须 16 倍数。自包含节点：server_op.py 运行时自注册",
-  "version": "1.0.0",
+  "description": "FLUX 空 Latent（对标 ComfyUI Empty Latent Image）：只携带尺寸/批次（samples=None），初始噪声由 flux-sampler 按 seed 生成。宽高须 16 倍数。自包含节点：server_op.py 运行时自注册。v1.1.0：改用任务式调用（submit_job+轮询，超时 900s）：隧道在排队期零字节不会掐断、节点取消时定向 interrupt 不留孤儿 GPU 任务；新增 poll_interval。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -16,7 +16,7 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.17.0",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.18.0",
   "parameters": [
     {
       "name": "service_url",
@@ -49,6 +49,20 @@
       "description": "批次大小（显存紧张建议 1）",
       "required": false,
       "default": 1
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务轮询间隔（秒）",
+      "required": false,
+      "default": 2
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务超时（秒）；排队+计算总预算。默认 1800：GPU 串行队列里可能排在冷加载（实测 >700s）之后",
+      "required": false,
+      "default": 1800
     },
     {
       "name": "service_token",
@@ -86,7 +100,7 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "timeout": 120,
+  "timeout": 2100,
   "executor": {
     "supportedTypes": [
       "local",

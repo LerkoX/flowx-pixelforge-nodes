@@ -276,6 +276,26 @@ def make_stubs(node_dir, params, rec, verbose):
     sys.modules["executor_base"] = eb
 
 
+# emit 输出里禁止出现的字符（Studio 侧 dag/extractor.go 的 extractor 陷阱）：
+#   removeComments 用 `\s*#.*$` 无差别删行尾注释 ⇒ 引号里的 #RRGGBB 也被截断
+#   ⇒ 整块 YAML 解析失败 ⇒ 该节点**所有输出丢失**（image-shadow exec 714 实测踩到）；
+#   闭合围栏 ``` 出现在值里会提前闭合代码块（exec 158/159 事故）。
+_FORBIDDEN_IN_EMIT = ("#", "```")
+
+
+def _forbidden_emits(rec):
+    bad = []
+    for kw in rec.calls.get("emit", []):
+        if not isinstance(kw, dict):
+            continue
+        for k, v in kw.items():
+            if isinstance(v, str):
+                for needle in _FORBIDDEN_IN_EMIT:
+                    if needle in v:
+                        bad.append((k, needle, v[:60]))
+    return bad
+
+
 def smoke(node_dir, verbose=False):
     """返回 (status, detail)：PASS / SKIP / FAIL。"""
     fj = json.loads((node_dir / "flowx.json").read_text())
@@ -318,6 +338,12 @@ def _run_node(node_dir, name, params, verbose):
         tb = traceback.format_exc().strip().splitlines()
         tail = " | ".join(x.strip() for x in tb[-4:-1])[:300]
         return "FAIL", f"{type(e).__name__}: {e}  [{tail}]"
+    else:
+        bad = _forbidden_emits(rec)
+        if bad:
+            k, needle, val = bad[0]
+            return "FAIL", (f"emit 值 '{k}' 含 {needle!r} ⇒ Studio codec-block 提取器"
+                            f"会截断/提前闭合 ⇒ 该节点输出全部丢失（值前 60 字：{val}）")
     finally:
         for m in ("flowx_client", "image_io", "executor_base"):
             sys.modules.pop(m, None)
@@ -345,6 +371,14 @@ NEG_CASES = {
     "guardcase": ("from flowx_client import param\n\n\n"
                   "def main():\n"
                   "    raise ValueError('参数校验：至少要给一个')\n", "SKIP"),
+    # 平台陷阱负例：emit 值带 # ⇒ 提取器删注释后 YAML 块解析失败、输出全丢
+    "hashvalue": ("from flowx_client import emit\n\n\n"
+                  "def main():\n"
+                  "    emit(image='x', info='{\"color\": \"#101014\"}')\n",
+                  "FAIL"),
+    "fencevalue": ("from flowx_client import emit\n\n\n"
+                   "def main():\n"
+                   "    emit(image='x', summary='a ``` b')\n", "FAIL"),
 }
 
 

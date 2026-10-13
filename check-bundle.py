@@ -40,7 +40,11 @@ import sys
 
 # 仅本地运行的节点：代码仍在仓库里（save-image/save-video 的 .py 也进了镜像，
 # 但执行器必须 local；图像/蒙版节点因镜像内无 Pillow 连分发也不做）
-LOCAL_ONLY = {"save-image", "save-video", "load-image", "mask-paint"}
+# 执行器纪律（2026-10-13 用户拍板）：**只有"读/写本机文件"的节点才允许 local-only**，
+# 其余一律要支持 docker。本集合即"确证碰本机文件系统"的节点，声明里出现 docker/image/bundled
+# 会被 gate E 拦下（image-batch-load 读本机目录、image-batch-save 写本机文件）。
+LOCAL_ONLY = {"save-image", "save-video", "load-image", "mask-paint",
+              "image-batch-load", "image-batch-save"}
 
 # 已删除的 Studio 业务端点（去业务耦合：4 个业务端点 → 2 个通用代理）：
 # widget 里再引用就是指向 404 的死链接，第三方 API 路径语义必须自持。

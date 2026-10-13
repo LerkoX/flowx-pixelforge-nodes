@@ -270,5 +270,5 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.16.0"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.17.0"
 }

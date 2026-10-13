@@ -123,6 +123,10 @@ COPY iclight-load/*.py                    /opt/flowx-nodes/iclight-load/
 COPY iclight/*.py                         /opt/flowx-nodes/iclight/
 COPY image-watermark/*.py                 /opt/flowx-nodes/image-watermark/
 
+COPY image-shadow/*.py                    /opt/flowx-nodes/image-shadow/
+COPY catvton-load/*.py                      /opt/flowx-nodes/catvton-load/
+COPY catvton-tryon/*.py                     /opt/flowx-nodes/catvton-tryon/
+COPY image-montage/*.py                     /opt/flowx-nodes/image-montage/
 COPY image-pad/*.py                       /opt/flowx-nodes/image-pad/
 # Pillow 供图像/蒙版/滤镜族节点使用（image-* / mask-* 等）。远端 docker 宿主无外网，
 # 故把 manylinux cp311 wheel 随上下文带进去离线安装（_wheels/，见 README）。

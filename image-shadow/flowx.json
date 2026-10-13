@@ -1,0 +1,200 @@
+{
+  "name": "image-shadow",
+  "displayName": "环境投影（落地阴影）",
+  "version": "1.0.0",
+  "description": "电商主图/场景图的落地阴影（G11 补齐）：主体蒙版按 距离+方向 位移、以落地线（主体包围盒底边）为锚垂直压扁（贴地透视）、高斯模糊、颜色化并按不透明度上透明，可选远端淡出。canvas=expand 外扩画布容纳投影、keep 保持原尺寸；给 background 直接合成到底图，不给则输出带 alpha 的 RGBA 给下游 image-composite。纯节点侧 PIL（零 numpy），local 与 docker 执行器都可跑。输出 shadow_box（投影 alpha>0 的包围盒，非近似框）供「投影框外逐字节不变」复核。",
+  "author": "flowx-team",
+  "tags": [
+    "image",
+    "shadow",
+    "ecommerce",
+    "composite"
+  ],
+  "icon": "🌑",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "主体图对象 ID（商品图/模特图；有 alpha 时可直接作蒙版）",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / matting-birefnet / catvton-tryon 的输出提供"
+      }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "主体蒙版对象 ID（灰度，255=主体）；留空时用 image 的 alpha，纯 RGB 视为整图都是主体"
+    },
+    {
+      "name": "background",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "底图对象 ID（给了就输出合成后的 RGB）；留空输出带 alpha 的 RGBA（供 image-composite）"
+    },
+    {
+      "name": "distance",
+      "type": "integer",
+      "required": false,
+      "default": 24,
+      "description": "投影位移距离（px）"
+    },
+    {
+      "name": "angle",
+      "type": "float",
+      "required": false,
+      "default": 90,
+      "description": "投影方向（度，顺时针；0=向右 90=正下方 180=向左 270=正上方）——即「阴影方向」滑杆"
+    },
+    {
+      "name": "blur",
+      "type": "float",
+      "required": false,
+      "default": 24,
+      "description": "高斯模糊半径（px）；0=硬边阴影"
+    },
+    {
+      "name": "opacity",
+      "type": "float",
+      "required": false,
+      "default": 0.45,
+      "description": "投影不透明度 0~1（投影最深处 alpha ≈ opacity×255）"
+    },
+    {
+      "name": "squash",
+      "type": "float",
+      "required": false,
+      "default": 0.55,
+      "description": "垂直压扁比例 0.1~1（锚在落地线=主体包围盒底边）⇒ 贴地透视感；1=不压扁"
+    },
+    {
+      "name": "fade",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "远端淡出 0~1（沿位移方向，远端最淡）；0=均匀影"
+    },
+    {
+      "name": "color",
+      "type": "string",
+      "required": false,
+      "default": "#000000",
+      "description": "投影颜色 #RRGGBB 或 #RRGGBBAA 或 r,g,b（深色商品可用 #2B2B2B 更自然）"
+    },
+    {
+      "name": "canvas",
+      "type": "string",
+      "required": false,
+      "default": "expand",
+      "description": "画布模式：expand=外扩到容纳主体+投影（主体像素逐字节保留）；keep=保持输入尺寸（越界投影裁掉）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "MASK": "{{ Param.mask }}",
+    "BACKGROUND": "{{ Param.background }}",
+    "DISTANCE": "{{ Param.distance }}",
+    "ANGLE": "{{ Param.angle }}",
+    "BLUR": "{{ Param.blur }}",
+    "OPACITY": "{{ Param.opacity }}",
+    "SQUASH": "{{ Param.squash }}",
+    "FADE": "{{ Param.fade }}",
+    "COLOR": "{{ Param.color }}",
+    "CANVAS": "{{ Param.canvas }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "带投影的结果图对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高"
+    },
+    {
+      "name": "shadow_box",
+      "type": "string",
+      "description": "投影区域 x0,y0,x1,y1（投影 alpha>0 的精确包围盒）；该框之外逐字节等于输入"
+    },
+    {
+      "name": "coverage",
+      "type": "float",
+      "description": "投影框占输出画布面积比 0~1"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "参数回显 + 位移向量 + 峰值 alpha + 主体在输出中的位置 + 耗时（JSON）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 520,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.17.0"
+}

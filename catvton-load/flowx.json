@@ -100,9 +100,11 @@
   "timeout": 1800,
   "executor": {
     "supportedTypes": [
-      "local"
+      "local",
+      "docker"
     ],
-    "preferredType": "local"
+    "preferredType": "docker",
+    "bundled": true
   },
   "ui": {
     "entry": "ui/node-widget.js",
@@ -110,5 +112,6 @@
     "height": 320,
     "collapsed": false,
     "apiVersion": 1
-  }
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.17.0"
 }

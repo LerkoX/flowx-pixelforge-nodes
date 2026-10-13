@@ -30,6 +30,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 REG_RE = re.compile(r'registry\.register\(\s*[\'"]([\w\.]+)[\'"]')
 OP_FAMILY_RE = re.compile(r'^OP_FAMILY\s*=\s*["\']([\w\.]+)["\']', re.M)
 WRAP_RE = re.compile(r'_VersionedRegistry\(registry,\s*OP_VERSION\)')
+# ⑥ 注册调用的返回值必须被用掉（装饰器位置 或 手动 )(fn) 应用），见 check_register_calls
+import ast
 # 节点侧声明算子的三种写法（executor_base.run_op / 自包含节点的
 # ensure_plugin + call_op）：取并集，正常每节点恰好 1 个算子
 OP_PATTERNS = (
@@ -56,6 +58,43 @@ def load_families() -> dict[str, list[str]]:
     end = src.index("\n}\n", start) + 3
     exec(compile(src[start:end], "sync-common.py", "exec"), ns)
     return ns["OP_FAMILIES"]
+
+
+def check_register_calls(fam: str, src: str) -> list[str]:
+    """⑥ 的判定体：register() 内的注册调用必须把返回值用掉。
+
+    合法两种写法：
+      A. 装饰器：  @registry.register("op", ...)  挂在算子函数上
+      B. 手动应用：registry.register("op", ...)(fn)
+    非法：平铺一行 `registry.register(...)`（返回值被丢弃 ⇒ 注册表里零算子）。
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as e:  # 语法错误由其它门禁兜（这里不重复报）
+        return [f"{fam}: 语法错误 {e}"]
+    reg_fn = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "register"), None)
+    if reg_fn is None:
+        return []
+    calls = [n for n in ast.walk(reg_fn)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "register"]
+    used = set()
+    for n in ast.walk(reg_fn):
+        # A. 装饰器位置
+        for d in getattr(n, "decorator_list", []) or []:
+            if isinstance(d, ast.Call):
+                used.add(id(d))
+        # B. 手动应用：register(...)(fn) —— 外层 Call 的 func 是注册调用
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Call):
+            used.add(id(n.func))
+    out = []
+    for c in calls:
+        if id(c) not in used:
+            out.append(f"{fam}:{c.lineno}: 注册调用未挂函数（返回值被丢弃）——"
+                       f"必须写成装饰器或手动 )(fn) 应用，否则服务端注册表零算子"
+                       f"（vton 族 exec 707 事故）")
+    return out
 
 
 def main() -> int:
@@ -96,6 +135,11 @@ def main() -> int:
                 f"{fam}: register() 里没有在注册之前包装 "
                 f"`registry = _VersionedRegistry(registry, OP_VERSION)`"
                 f"（F1：否则注册的还是不带版本的旧名）")
+        # ⑥ 注册调用的返回值必须被用掉（vton 族首版真机事故，exec 707）：
+        #    Registry.register() 返回**装饰器**，只有被应用到函数上才会写进注册表。
+        #    平铺调用（返回值丢弃）的后果：上传 200 + 归属簿记账（claimed 来自录制
+        #    shim）+ 其它静态门禁全过，但服务端注册表零算子 ⇒ 运行时 "unknown op"。
+        problems += check_register_calls(fam, src)
         for op in ops:
             if op in op_owner:
                 problems.append(

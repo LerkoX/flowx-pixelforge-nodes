@@ -92,6 +92,9 @@ OP_FAMILIES = {
     "colorize.py": ["colorize-load", "colorize"],
     # G9 重打光族（B4，dev-plan §50）：IC-Light（装载预热 + 重打光推理）
     "iclight.py": ["iclight-load", "iclight"],
+    # G11 换装族（B6，dev-plan §52）：CatVTON（装载 + 真换装推理；FLUX/Redux 那条路
+    # 只能融合旧衣服与参考图，见 §52 实测）
+    "vton.py": ["catvton-load", "catvton-tryon"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
 }
 

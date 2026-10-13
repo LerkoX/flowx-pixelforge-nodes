@@ -1,0 +1,190 @@
+{
+  "name": "catvton-tryon",
+  "displayName": "CatVTON 换装",
+  "description": "CatVTON 真换装（G11 升级 / dev-plan §52）：模特图 + 衣服参考图 + 蒙版（白=要换掉的旧衣服区域）→ 换装结果图。专用 VTON 模型：人图与衣服图沿 latent 高度维空间拼接、cross-attention 整段摘除（不读提示词）⇒ 参考衣服的版型/图案/材质被真正搬过来，而不是与旧衣服融合（FLUX+Redux 那条路的上限就是融合）。repaint=true 时蒙版外逐像素保留原图（脸/背景零改动），mask_blur 做边缘过渡。768×1024/50 步在 GTX1080 上约 270s（对比 FLUX+Redux 的 4358s）。服务端插件 vton.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "icon": "👗",
+  "tags": [
+    "sd",
+    "inference",
+    "vton",
+    "tryon"
+  ],
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（local 执行器用手机可达地址，如隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "vton",
+      "type": "string",
+      "required": true,
+      "description": "CatVTON 管道键（catvton-load 的 vton 输出，如 catvton:mix:fp32:fp32:1024）",
+      "source": {
+        "nodeRef": "catvton-load",
+        "output": "vton",
+        "description": "由 catvton-load 的 vton 输出提供"
+      }
+    },
+    {
+      "name": "person",
+      "type": "string",
+      "required": true,
+      "description": "模特原图对象 ID（要换装的人像，建议全身或 3/4 身）",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image / mask-paint 的 image 输出提供"
+      }
+    },
+    {
+      "name": "cloth",
+      "type": "string",
+      "required": true,
+      "description": "衣服参考图对象 ID（要穿上身的衣服；白底/平铺图效果最好）",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image 的 image 输出提供"
+      }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "required": true,
+      "description": "蒙版对象 ID（灰度 IMAGE，255=要换掉的旧衣服区域）。语义与 mask-paint/mask-grow 一致，覆盖越完整换得越彻底（旧衣服留在蒙版外的部分不会被替换）",
+      "source": {
+        "nodeRef": "mask-grow",
+        "output": "mask",
+        "description": "由 mask-paint / mask-grow / mask-feather 的 mask 输出提供"
+      }
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数（官方默认 50；降到 25~30 更快、细节略降）",
+      "default": 50
+    },
+    {
+      "name": "guidance",
+      "type": "float",
+      "description": "CFG 强度（CatVTON 官方默认 2.5；>1 才启用无分类器引导）",
+      "default": 2.5
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子（-1 随机；固定种子可复现同一结果）",
+      "default": -1
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "内部画布宽（官方 768；越大越慢、显存越高。须 8 的倍数）",
+      "default": 768
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "内部画布高（官方 1024；须 8 的倍数）",
+      "default": 1024
+    },
+    {
+      "name": "mask_blur",
+      "type": "integer",
+      "description": "蒙版边缘羽化像素（0=不羽化。官方 App 用 9；越大接缝越柔和）",
+      "default": 9
+    },
+    {
+      "name": "repaint",
+      "type": "boolean",
+      "description": "true=蒙版外逐像素保留原图（脸/背景零改动，推荐）；false=整块画布结果直接贴回",
+      "default": true
+    },
+    {
+      "name": "preview_every",
+      "type": "integer",
+      "description": "采样过程帧上报间隔（每 N 步一帧，用于画布实时预览；0=关闭）",
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "VTON": "{{ Param.vton }}",
+    "PERSON": "{{ Param.person }}",
+    "CLOTH": "{{ Param.cloth }}",
+    "MASK": "{{ Param.mask }}",
+    "STEPS": "{{ Param.steps }}",
+    "GUIDANCE": "{{ Param.guidance }}",
+    "SEED": "{{ Param.seed }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "MASK_BLUR": "{{ Param.mask_blur }}",
+    "REPAINT": "{{ Param.repaint }}",
+    "PREVIEW_EVERY": "{{ Param.preview_every }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "换装结果图对象 ID（与原图同尺寸，repaint 时蒙版外为原像素）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "运行信息 JSON（尺寸/步数/CFG/种子/蒙版占比/耗时/峰值显存）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 3600,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 520,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

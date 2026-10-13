@@ -1,0 +1,114 @@
+{
+  "name": "catvton-load",
+  "displayName": "CatVTON 换装管道装载",
+  "description": "装载 CatVTON 换装管道（G11 升级 / dev-plan §52）：SD1.5-inpainting 基座 + CatVTON attention 权重 → 常驻管道键。**专用 VTON 模型**（不是 FLUX/Redux 的 image-prompt 路线）：人图与衣服图沿 latent 高度维空间拼接、cross-attention 整段摘除（不用提示词），重绘区只能从衣服 latent 取信息 ⇒ 把参考衣服真正「穿」到人身上，而不是新旧衣服融合。首次装载约 160s，之后复用常驻；fp32 + chunk=1024 是 Pascal(GTX1080/sm_61) 的必需口径（非张量 fp16 吞吐只有 fp32 的 1/64；不分块的 SDPA 会物化约 19GB 分数矩阵导致分钟级/步）。服务端插件 vton.py 为唯一实现来源",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "icon": "👗",
+  "tags": [
+    "sd",
+    "inference",
+    "vton",
+    "tryon"
+  ],
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（local 执行器用手机可达地址，如隧道 http://xxx.r7.cpolar.cn）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/重放中转用），留空同 service_url"
+    },
+    {
+      "name": "variant",
+      "type": "string",
+      "description": "attention 权重变体：mix=1024 训练版（默认，泛化最好）/ vitonhd=512 / dresscode=512。对应 /models/catvton/<变体目录>/attention/model.safetensors",
+      "default": "mix"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "UNet 精度。**Pascal 显卡保持 fp32**（sm_61 非张量 fp16 吞吐 = fp32 的 1/64，且官方推荐的 bf16 该架构不支持）；Ampere+ 可切 fp16 提速",
+      "default": "fp32"
+    },
+    {
+      "name": "vae_dtype",
+      "type": "string",
+      "description": "VAE 精度（SD1.5 VAE 在 fp16 下容易出现 NaN，默认 fp32；显存紧张时再考虑 fp16）",
+      "default": "fp32"
+    },
+    {
+      "name": "chunk",
+      "type": "integer",
+      "description": "self-attention 分块大小（query 方向）。Pascal 必须 >0：CatVTON 的 latent 画布沿高度拼成 2 倍（768×1024 → 24576 token），math 后端一次性物化 8 头 × 24576² × 4B ≈ 19GB 分数矩阵会溢出到共享显存（实测 7 分钟连 1 步都跑不完）；1024 分块后 5.4s/步。0=不分块（Ampere+ 且显存足）",
+      "default": 1024
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "VARIANT": "{{ Param.variant }}",
+    "DTYPE": "{{ Param.dtype }}",
+    "VAE_DTYPE": "{{ Param.vae_dtype }}",
+    "CHUNK": "{{ Param.chunk }}"
+  },
+  "outputs": [
+    {
+      "name": "vton",
+      "type": "string",
+      "description": "CatVTON 管道键（如 catvton:mix:fp32:fp32:1024），喂 catvton-tryon 的 vton 参数"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "运行信息 JSON（变体/精度/分块/参数量/装载耗时）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

@@ -17,6 +17,8 @@
 
 行为（与 inference-op 第一批增强一致，单一事实来源）：
 - POST /jobs 异步提交 + wait_job 轮询（2s），超时 wait_job 自动 interrupt 防孤儿；
+  **提交后立刻上报 job 标记**（base+job_id ⇒ Studio 取消可定向中断）；
+  `timeout` 默认下限 1800s（覆盖排队，节点可用 job_timeout 参数覆盖）；
 - inputs.preview_every>0 时逐轮询上报 preview 帧（FLOWX_PREVIEW 标记，
   画布实时显示采样过程帧 + 进度）；
 - 完成后对 IMAGE 类型输出上报完成帧（{base}/images/{id}），
@@ -68,18 +70,28 @@ def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
 
     op_name = ensure_op(url, tok, op_name)  # F1：解析为服务端实际名（含版本）
 
+    # 排队预算（dev-log §58.5 / §60.11）：GPU 串行队列里本 job 可能排在**数小时**的
+    # 任务之后（实测 mask_refine 2.8h 挡着 SD empty-latent），按"算子自身的计算时间"
+    # 定超时必然被自己的超时掐掉。默认下限 1800s；节点可用 job_timeout 参数覆盖。
+    timeout = param("job_timeout", max(int(timeout or 0), 1800), int)
+
+    # 画布预览帧 / 取消兜底都由 Studio 拉取或转发：地址必须 Studio 宿主机可达
+    # （docker 节点的 service_url 是容器内网地址 ⇒ 用 host_base 取 service_url_host）
+    pbase = host_base(url)
+
     jid = submit_job(url, {"name": op_name, "inputs": inputs}, tok)
     print(f"[op] {op_name} job={jid[:8]}", flush=True)
+
+    # job 标记（base + job_id）：Studio 取消/超时时据此**定向转发** POST /interrupt。
+    # 没有它就只能指望节点进程在 SIGTERM 竞态中赢下执行器——实测约 1/3 概率输掉、
+    # 远程任务变孤儿（§60.2）。这里一处覆盖所有走 executor_base 的节点。
+    emit_preview(f"{pbase}/preview/{jid}", 0.0, tok, base=pbase, job_id=jid)
 
     want_preview = False
     try:
         want_preview = int(inputs.get("preview_every", 0) or 0) > 0
     except (TypeError, ValueError):
         pass
-
-    # 画布预览帧由 Studio 拉取：URL 必须用 Studio 宿主机可达的基地址
-    # （docker 节点的 service_url 是容器内网地址，Studio 取不到）
-    pbase = host_base(url)
 
     def on_poll(v):
         if not want_preview:

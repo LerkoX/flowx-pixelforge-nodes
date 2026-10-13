@@ -1,8 +1,8 @@
 {
   "name": "sd3-empty-latent",
   "displayName": "SD3 空 Latent",
-  "description": "SD3.5 空 Latent 画布（16 通道，区别于 SD1.x 的 4 通道）：按宽高/batch 创建零 latent，宽高须 16 的倍数。自包含节点：算子 sd3.latent.empty 随包自注册",
-  "version": "1.0.0",
+  "description": "SD3.5 空 Latent 画布（16 通道，区别于 SD1.x 的 4 通道）：按宽高/batch 创建零 latent，宽高须 16 的倍数。自包含节点：算子 sd3.latent.empty 随包自注册。v1.1.0：同步 /op 改任务式（submit_job+轮询+job 标记）；job_timeout=1800s 覆盖队列等待（exec 743 事故根治）。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd3",
@@ -16,7 +16,7 @@
     "flowx_client.py",
     "server_op.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.1",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.3",
   "parameters": [
     {
       "name": "service_url",
@@ -28,6 +28,13 @@
         "output": "service_url",
         "description": "推荐由健康检查节点输出提供"
       }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布/取消兜底）可达的服务地址；docker 节点跑在远端宿主时 service_url 是容器内地址，必须另绑本参数（留空则同 service_url）"
     },
     {
       "name": "width",
@@ -51,11 +58,25 @@
       "default": 1
     },
     {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 1800,
+      "description": "任务超时（秒）；排队+计算总预算（要盖住最长任务的排队时间）"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "任务轮询间隔（秒）"
     }
   ],
   "outputs": [
@@ -75,7 +96,8 @@
     "WIDTH": "{{ Param.width }}",
     "HEIGHT": "{{ Param.height }}",
     "BATCH_SIZE": "{{ Param.batch_size }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   },
   "extract": {
     "type": "codec-block"
@@ -84,7 +106,7 @@
     "enabled": true,
     "entry": "mock.py"
   },
-  "timeout": 120,
+  "timeout": 2100,
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 260,

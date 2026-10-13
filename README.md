@@ -363,3 +363,55 @@ python3 nodes/_tools/sync-common.py          # 分发共享件
 python3 nodes/_tools/sync-common.py --check  # 只校验漂移
 python3 nodes/check-bundle.py                # 清单 + 共享件双重校验（发布门槛）
 ```
+
+## "改完必跑"清单（2026-10-13 起，dev-log §58~§60 教训固化）
+
+改**任何**节点/共享件后，按顺序跑（全部退出码 0 才算完）：
+
+```bash
+python3 nodes/_tools/sync-common.py            # 1) 分发共享件（改过 _common/ 才需要）
+python3 nodes/check-bundle.py                  # 2) 发布门槛：清单 A~D + 共享件 F + gate
+                                               #    G/H/I/J/K/L/M/N/O/P（含 flowx.json 结构、
+                                               #    算子契约、widget 交互、参数一致）
+python3 nodes/_tools/test-main-smoke.py        # 3) 每个节点真跑一遍 main()（桩）
+node nodes/_tools/test-widget-ui.mjs           # 4) 画布控件交互回归（DOM stub）
+python3 nodes/_tools/reimport-nodes.py --check # 5) Studio 快照巡检（版本/镜像 tag/执行器）
+```
+
+**顺序纪律（镜像 tag 写在每个 flowx.json 里，这条最容易踩）**：
+
+```
+改节点 → bump nodes/BUNDLE_VERSION → sync-flowx-json.py → build-image.sh
+       → reimport-nodes.py（全量！99 份 flowx.json 都变了）
+```
+
+漏掉最后一步 ⇒ docker 执行器按快照里的旧 tag 拉**旧镜像**（实测 exec 721/728 都栽在这，
+traceback 直接指出来）。另外三条本轮实测的坑：
+- **对象仓库有 TTL**：临时工作流别硬编码历史对象 id（现取句柄或用 `load-image` 现传）；
+- **Studio 限流 100 req/min**：重导/翻页核对都要节流（`reimport-nodes.py` 已内置 1.25s，核对要退避）；
+- **模型租约**：失败/中断的执会留 30 分钟租约且其常驻条目不被驱逐 ⇒ 后续冷加载等 300s 后失败。
+  排查入口 `vram-ops`（`action=leases`）或 `GET /leases`；清理 `action=unload`（可带 `lease`）。
+
+## 新增运维/门禁工具（本轮）
+
+| 工具 | 用途 |
+| --- | --- |
+| `_tools/stub-inference.py` | 推理服务**离线桩**（`/ops` 视为内置、`/jobs` 可配 pending、记账同步 `/op` 次数与 `/interrupt`）。"节点改协议"类改动的确定性门禁（先例 §51.3 / §58.3） |
+| `_tools/reimport-nodes.py [--check]` | 节流重导（48/分钟）/ 只巡检快照漂移 |
+| `_tools/gen-instantid-sweep.py` | 生成 InstantID 受控扫参工作流（weight × cn_strength 网格 + 逐点 face-similarity 打分） |
+| `nodes/vram-ops/` | 显存/租约/策略运维节点（status/leases/unload/interrupt/policy_get/policy_set） |
+| `nodes/vram-ops/test_main.py` | 节点自带 HTTP 桩测试（断言请求形状/头/输出，20 项） |
+| `inference-server/app/policy.py` + `tests/test_policy.py` | 显存策略旋钮（不 import torch，本机可单测；端点**需重新部署服务**才生效） |
+
+## 取消语义（dev-log §60.2，两条路径 + 幂等）
+
+节点被取消时，**两条路同时**保证远程任务不孤儿，实测两次都命中同一 job 属正常（`/interrupt`
+按 job_id 幂等）：
+
+1. **节点自清**：`flowx_client._register_inflight` 接管 SIGTERM/SIGHUP ⇒ `POST /interrupt`；
+2. **Studio 兜底**：`interruptRemoteJobs` 按节点上报的 **job 标记**（`FLOWX_PREVIEW` 的
+   `base`+`job_id`）转发中断 —— 所以**凡是提交 job 的节点都必须上报标记**（7 个 loader/vae
+   节点本轮补齐；否则节点信号一旦输给执行器杀进程，任务就变孤儿）。
+
+注意：中止一个**正在跑**的远程算子，服务端在**下一个检查点**（通常是步边界）才响应
+`check_cancelled()`——中途看到的 `running` 是设计，不是失败。

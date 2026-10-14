@@ -392,6 +392,7 @@ def interrupt_job(base, job_id=None, tok=None, timeout=30):
 
 def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
              on_poll=None, max_poll_errors=12, error_window=300.0):
+    # 心跳间隔（秒）：docker 节点靠 stdout 保活 docker exec 流（见下方注释）
     """轮询任务直到终态。done 返回 result dict；failed/cancelled/超时抛异常
     （超时先尽力 interrupt，避免孤儿任务继续占 GPU）。
     on_poll(view)：每次轮询拿到任务视图后回调（如上报预览帧地址），
@@ -402,6 +403,7 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
     被误判为任务失败；HTTP 4xx（如 job 不存在）立即失败，不重试。"""
     t0 = time.time()
     last = ""
+    last_beat = time.time()
     errors = 0
     err_t0 = 0.0
     try:
@@ -439,6 +441,15 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
             if log and line != last:
                 log(line)
                 last = line
+                last_beat = time.time()
+            elif log and time.time() - last_beat >= HEARTBEAT_SECONDS:
+                # 心跳：docker 节点的 stdout 走 docker exec 的流式连接，隧道会把
+                # **长时间无字节**的流截断（真机 exec 764：MaskRefine 在 docker 里跑
+                # 47 分钟只发了两行，流被截断 ⇒ 节点失败而远程 job 还在跑）。
+                # 周期性输出既保活又让日志能看到"还在跑"（本地节点多几行日志无副作用）。
+                log(f"[job {job_id[:8]}] {st} {p.get('current', 0)}/{p.get('total', 0)}"
+                    f"（心跳 {time.time()-t0:.0f}s）")
+                last_beat = time.time()
             if st == "done":
                 return v.get("result") or {}
             if st in ("failed", "cancelled"):
@@ -453,6 +464,9 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
     finally:
         # 终态（或异常）：从进行中表注销，避免终止信号重复取消已结束的任务
         _unregister_inflight(job_id)
+
+
+HEARTBEAT_SECONDS = float(os.environ.get("FLOWX_JOB_HEARTBEAT", "60"))
 
 
 def ref(oid):

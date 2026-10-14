@@ -44,7 +44,7 @@ import sys
 # 其余一律要支持 docker。本集合即"确证碰本机文件系统"的节点，声明里出现 docker/image/bundled
 # 会被 gate E 拦下（image-batch-load 读本机目录、image-batch-save 写本机文件）。
 LOCAL_ONLY = {"save-image", "save-video", "load-image", "mask-paint",
-              "image-batch-load", "image-batch-save"}
+              "image-batch-load", "image-batch-save", "load-video"}
 
 # 已删除的 Studio 业务端点（去业务耦合：4 个业务端点 → 2 个通用代理）：
 # widget 里再引用就是指向 404 的死链接，第三方 API 路径语义必须自持。
@@ -103,6 +103,23 @@ def check_flowx_json_schema(root: pathlib.Path):
         elif isinstance(ui, dict) and ui.get("entry") \
                 and not (fj.parent / ui["entry"]).is_file():
             errs.append(f"{node}: ui.entry={ui['entry']!r} 文件不存在")
+        # timeout 必须盖住 job_timeout（dev-log §61.4 真机：缺省走 Studio 默认 ~1h，
+        # 把 82 分钟的 mask_refine 节点杀成 failed —— job 本身已 done）
+        jt = next((x.get("default") for x in (d.get("parameters") or [])
+                   if x.get("name") == "job_timeout"), None)
+        if jt:
+            try:
+                jt = int(jt)
+            except (TypeError, ValueError):
+                jt = None
+        if jt:
+            to = d.get("timeout")
+            if not to:
+                errs.append(f"{node}: 有 job_timeout={jt}s 却未声明 node timeout"
+                            f"（走默认超时会把长任务杀成 failed；建议 ≥ {jt + 300}）")
+            elif int(to) < jt:
+                errs.append(f"{node}: node timeout={to}s < job_timeout={jt}s"
+                            f"（节点会先被超时杀掉）")
         names = [p.get("name") for p in d.get("parameters") or []]
         dup = {n for n in names if names.count(n) > 1}
         if dup:

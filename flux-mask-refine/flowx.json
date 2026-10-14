@@ -1,8 +1,8 @@
 {
   "name": "flux-mask-refine",
   "displayName": "FLUX 蒙版局部重绘",
-  "description": "FLUX 蒙版局部重绘：根据输入的蒙版（如手绘衣服蒙版）自动外接框裁剪 → 局部放大 → FLUX img2img 重绘 → 组合蒙版与边缘羽化贴回原图。专用于多参考图换装、局部服装修改等场景，模特脸部与背景 100% 原样保留。",
-  "version": "1.0.0",
+  "description": "FLUX 蒙版局部重绘：根据输入的蒙版（如手绘衣服蒙版）自动外接框裁剪 → 局部放大 → FLUX img2img 重绘 → 组合蒙版与边缘羽化贴回原图。专用于多参考图换装、局部服装修改等场景，模特脸部与背景 100% 原样保留。v1.1.0：补声明 node timeout=15000s（> job_timeout=14400s）——此前缺省走 Studio 默认（~1h），真机 exec 753 实测把 82 分钟的 mask_refine 节点杀成 failed（job 本身已 done）。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -178,5 +178,6 @@
     ],
     "preferredType": "local",
     "bundled": true
-  }
+  },
+  "timeout": 15000
 }

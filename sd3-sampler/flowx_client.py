@@ -120,6 +120,14 @@ def _req(method, base, path, payload=None, tok=None, timeout=1800,
             return r.read()
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")
+        # 隧道/代理的错误页不是服务端语义错误：cpolar 在隧道断开时会对任意路径回
+        # 404/502 的 **HTML** 页（真机 exec 760：一分钟的隧道抖动被误判成
+        # "job 不存在" ⇒ wait_job 立即致命，60 分钟的重绘任务白跑）。
+        # 服务端（FastAPI）的错误体一律 JSON ⇒ 非 JSON 即视为**瞬态**，交上层重试。
+        if body.lstrip()[:1] not in ("{", "["):
+            raise RuntimeError(
+                f"{method} {url} -> HTTP {e.code}（非 JSON 响应，疑似隧道/代理错误页，"
+                f"瞬态可重试）: {body[:120].strip()}")
         raise RuntimeError(f"{method} {url} -> HTTP {e.code}: {body}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"{method} {url} failed: {e.reason}")
@@ -354,8 +362,8 @@ def call_op(base, name, inputs, tok=None, timeout=1800, max_retries=3):
                     for k, m in resp.get("outputs", {}).items()}
         except RuntimeError as e:
             last_err = e
-            if "-> HTTP 4" in str(e):  # 4xx 是请求本身的问题，重试无意义
-                raise
+            if "-> HTTP 4" in str(e) and "非 JSON 响应" not in str(e):
+                raise   # 服务端 4xx（JSON 错误体）= 请求本身的问题；隧道错误页除外
             time.sleep(min(5 * attempt, 15))
     raise last_err
 
@@ -403,7 +411,9 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
                 errors = 0
             except RuntimeError as e:
                 msg = str(e)
-                if "-> HTTP 4" in msg:  # 404 等：job 真不存在，重试无意义
+                # 404 等**服务端** 4xx（JSON 错误体）说明 job 真不存在，重试无意义；
+                # 但隧道/代理的 HTML 错误页必须走下面的瞬态重试（exec 760 教训）
+                if "-> HTTP 4" in msg and "非 JSON 响应" not in msg:
                     raise
                 if errors == 0:
                     err_t0 = time.time()

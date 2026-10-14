@@ -348,6 +348,17 @@ def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
     raise last_err
 
 
+HEARTBEAT_SECONDS = float(os.environ.get("FLOWX_JOB_HEARTBEAT", "60"))
+
+
+def flush_print(*args, **kwargs):
+    """带 flush 的 print：节点日志走 docker exec 的**流式连接**，缓冲区攒着不刷
+    ⇒ 流上长时间零字节 ⇒ 隧道判定空闲并截断（真机 exec 765：MaskRefine 在 docker 里
+    跑 36 分钟、日志只落了 3 行，节点静默死亡且心跳一行都没出来）。"""
+    kwargs.setdefault("flush", True)
+    print(*args, **kwargs)
+
+
 def call_op(base, name, inputs, tok=None, timeout=1800, max_retries=3):
     """调能力运行时 POST /op（同步），返回展平的 {端口: id或值}。
     瞬态网络错误重试 max_retries 次：/op 算子多为幂等计算（结果进对象仓库），
@@ -390,7 +401,7 @@ def interrupt_job(base, job_id=None, tok=None, timeout=30):
     return post_json(base, "/interrupt", payload, tok, timeout)
 
 
-def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
+def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=flush_print,
              on_poll=None, max_poll_errors=12, error_window=300.0):
     # 心跳间隔（秒）：docker 节点靠 stdout 保活 docker exec 流（见下方注释）
     """轮询任务直到终态。done 返回 result dict；failed/cancelled/超时抛异常
@@ -465,8 +476,6 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=print,
         # 终态（或异常）：从进行中表注销，避免终止信号重复取消已结束的任务
         _unregister_inflight(job_id)
 
-
-HEARTBEAT_SECONDS = float(os.environ.get("FLOWX_JOB_HEARTBEAT", "60"))
 
 
 def ref(oid):

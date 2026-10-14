@@ -1,8 +1,8 @@
 {
   "name": "controlnet-load",
   "displayName": "ControlNet 加载",
-  "description": "加载 ControlNet 组件（MODELS_DIR 下 control_v11* 等 safetensors 单文件或 diffusers 组件目录），输出 CONTROL_NET 句柄经 controlnet-apply 捆绑 hint 图后喂采样节点 control 端口；dtype=auto 默认 fp16，进模型 LRU 常驻管理",
-  "version": "1.1.0",
+  "description": "加载 ControlNet 组件（MODELS_DIR 下 control_v11* 等 safetensors 单文件或 diffusers 组件目录），输出 CONTROL_NET 句柄经 controlnet-apply 捆绑 hint 图后喂采样节点 control 端口；dtype=auto 默认 fp16，进模型 LRU 常驻管理。v1.2.0：timeout 600→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -77,7 +77,7 @@
     "enabled": true,
     "entry": "mock.py"
   },
-  "timeout": 600,
+  "timeout": 3900,
   "executor": {
     "supportedTypes": [
       "local",

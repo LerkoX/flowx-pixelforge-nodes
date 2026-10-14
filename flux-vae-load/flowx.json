@@ -1,8 +1,8 @@
 {
   "name": "flux-vae-load",
   "displayName": "FLUX VAE 加载",
-  "description": "FLUX VAE 加载（对标 ComfyUI Load VAE）：装载 FLUX 专用 AutoencoderKL（FLUX_DIR/vae，fp16），输出 VAE 组件引用供 VAE 编解码/局部重绘节点消费。1.2.0 起走异步 /jobs+轮询（常与 UNET 冷加载同层并发、在服务端排队）。自包含节点：server_op.py 运行时自注册。v1.3.0：提交 job 后上报 job 标记（base+job_id）——Studio 取消时可**定向转发** /interrupt，不再依赖节点进程能否收到 SIGTERM（实测有竞态）。",
-  "version": "1.3.0",
+  "description": "FLUX VAE 加载（对标 ComfyUI Load VAE）：装载 FLUX 专用 AutoencoderKL（FLUX_DIR/vae，fp16），输出 VAE 组件引用供 VAE 编解码/局部重绘节点消费。1.2.0 起走异步 /jobs+轮询（常与 UNET 冷加载同层并发、在服务端排队）。自包含节点：server_op.py 运行时自注册。v1.3.0：提交 job 后上报 job 标记（base+job_id）——Studio 取消时可**定向转发** /interrupt，不再依赖节点进程能否收到 SIGTERM（实测有竞态）。v1.4.0：job_timeout 1800→3600、timeout 2100→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）",
+  "version": "1.4.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -60,9 +60,9 @@
     {
       "name": "job_timeout",
       "type": "integer",
-      "description": "加载任务超时（秒）：VAE 装载本身秒级，但同层并发时本任务可能在服务端排在冷加载 UNET 之后，需给队首留足时间；1.2.0 起走异步 /jobs 通道",
+      "description": "任务超时（秒）；排队+计算总预算。多 GB 权重冷读实测可 >31 分钟（宿主 page cache 冷），故默认 3600",
       "required": false,
-      "default": 1800
+      "default": 3600
     },
     {
       "name": "poll_interval",
@@ -102,7 +102,7 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "timeout": 2100,
+  "timeout": 3900,
   "executor": {
     "supportedTypes": [
       "local",

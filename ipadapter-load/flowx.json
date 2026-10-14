@@ -1,8 +1,8 @@
 {
   "name": "ipadapter-load",
   "displayName": "IPAdapter 加载",
-  "description": "加载 IPAdapter 权重（/models/ipadapter 下 safetensors/bin）。标准版（ip-adapter_sd15）/plus 版（ip-adapter-plus_sd15）按权重键自动判别。",
-  "version": "1.1.0",
+  "description": "加载 IPAdapter 权重（/models/ipadapter 下 safetensors/bin）。标准版（ip-adapter_sd15）/plus 版（ip-adapter-plus_sd15）按权重键自动判别。v1.2.0：timeout 600→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -31,7 +31,7 @@
   "extract": {
     "type": "codec-block"
   },
-  "timeout": 600,
+  "timeout": 3900,
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

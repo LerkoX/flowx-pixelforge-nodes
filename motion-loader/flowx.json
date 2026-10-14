@@ -1,8 +1,8 @@
 {
   "name": "motion-loader",
   "displayName": "Motion 加载",
-  "description": "把 AnimateDiff 运动模块（MotionAdapter）组合进 SD1.x 底模管道，组装成文生视频管道（AnimateDiffPipeline）；输出 model/clip/vae 引用，下游接 video-gen（文本驱动，无需首帧图）",
-  "version": "1.2.0",
+  "description": "把 AnimateDiff 运动模块（MotionAdapter）组合进 SD1.x 底模管道，组装成文生视频管道（AnimateDiffPipeline）；输出 model/clip/vae 引用，下游接 video-gen（文本驱动，无需首帧图）。v1.3.0：job_timeout 1800→3600、timeout 1800→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）",
+  "version": "1.3.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -80,9 +80,9 @@
     {
       "name": "job_timeout",
       "type": "integer",
-      "description": "服务端组合任务超时（秒），首次组合需读盘数分钟",
+      "description": "任务超时（秒）；排队+计算总预算。多 GB 权重冷读实测可 >31 分钟（宿主 page cache 冷），故默认 3600",
       "required": false,
-      "default": 1800
+      "default": 3600
     },
     {
       "name": "poll_interval",
@@ -127,7 +127,7 @@
     "enabled": true,
     "entry": "mock.py"
   },
-  "timeout": 1800,
+  "timeout": 3900,
   "executor": {
     "supportedTypes": [
       "local",

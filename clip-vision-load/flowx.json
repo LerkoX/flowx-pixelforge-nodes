@@ -1,8 +1,8 @@
 {
   "name": "clip-vision-load",
   "displayName": "CLIP Vision 加载",
-  "description": "加载 CLIP 图像编码器（IPAdapter 的参考图编码器）。模型放服务端 /models/clip_vision/ 下（diffusers 格式目录）。fp16 CPU 常驻，编码时临时上 GPU。",
-  "version": "1.2.0",
+  "description": "加载 CLIP 图像编码器（IPAdapter 的参考图编码器）。模型放服务端 /models/clip_vision/ 下（diffusers 格式目录）。fp16 CPU 常驻，编码时临时上 GPU。v1.3.0：timeout 600→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）",
+  "version": "1.3.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -31,7 +31,7 @@
   "extract": {
     "type": "codec-block"
   },
-  "timeout": 600,
+  "timeout": 3900,
   "ui": {
     "entry": "ui/node-widget.js",
     "width": 300,

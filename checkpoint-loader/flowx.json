@@ -1,8 +1,8 @@
 {
   "name": "checkpoint-loader",
   "displayName": "Checkpoint 加载",
-  "description": "将指定 checkpoint（safetensors/ckpt）加载到推理服务显存中常驻（幂等，已加载则秒回），输出 model/clip/vae 引用供下游节点使用",
-  "version": "1.3.0",
+  "description": "将指定 checkpoint（safetensors/ckpt）加载到推理服务显存中常驻（幂等，已加载则秒回），输出 model/clip/vae 引用供下游节点使用。v1.4.0：job_timeout 1800→3600、timeout 3600→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）",
+  "version": "1.4.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -72,9 +72,9 @@
     {
       "name": "job_timeout",
       "type": "integer",
-      "description": "服务端加载任务超时（秒），冷加载需读盘数分钟；1.1.0 起走异步 /jobs 通道，避免隧道空闲超时掐断同步连接",
+      "description": "任务超时（秒）；排队+计算总预算。多 GB 权重冷读实测可 >31 分钟（宿主 page cache 冷），故默认 3600",
       "required": false,
-      "default": 1800
+      "default": 3600
     },
     {
       "name": "poll_interval",
@@ -121,7 +121,7 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "timeout": 3600,
+  "timeout": 3900,
   "executor": {
     "supportedTypes": [
       "local",

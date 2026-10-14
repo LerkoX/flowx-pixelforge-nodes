@@ -132,6 +132,32 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
   实测 143 组 / 269 文件 / 58.5MB。⚠️ 复核脚本按"最新一份"取产物 ⇒ 该目录**不能搬移归档**。
 
 
+### B7/53：视频到视频（P2，v2v 换人/转绘）
+
+- **节点（5 个）**：`load-video`(local-only，读本机原片并上传) / `video-to-frames` / `frames-to-video`
+  / `video-repaint`（逐帧重绘，换人主力）/ `video-v2v`（整段 v2v）。
+  算子族：`_common/server_ops/video_flow.py`（5 算子同文件，`OP_FAMILY=video_flow`）。
+- **服务端改动**：`POST /videos`（原片字节入站 + 返回服务端路径）、
+  `object_store._adopt_video_file`（VIDEO 预编码直通：拷进对象目录、不重编码）、
+  `load_motion` 组合管 VAE dtype 二次断言（见下"真机定位缺陷"）。
+  ⚠️ 这三处是**服务端代码**（非插件）⇒ 必须**重建/重启推理服务**才生效；
+  算子本身走 `/admin/plugins` 热加载，无需重启。
+- **帧序列契约**：帧批是**单个 IMAGE 对象的列表形态**（`GET /images/{id}?index=n` 取第 n 帧），
+  节点间只传一个对象 ID（不是几十个 ID 拼串）。
+- **真机定位缺陷（本批次修）**：`load_motion` 组合管出现「`vae.decode` 已被 `_decode_fp32`
+  包装、VAE 权重却是 fp16」的不一致态 ⇒ `decode_latents` 里 conv2d 报
+  `Input type (float) and bias type (c10::Half)`；**既有 t2v（`video.sample`）同样复现**。
+  处置：① 核心 `load_motion` 在 offload 后二次断言 fp32；② 算子层 `align_vae_dtype()`
+  （按 `inspect.ismethod` 判定"解码入口被包装过"，不按名字，抗多层调试包装）+
+  `_VAEDtypeShim`（`force_upcast` 对外恒 False + encode/decode 出入参按真实 VAE 精度转换，
+  拦住管道"按计算精度把 VAE 转 fp16"那一步）。
+- **流水线**：`video-v2v-repaint.yaml`（跳舞视频换人：源片 + IPAdapter 参考人物 → 逐帧重绘）、
+  `video-v2v-animatediff.yaml`（整段 v2v）。Studio wf 173/174。
+- **验收**：`inference-server/tests/test_video_flow.py`（算子契约 + 抽帧/缩放纯逻辑 + VIDEO 直通，
+  **本机可跑、零依赖**）；真机实测见 `inference-server/ROADMAP.md` 阶段 9.5。
+- ⚠️ 逐帧重绘耗时 = 帧数 × 单帧耗时：先用 `max_frames=8` + `width=512` 小样验证效果再放开全片。
+
+
 ## 单一事实源与三件套
 
 | 文件 | 角色 |
@@ -158,11 +184,11 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 | --- | --- | --- | --- |
 | A 推理服务客户端 | 79 个（`checkpoint-loader`、`vae-load`、`controlnet-*`、`preprocess-*`（10 个，含 G7 预处理器族）、`image-upscale`、`detail-refine` …） | `supportedTypes: [local, docker]`，`preferredType: docker`，`bundled: true` + `image` | 只经 HTTP 调推理服务，镜像内 `python main.py` 即可跑（纯 stdlib） |
 | B Studio 侧图像/蒙版/滤镜（PIL） | `image-rotate/flip/crop/composite`、`mask-*`（9 个）、G5 传统滤镜 8 个（`image-adjust` / `image-hsl` / `image-curves` / `image-blur` / `image-sharpen` / `image-noise` / `image-channel-extract` / `image-channel-merge`）、`image-pad`（扩画布） | 同上 | **图片本体经服务对象仓库传递**（`get_bytes /images/{id}` → PIL 计算 → `post_bytes /images`），不碰本地文件 ⇒ 进镜像 + 装 Pillow（离线 wheel，见下）；G5 滤镜族共享实现为 `_common/image_filters.py`（由 `_tools/sync-common.py` 分发，副本漂移即门槛失败） |
-| C 读写宿主文件 | `save-image`、`save-video`、`load-image`、`mask-paint` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到 ⇒ **只能 local**。`load-image`/`mask-paint` 的本地路径字段声明了画布侧上传控件（widget `kind:'file'`），上传物落在 `~/flowx-input/uploads/` |
+| C 读写宿主文件 | `save-image`、`save-video`、`load-image`、`load-video`、`mask-paint` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到 ⇒ **只能 local**。`load-image`/`mask-paint` 的本地路径字段声明了画布侧上传控件（widget `kind:'file'`），上传物落在 `~/flowx-input/uploads/` |
 | — | `model-unload` | 常驻模型显式卸载（`[local, docker]`，偏好 docker） | 走 `POST /model/unload` 腾显存，配套 `inference-ensure` 的 `min_vram_mb` 闸门（dev-plan §21） |
 | `_common`/`_tools`/`_widget-template` | — | 非节点目录，不进镜像 |
 
-`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 C 这份名单（`save-image`、`save-video`、`load-image`、`mask-paint`），改分类时两处一起改。
+`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 C 这份名单（`save-image`、`save-video`、`load-image`、`load-video`、`mask-paint`、`image-batch-load`、`image-batch-save`），改分类时两处一起改。
 
 ## docker 节点的服务地址必须用内网
 
@@ -377,6 +403,14 @@ python3 nodes/_tools/test-main-smoke.py        # 3) 每个节点真跑一遍 mai
 node nodes/_tools/test-widget-ui.mjs           # 4) 画布控件交互回归（DOM stub）
 python3 nodes/_tools/reimport-nodes.py --check # 5) Studio 快照巡检（版本/镜像 tag/执行器）
 ```
+
+**提交纪律（同仓库并行开发时）**：提交用**显式路径**（`git add <file> …`），不要 `git add -A`
+—— 仓库里可能同时有别人的在制品（本轮实测：并行开发的视频节点 + inference-server 改动）。
+
+**超时三层（本轮两次真机事故的总结）**：`节点 timeout ≥ job_timeout ≥ 排队+计算`。
+- 排队预算：任务超时必须盖住"排在数小时长任务之后"的等待（§58.5/§60.11）；
+- 节点超时必须盖住任务超时（§61.6：缺省走 Studio 默认 ~1h，把 82 分钟的节点杀成 failed，
+  而它的 job 是 done）。gate P 现在硬校验这两条。
 
 **顺序纪律（镜像 tag 写在每个 flowx.json 里，这条最容易踩）**：
 

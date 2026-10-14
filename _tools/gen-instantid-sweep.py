@@ -22,8 +22,8 @@ Description: >-
   提示词 / latent，只改身份强度 weight 与 ControlNet 强度 cn_strength，逐点落盘并用
   face-similarity 自动打分（身份保真度）。生成器：nodes/_tools/gen-instantid-sweep.py
 Param:
-  service_url: "http://1bba08c4.r7.cpolar.cn"
-  service_url_host: "http://1bba08c4.r7.cpolar.cn"
+  service_url: "http://749a0d06.r7.cpolar.cn"
+  service_url_host: "http://749a0d06.r7.cpolar.cn"
   service_token: "30e494999da13134808ee280aea6dffd"
   ref_path: "~/flowx-output/test_person.jpg"
   seed: "{seed}"

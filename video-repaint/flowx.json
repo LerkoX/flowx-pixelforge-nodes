@@ -1,0 +1,277 @@
+{
+  "name": "video-repaint",
+  "displayName": "视频重绘（逐帧换人/转绘）",
+  "description": "视频到视频主力：逐帧 VAE 编码 → 以 strength 为 denoise 重采样 → 解码，帧间保持原运动（不依赖运动模块，任何 SD1.5/SDXL UNet 都能跑）。**换人/换风格**：model 端口接 ipadapter-apply 的 model 输出（IPA 身份注入在采样每步生效，逐帧都带参考人物/风格），pos/neg 接 clip-text-encode 的文本条件；低 strength（0.35~0.5）保姿态换外观 ⇒ 跳舞视频换人 / 视频转绘。可选 control_net 按帧注入结构条件（不给 control_frames 时用源帧自身，适合 tile/lineart 类 CN，canny/depth 类需自备条件图）。分钟级任务；preview_every>0 时逐帧解码结果实时上画布。算子会把有效去噪步数打进日志（<2 时告警），避免 steps×strength 配比过小导致“看着跑了其实没重绘”。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "v2v",
+    "inference"
+  ],
+  "icon": "🖌️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：实时预览帧由 Studio 中转拉取，docker 节点的 service_url 是容器内网地址取不到，必须单独绑；留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "底模 MODEL 引用（checkpoint-loader 的 model_ref，或 lora-loader / **ipadapter-apply** 的 model 输出——IPAdapter 身份注入会随采样逐步生效，是本节点做视频换人的主路径）",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "model_ref",
+        "description": "由 Checkpoint 加载节点的 model_ref 输出提供"
+      }
+    },
+    {
+      "name": "pos",
+      "type": "string",
+      "description": "正向文本 COND 对象 ID（clip-text-encode 的 conditioning）",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "文本编码节点的正向输出"
+      }
+    },
+    {
+      "name": "neg",
+      "type": "string",
+      "description": "负向文本 COND 对象 ID（另一个 clip-text-encode 节点，文本写反向提示词）",
+      "required": true,
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "conditioning",
+        "description": "文本编码节点的负向输出"
+      }
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "description": "待重绘的 VIDEO 对象 ID（源视频/原片）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-video",
+        "output": "video",
+        "description": "由加载视频节点输出提供"
+      }
+    },
+    {
+      "name": "strength",
+      "type": "float",
+      "description": "重绘强度（denoise，0~1）：0.35~0.5 保运动只换外观/人物，0.6~0.8 大幅改造，1.0 等于按原构图重画。**有效去噪步数 = steps − round(steps×(1−strength)) ≈ steps×strength**（起点步由核心 resolve_span 决定），配比 <2 时几乎看不到重绘，建议 steps×strength≥12",
+      "required": false,
+      "default": 0.6
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "每帧采样步数（实际执行 steps−起点 步，起点由 strength 推出；建议 24 以上并配 strength 0.5~0.6）",
+      "required": false,
+      "default": 20
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "引导强度",
+      "required": false,
+      "default": 7.0
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子（-1=随机；只随机一次，后续帧继承，避免帧间闪烁）",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "sampler_name",
+      "type": "string",
+      "description": "采样器（留空=服务端默认；可选 euler/euler_a/ddim/lms/dpmpp_2m/dpmpp_2m_sde/uni_pc）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "scheduler",
+      "type": "string",
+      "description": "sigma 曲线（留空=服务端默认；可选 normal/karras/exponential/beta）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "start_at_step",
+      "type": "integer",
+      "description": "采样起点步（KSampler Advanced 语义，0=按 strength 推算）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "end_at_step",
+      "type": "integer",
+      "description": "采样终点步（0=跑到尾）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "start",
+      "type": "integer",
+      "description": "起始帧（含，默认 0；长视频可只重绘一段）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "end",
+      "type": "integer",
+      "description": "结束帧（不含，0=到尾）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "stride",
+      "type": "integer",
+      "description": "抽帧步长（跳过帧不参与重绘，输出帧率随之下降）",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "max_frames",
+      "type": "integer",
+      "description": "最多重绘帧数（0=不限；逐帧重绘耗时 = 帧数 × 单帧耗时，先小样验证）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "control_net",
+      "type": "string",
+      "description": "可选 CONTROL_NET 对象 ID（controlnet-load 输出）：逐帧注入结构条件以在更高 strength 下保住原姿态",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "control_frames",
+      "type": "string",
+      "description": "可选：条件帧序列 IMAGE 批量对象 ID（与源帧一一对应）；留空则用源帧自身。注意 CN 类型要匹配条件图形态（tile/lineart 可直接吃原图，canny/depth 需自备条件图）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "control_strength",
+      "type": "float",
+      "description": "ControlNet 残差强度（0=关闭）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "preview_every",
+      "type": "integer",
+      "description": "每 N 帧上报一次实时预览（0=关闭）。逐帧解码结果直接上画布，可据此中途判断换人效果",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务超时（秒），超时自动 /interrupt 取消服务端任务",
+      "required": false,
+      "default": 7200
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "MODEL": "{{ Param.model }}",
+    "POS": "{{ Param.pos }}",
+    "NEG": "{{ Param.neg }}",
+    "VIDEO": "{{ Param.video }}",
+    "STRENGTH": "{{ Param.strength }}",
+    "STEPS": "{{ Param.steps }}",
+    "CFG": "{{ Param.cfg }}",
+    "SEED": "{{ Param.seed }}",
+    "SAMPLER_NAME": "{{ Param.sampler_name }}",
+    "SCHEDULER": "{{ Param.scheduler }}",
+    "START_AT_STEP": "{{ Param.start_at_step }}",
+    "END_AT_STEP": "{{ Param.end_at_step }}",
+    "START": "{{ Param.start }}",
+    "END": "{{ Param.end }}",
+    "STRIDE": "{{ Param.stride }}",
+    "MAX_FRAMES": "{{ Param.max_frames }}",
+    "CONTROL_NET": "{{ Param.control_net }}",
+    "CONTROL_FRAMES": "{{ Param.control_frames }}",
+    "CONTROL_STRENGTH": "{{ Param.control_strength }}",
+    "PREVIEW_EVERY": "{{ Param.preview_every }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}"
+  },
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "重绘后的 VIDEO 对象 ID（供 save-video 落盘 / video-to-frames 抽帧）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的随机种子"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "输出帧数"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 520,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 7500,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.4"
+}

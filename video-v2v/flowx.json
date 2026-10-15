@@ -1,0 +1,225 @@
+{
+  "name": "video-v2v",
+  "displayName": "视频到视频（整段重采样）",
+  "description": "整段视频进运动/视频模型重采样（原生 v2v），时间一致性优于逐帧重绘：消费 motion-loader 组合出的 AnimateDiffVideoToVideoPipeline（SD1.x + MotionAdapter），或任何 __call__ 接受 video 参数的 v2v 管道（Wan/LTX 系 v2v）。⚠️ strength 是**时间轴截断比例**而非重绘强度：有效去噪步数 = int(steps × strength)，steps=3/strength=0.6 实际只跑 1 步（提示词无效，真机事故）；要出效果请让 steps×strength≥12（如 steps=25 + strength=0.7 ⇒ 17 步），或打开 enforce_inference_steps（ComfyUI 语义：steps 即实际执行步数、strength 只决定从 sigma 排布哪一段开始）。算子会把有效步数打进日志：=0 直接报错、=1 告警。管道不支持 v2v 时会**明确报错**，不会悄悄退化成文生视频。分钟级任务，preview_every>0 时画布显示进度卡片。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "v2v",
+    "animatediff",
+    "inference"
+  ],
+  "icon": "🔁",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（进度卡片帧中转用）；docker 节点跑在远端宿主时必须单独绑，留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "v2v 管道 MODEL 引用（motion-loader 的 model_ref：SD1.x + MotionAdapter 组合成的 AnimateDiff 管道）",
+      "required": true,
+      "source": {
+        "nodeRef": "motion-loader",
+        "output": "model_ref",
+        "description": "由 motion-loader 的 model_ref 输出提供（v2v 管道）"
+      }
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "description": "源视频 VIDEO 对象 ID（待转换的视频）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-video",
+        "output": "video",
+        "description": "由加载视频节点的 video 输出提供"
+      }
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "正向提示词（描述目标画面：如换人后的外观/风格）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "neg_prompt",
+      "type": "string",
+      "description": "反向提示词",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "strength",
+      "type": "float",
+      "description": "时间轴截断比例（**不是**重绘强度）：有效去噪步数 = int(steps × strength)。0.7 是常用起点；配比 steps×strength<2 时基本看不到变化",
+      "required": false,
+      "default": 0.6
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数（**名义步数**，实际执行 int(steps×strength) 步；要出效果建议 steps=25 以上并配 strength 0.6~0.8）",
+      "required": false,
+      "default": 25
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "description": "引导强度",
+      "required": false,
+      "default": 7.5
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子（-1=每次随机）",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "宽（0=用源视频尺寸；管道只吃固定尺寸时显式给）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "高（0=用源视频尺寸）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "取前 N 帧参与转换（0=全片；长片务必限制，显存与耗时随帧数涨）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "输出 mp4 帧率（0=继承源视频）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "decode_chunk_size",
+      "type": "integer",
+      "description": "VAE 分块解码帧数（0=管道默认；显存紧张时设 4~8）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "enforce_inference_steps",
+      "type": "boolean",
+      "description": "ComfyUI 语义开关：true 时 steps 是**实际执行步数**、strength 只决定从 sigma 排布哪一段开始（内部 denoising_inference_steps=int(steps/strength) 后取尾部 steps 步）；false（默认）为 diffusers 原生截断语义（有效步数=int(steps×strength)）",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "preview_every",
+      "type": "integer",
+      "description": "每 N 步收录一次预览（0=关闭）。v2v 中间结果是 3D latent，画布显示进度卡片",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务超时（秒），超时自动 /interrupt 取消服务端任务",
+      "required": false,
+      "default": 7200
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "MODEL": "{{ Param.model }}",
+    "VIDEO": "{{ Param.video }}",
+    "PROMPT": "{{ Param.prompt }}",
+    "NEGATIVE_PROMPT": "{{ Param.neg_prompt }}",
+    "STRENGTH": "{{ Param.strength }}",
+    "STEPS": "{{ Param.steps }}",
+    "CFG": "{{ Param.cfg }}",
+    "SEED": "{{ Param.seed }}",
+    "WIDTH": "{{ Param.width }}",
+    "HEIGHT": "{{ Param.height }}",
+    "NUM_FRAMES": "{{ Param.num_frames }}",
+    "FPS": "{{ Param.fps }}",
+    "DECODE_CHUNK_SIZE": "{{ Param.decode_chunk_size }}",
+    "PREVIEW_EVERY": "{{ Param.preview_every }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "ENFORCE_INFERENCE_STEPS": "{{ Param.enforce_inference_steps }}"
+  },
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "转换后的 VIDEO 对象 ID（供 save-video 落盘）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的随机种子"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 470,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 7500,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.4"
+}

@@ -1,0 +1,116 @@
+{
+  "name": "frames-to-video",
+  "displayName": "帧序列转视频",
+  "description": "帧序列（IMAGE 批量对象，来自 video-to-frames 或任何逐帧处理链）→ VIDEO（对象仓库 put 时即编码 H.264 mp4），输出 video 对象 ID 供 save-video 落盘。帧尺寸必须一致（单条 H.264 码流要求同分辨率，不一致会明确报错）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "inference",
+    "io"
+  ],
+  "icon": "🧵",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址；docker 节点跑在远端宿主时必须单独绑，留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "frames",
+      "type": "string",
+      "description": "帧序列 IMAGE 批量对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "video-to-frames",
+        "output": "frames",
+        "description": "由视频转帧序列（或其它产帧节点）的输出提供"
+      }
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "写入 mp4 的帧率（决定播放速度，默认 24）",
+      "required": false,
+      "default": 24
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "服务端任务超时（秒）",
+      "required": false,
+      "default": 1800
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "FRAMES": "{{ Param.frames }}",
+    "FPS": "{{ Param.fps }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}"
+  },
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "推理服务端的 VIDEO 对象 ID（供 save-video 下载落盘）"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "编码帧数"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 250,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.4"
+}

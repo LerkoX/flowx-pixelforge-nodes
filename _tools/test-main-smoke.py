@@ -225,7 +225,10 @@ def make_stubs(node_dir, params, rec, verbose):
     fc.get_json = lambda *a, **kw: stub_raw()
     fc.post_json = lambda *a, **kw: stub_raw()
     fc.get_bytes = lambda *a, **kw: _tiny_png()
-    fc.post_bytes = lambda *a, **kw: {"id": "stub-obj"}
+    # 上传应答：/images 回 {"id"}，/videos 回 {"path"}（POST /videos 只做字节入站，
+    # 再把服务端路径交给 video.load 算子）——两种键都给，桩才对得上真实服务
+    fc.post_bytes = lambda *a, **kw: {"id": "stub-obj",
+                                      "path": "/tmp/stub-upload.mp4"}
     fc.put_bytes = lambda *a, **kw: {"id": "stub-obj"}
     fc.param = _param
     fc.token = lambda: "stub-token"

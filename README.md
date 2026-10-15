@@ -156,6 +156,11 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 - **验收**：`inference-server/tests/test_video_flow.py`（算子契约 + 抽帧/缩放纯逻辑 + VIDEO 直通，
   **本机可跑、零依赖**）；真机实测见 `inference-server/ROADMAP.md` 阶段 9.5。
 - ⚠️ 逐帧重绘耗时 = 帧数 × 单帧耗时：先用 `max_frames=8` + `width=512` 小样验证效果再放开全片。
+- ⚠️ **有效去噪步数（真机事故 2026-10-14）**：v2v 管道的 `strength` 是**时间轴截断比例**，
+  有效步数 = `int(steps × strength)` —— `steps=3, strength=0.6` 实际只跑 **1 步**（DDIM linspace
+  3 步 = [999,666,333]，截断后只剩 t=333），提示词完全无效、测出 ρ(源,出)=0.80~0.86（"没有油画风"）。
+  处置：算子打印有效步数（=0 报错 / =1 告警）、`video-v2v` 新增 `enforce_inference_steps`
+  （ComfyUI 语义）、模板配比改 25×0.7；逐帧重绘同口径（`resolve_span`，≈`int(steps×strength)`）。
 
 
 ## 单一事实源与三件套

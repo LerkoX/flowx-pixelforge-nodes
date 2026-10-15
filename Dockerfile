@@ -79,6 +79,12 @@ COPY upscale-model-load/*.py         /opt/flowx-nodes/upscale-model-load/
 COPY vae-decode-video/*.py           /opt/flowx-nodes/vae-decode-video/
 COPY vae-load/*.py                   /opt/flowx-nodes/vae-load/
 COPY video-sample-latent/*.py        /opt/flowx-nodes/video-sample-latent/
+# 视频流（P2 视频到视频）：load-video 虽 local-only（读本机磁盘），代码仍随镜像分发
+COPY load-video/*.py                 /opt/flowx-nodes/load-video/
+COPY video-to-frames/*.py            /opt/flowx-nodes/video-to-frames/
+COPY frames-to-video/*.py            /opt/flowx-nodes/frames-to-video/
+COPY video-repaint/*.py              /opt/flowx-nodes/video-repaint/
+COPY video-v2v/*.py                  /opt/flowx-nodes/video-v2v/
 COPY vram-ops/*.py                /opt/flowx-nodes/vram-ops/
 
 # --- Studio 侧图像/蒙版（PIL；图片本体经服务对象仓库传递，不在本地文件系统上） ---

@@ -151,6 +151,13 @@ const fileKey = (d) => {
   }
   return undefined
 }
+// 该节点的 kind:'file' 字段是否声明 noPreview（图已在别处展示，不再单独贴预览）
+const fileFieldNoPreview = (d) => {
+  for (const block of defs[d].match(/\{[^{}]*\}/g) || []) {
+    if (/kind:\s*'file'/.test(block)) return /noPreview:\s*true/.test(block)
+  }
+  return false
+}
 const mediaNodes = Object.keys(defs)
   .map((d) => {
     const img = (defs[d].match(/mediaImageOutput:\s*'([^']+)'/) || [])[1]
@@ -208,7 +215,12 @@ for (const node of fileNodes.filter((d) => targets.includes(d))) {
   check(`${node}: 绑流水线参数时提示参数名`,
     !!findByText(elP, '↳ 来自流水线参数 src（上传或直接填写将解除绑定，改为本节点直填路径）'))
   const prevP = findAllByTag(elP, 'img').find((i) => i.dataset.path)
-  check(`${node}: 绑流水线参数时按参数当前值出预览图`, !!prevP)
+  if (fileFieldNoPreview(node)) {
+    // 声明 noPreview 的字段（如 mask-paint 的本地底图）：只留上传入口，不再单独贴图
+    check(`${node}: noPreview 字段不出单独预览图`, !prevP)
+  } else {
+    check(`${node}: 绑流水线参数时按参数当前值出预览图`, !!prevP)
+  }
   if (pickP) {
     lastSentForm = null
     pickP.files = [{ name: 'y.png', size: 1024 }]
@@ -245,7 +257,12 @@ for (const node of fileNodes.filter((d) => targets.includes(d))) {
   const el = mount(node, { status: 'success', params: { [key]: '~/flowx-input/uploads/T_x.png' } })
   // 预览图 = 设了 dataset.path 的那个（预览帧 img 同 tag 但无 path）
   const prev = findAllByTag(el, 'img').find((i) => i.dataset.path)
-  check(`${node}: 参数有本地路径时渲染出预览图`, !!prev && prev.style.display === 'block')
+  if (fileFieldNoPreview(node)) {
+    // noPreview 字段：有路径也不贴预览图（图已在别处展示）
+    check(`${node}: noPreview 字段有本地路径也不出预览图`, !prev)
+  } else {
+    check(`${node}: 参数有本地路径时渲染出预览图`, !!prev && prev.style.display === 'block')
+  }
   if (!prev) continue
   const open = () => { document.body.children.length = 0; fire(prev, 'click'); return overlays()[0] }
   shot(node, open, '✕ 按钮')
@@ -428,8 +445,21 @@ for (const node of paintNodes) {
     findAllByTag(elRef, 'span').some((s) => /1 笔/.test(s._text)))
   check(`${node}: 读回后允许编辑`, findByText(elRef, '✏️ 编辑蒙版').disabled === false)
 
-  // C. 读不回来 → 明确报错并禁用编辑（不得用空笔画覆盖用户内容）
+  // C. 外置笔画文件不存在（HTTP 404）→ 视为「尚无笔画」允许起手
+  //    事故：流水线参数普遍指向一个还没人画过的 strokes_ref 路径（wf181 实测），
+  //    把 404 当读取失败禁用编辑 ⇒ 用户第一次根本画不了
   global.fetch = async () => ({ ok: false, status: 404, text: async () => '' })
+  const elNoFile = mount(node, {
+    params: { [refKey]: '~/flowx-input/uploads/strokes/first-time.json' },
+    onParamsChange: () => {},
+  })
+  await new Promise((r) => setTimeout(r, 10))
+  check(`${node}: 404 不报读取失败`, !findAllByTag(elNoFile, 'span').some((s) => /读取失败/.test(s._text)))
+  check(`${node}: 404 提示尚无笔画文件`, findAllByTag(elNoFile, 'span').some((s) => /尚无笔画文件/.test(s._text)))
+  check(`${node}: 404 仍允许编辑（首次起手）`, findByText(elNoFile, '✏️ 编辑蒙版').disabled === false)
+
+  // C2. 其他失败（网络/权限/5xx）→ 明确报错并禁用编辑（不得用空笔画覆盖用户内容）
+  global.fetch = async () => ({ ok: false, status: 500, text: async () => '' })
   const elErr = mount(node, {
     params: { [refKey]: '~/flowx-input/uploads/strokes/gone.json' },
     onParamsChange: () => {},
@@ -437,6 +467,75 @@ for (const node of paintNodes) {
   await new Promise((r) => setTimeout(r, 10))
   check(`${node}: 读取失败提示 ❌`, findAllByTag(elErr, 'span').some((s) => /读取失败/.test(s._text)))
   check(`${node}: 读取失败时禁用编辑`, findByText(elErr, '✏️ 编辑蒙版').disabled === true)
+
+  // C3. 参数绑**流水线参数**（模板主流写法 image_path/strokes_ref: "{{ Param.x }}"）：
+  //     props.params 只有模板原文，真实值在 paramSources.paramValue ⇒ 必须解析，
+  //     否则底图不加载、已保存笔画读不回来（wf181 事故：打开编辑器里没有底图）
+  const pathKey = (defs[node].match(/imagePathKey:\s*'([^']+)'/) || [])[1]
+  check(`${node}: widget-def 能解析出 imagePathKey`, !!pathKey)
+  const boundProps = {
+    params: { [pathKey]: '{{ Param.src }}', [refKey]: '{{ Param.strokes }}' },
+    paramSources: {
+      [pathKey]: { kind: 'workflow', paramName: 'src', paramValue: '~/flowx-input/model_832x1216.png' },
+      [refKey]: { kind: 'workflow', paramName: 'strokes', paramValue: '~/flowx-input/uploads/strokes/sd-i2i.json' },
+    },
+    onParamsChange: () => {},
+  }
+  // 底图链③：拦 new Image() 看有没有真去请求 Studio 媒体端点
+  const RealImage = global.Image
+  const imgSrcs = []
+  global.Image = class {
+    constructor() { this._src = '' }
+    set src(v) { this._src = String(v); imgSrcs.push(String(v)) }
+    get src() { return this._src }
+  }
+  let boundFetched = ''
+  global.fetch = async (u) => {
+    boundFetched = decodeURIComponent(String(u))
+    return { ok: true, status: 200, text: async () => payload }
+  }
+  const elBound = mount(node, boundProps)
+  global.Image = RealImage
+  await new Promise((r) => setTimeout(r, 10))
+  check(`${node}: 绑流水线参数时底图按参数当前值加载（wf181 修复）`,
+    imgSrcs.some((s) => s.includes('/api/v1/media/file?') && s.includes('model_832x1216.png')))
+  check(`${node}: 绑流水线参数时笔画按参数当前值读回`,
+    boundFetched.includes('/api/v1/media/file?') && boundFetched.includes('sd-i2i.json'))
+  check(`${node}: 绑流水线参数时提示“1 笔”`,
+    findAllByTag(elBound, 'span').some((s) => /1 笔/.test(s._text)))
+  check(`${node}: 绑流水线参数时提示“保存后解除绑定”`,
+    findAllByTag(elBound, 'div').some((d) => /保存后解除绑定/.test(d._text)))
+
+  // E. 缩略图不得把底图压扁：画布宽高比 = 底图真实宽高比
+  //    （事故：832×1216 的底图塞进 512×512 参照方框 ⇒ 竖向压扁，用户实测反馈）
+  const RealImage2 = global.Image
+  global.Image = class {
+    constructor() {
+      this._o = {}
+      setTimeout(() => {
+        this.naturalWidth = 832; this.naturalHeight = 1216
+        if (this._o.onload) this._o.onload()
+      }, 0)
+    }
+    set src(v) { this._src = v } get src() { return this._src }
+    set onload(fn) { this._o.onload = fn } get onload() { return this._o.onload }
+  }
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => payload })
+  const elThumb = mount(node, {
+    params: { [pathKey]: '~/flowx-input/model_832x1216.png' },
+    onParamsChange: () => {},
+  })
+  await new Promise((r) => setTimeout(r, 30))
+  global.Image = RealImage2
+  const th = findAllByTag(elThumb, 'canvas')[0]
+  check(`${node}: 缩略图画布按底图长宽比出（不压扁）`,
+    !!th && !!th.width && Math.abs(th.height / th.width - 1216 / 832) < 0.02)
+  check(`${node}: 缩略图画布长边不超 384（节点容器固定高）`,
+    !!th && Math.max(th.width, th.height) <= 385)
+  check(`${node}: 缩略图显示侧限高（CSS max-height）`,
+    !!th && String(th.style['max-height']) === '260px')
+  check(`${node}: 提示行按底图分辨率报尺寸`,
+    findAllByTag(elThumb, 'span').some((s) => /底图 832×1216|832×1216/.test(s._text)))
 
   // D. 编辑器保存：画几笔 → ✔ 完成 → 抽稀后上传成 JSON，写回 ref 并清空内联
   let written = null
@@ -472,6 +571,29 @@ for (const node of paintNodes) {
     }
     check(`${node}: 写回外置路径 ${refKey}`, !!written && !!written[refKey])
     check(`${node}: 同时清空旧的内联 ${jsonKey}`, !!written && written[jsonKey] === '')
+  }
+
+  // D2. 原值是**流水线参数绑定**时保存：参数改为直填路径，且提示行明说已解绑
+  //     （画布只有 onParamsChange 改节点参数，没有改 Param 的钩子；不明说会被当成
+  //      “参数被改坏了”—— wf181 连带疑问）
+  let writtenBound = null
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => payload })
+  const elRebind = mount(node, {
+    ...boundProps,
+    onParamsChange: (p) => { writtenBound = p },
+  })
+  await new Promise((r) => setTimeout(r, 10))
+  document.body.children.length = 0
+  fire(findByText(elRebind, '✏️ 编辑蒙版'), 'click')
+  const overlay2 = overlays()[0]
+  check(`${node}: 绑流水线参数时编辑器能打开（不被只读短路）`, !!overlay2)
+  if (overlay2) {
+    fire(findByText(overlay2, '✔ 完成'), 'click')
+    await new Promise((r) => setTimeout(r, 20))
+    check(`${node}: 保存把绑定的 ${refKey} 改为直填路径`,
+      !!writtenBound && String(writtenBound[refKey] || '').includes('T_x.json'))
+    check(`${node}: 保存后提示已解除绑定`,
+      findAllByTag(elRebind, 'div').some((d) => /已解除流水线参数绑定/.test(d._text)))
   }
   global.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' })
 }

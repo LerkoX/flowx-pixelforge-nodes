@@ -96,6 +96,11 @@ OP_FAMILIES = {
     # 只能融合旧衣服与参考图，见 §52 实测）
     "vton.py": ["catvton-load", "catvton-tryon"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
+    # G12 视频流（P2 视频到视频）：视频 I/O（load/to_frames/encode）+ v2v
+    # （repaint 逐帧重绘 / sample_v2v 原生 v2v）。五节点共享同族文件：
+    # 解码 helper 只有一份，都注册同 5 个算子（同内容=同文件=幂等上传）。
+    "video_flow.py": ["load-video", "video-to-frames", "frames-to-video",
+                      "video-repaint", "video-v2v"],
 }
 
 

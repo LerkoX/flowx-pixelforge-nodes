@@ -14,7 +14,10 @@ import re
 import sys
 
 # 仅本地运行的节点：即使 .py 进了镜像也不得声明 image/bundled（执行器必须 local）
-LOCAL_ONLY = {"save-image", "save-video", "load-image", "mask-paint"}
+# 仅本地运行的节点（与 check-bundle.py 的同名集合必须一致：
+# 改了分类两处一起改，否则 sync 会写 image/bundled、check 又判它违规）
+LOCAL_ONLY = {"save-image", "save-video", "load-image", "load-video", "mask-paint",
+              "image-batch-load", "image-batch-save"}
 
 root = pathlib.Path(__file__).parent
 tag = "lerkobba/flowx-pixelforge-nodes:v" + (root / "BUNDLE_VERSION").read_text().strip()

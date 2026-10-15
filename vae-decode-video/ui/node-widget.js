@@ -30,6 +30,9 @@
  *       （Studio 宿主机可达，docker 节点的 service_url 是容器内网地址取不到），
  *       未配置时回退 service_url
  *     任意 field 可加 advanced:true → 收进默认折叠的「⚙ 连接/高级」区
+ *     kind:'file' 可加 noPreview:true → 不出图/视频预览（上传/拖入/路径说明都保留）。
+ *       图上已有更合适的展示位时用，避免同一张图在节点上重复两遍（mask-paint 反馈：
+ *       底图已在蒙版控件里显示，下面再贴一张预览纯属噪音）
  *     （service_url/service_token 等连接参数建议 advanced，保持节点紧凑）
  *   replay[]      （可选）▶预览按钮：经节点级通用代理重放算子（POST /op），
  *                 overrides 从这些字段当前值收集（slider 转 Number、check 转 Boolean）；
@@ -60,8 +63,10 @@
  *                   **外置存储（推荐）**：给了 strokesRefKey 就改存本地 JSON 文件——
  *                   保存时 POST /api/v1/media/upload?subdir=<strokesSubdir>（默认
  *                   strokes）拿回路径写进 strokesRefKey，并清空内联 strokesKey；
- *                   读取走 GET /api/v1/media/file（异步，读不回来则禁止编辑，
- *                   避免用空笔画覆盖原内容）。适合笔画体量大、不想把编辑态文本
+ *                   读取走 GET /api/v1/media/file（异步）；读回来是 404（磁盘上本来
+ *                   就没这个文件，如流水线参数指向一个还没人画过的路径）视为「尚无
+ *                   笔画」允许起手，其他失败才禁止编辑——避免用空笔画覆盖原内容。
+ *                   适合笔画体量大、不想把编辑态文本
  *                   写进 workflow YAML / 执行快照 / SSE 的节点。
  *                   底图三条链：① 回放/执行态 __inputs_resolved
  *                   经节点级代理拉取（同 compareInput 链路）；② 编辑态从参数解析
@@ -69,6 +74,12 @@
  *                   （Studio 媒体端点，未经执行也能衬图绘制）。三条链都无底图时
  *                   按 512x512 空白参照绘制。imagePathKey 是节点自己声明加载
  *                   本地图的参数键（如 'image_path'）。
+ *                   ⚠️ 参数值一律经 resolveParam 解析：模板节点普遍写
+ *                   image_path/strokes_ref: "{{ Param.xxx }}"，props.params 下发的是
+ *                   模板原文、真实值只在 paramSources.paramValue —— 直读 cur.params
+ *                   会把绑流水线参数误判成「绑上游」而整块丢弃（wf181 事故：
+ *                   编辑器打开没有底图）。同理保存笔画时只能改节点参数 ⇒ 会把绑定
+ *                   改成直填路径，提示行会明说（与 kind:'file' 上传控件同口径）。
  *                   strokesKey 对应的参数不要放进 fields（由本控件管理）。
  *   note          （可选）输出说明行
  *
@@ -484,6 +495,9 @@ function createNodeWidget(spec) {
       //    若一律只读，用户在图里既不能上传也看不到预览（wf157 反馈）。
       const boundToParam = isWired(raw) && psrc.kind === 'workflow'
       if (isWired(raw) && !boundToParam) return wiredControl(f.key, raw)
+      // noPreview：本字段不单独出图（图已在别处展示，如 paint 控件的底图区）；
+      // 上传/拖入/路径说明照常。
+      const noPreview = !!f.noPreview
       const wrap = h('div', '')
       const inp = h('input', INPUT_CSS + ';font-family:ui-monospace,Menlo,monospace')
       inp.type = 'text'
@@ -515,7 +529,7 @@ function createNodeWidget(spec) {
       }
       const showPreview = () => {
         const p = effPath()
-        const none = !p || isWired(p)
+        const none = noPreview || !p || isWired(p)
         const wantVid = !none && VIDEO_EXT_RE.test(String(p))
         img.style.display = 'none'
         vid.style.display = 'none'
@@ -1107,23 +1121,54 @@ function createNodeWidget(spec) {
       let refW = 512, refH = 512
       let baseImg = null, baseFor = ''
       let thumbKey = ''
-      let strokesSrc = null    // 已加载（或已尝试加载）的原始参数值
+      let strokesSrc = null    // 已加载（或已尝试加载）的有效参数值（resolveParam 之后）
       let strokesErr = ''      // 读取失败信息：失败时禁止编辑，避免用空笔画覆盖原内容
+      let strokesNoFile = false // 外置笔画文件 404（磁盘上本来就没有）：视为空笔画，允许起手
+      let rebindDone = false   // 本次会话保存过笔画且原值是绑定（已解绑为直填路径）
       let strokesLoading = false
-      const thumb = h('canvas', 'width:100%;border-radius:8px;display:block;background:#0b1220')
+      const thumb = h('canvas', 'display:block;margin:0 auto;border-radius:8px;background:#0b1220;max-width:100%;max-height:260px;width:auto;height:auto;cursor:pointer')
       const bar = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
       const editBtn = h('button', BTN_CSS + ';color:#f472b6;border-color:rgba(244,114,182,0.4)', '✏️ 编辑蒙版')
       editBtn.title = '打开蒙版编辑器：笔刷/矩形涂抹重绘区域（白=重绘、黑=保留），橡皮修正'
       const paintHint = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);flex:1;line-height:1.4')
+      const paintNote = h('div', 'display:none;font-size:9px;color:rgba(251,191,36,0.85);line-height:1.35;margin-top:3px')
       bar.append(editBtn, paintHint)
-      paintWrap.append(thumb, bar)
+      paintWrap.append(thumb, bar, paintNote)
       paintWrap.style.display = 'block'
 
+      // 参数当前值：字面量 = 原值；绑定 = resolveParam 解析出的当前值/运行时值。
+      // 必须走 resolveParam（同底图/模型下拉链路）：模板节点普遍写
+      // strokes_ref: "{{ Param.xxx }}"，直接读 cur.params 拿到的是模板原文，会被
+      // 下面的 isWired 当成「绑上游」整块丢弃 ⇒ 已保存的笔画永远读不回来（wf181）。
+      const paramText = (key) => {
+        const v = resolveParam(key)
+        return v === undefined || v === null ? '' : String(v)
+      }
+      // 工作坐标系 = 底图真实分辨率（有底图时；与编辑器一致），否则沿用笔画存储参照
+      // refW/refH。缩略图与提示行都用它 —— 否则 832×1216 的底图会被当成 512×512 方框
+      // 里的内容，竖向压扁（用户实测反馈）。
+      const workW = () => (baseImg ? baseImg.naturalWidth : refW)
+      const workH = () => (baseImg ? baseImg.naturalHeight : refH)
+      // 笔画坐标换算：把存储参照系（refW×refH）里的笔画映射到目标坐标系。x、y 可能
+      // 不等比（换过不同长宽比的底图），故分开缩放、线宽取几何平均；缩略图与编辑器
+      // 打开时共用这一份，避免两处算法漂移。始终返回深拷贝（编辑器会就地改写数组）。
+      const mapStrokes = (src, toW, toH) => {
+        const kx = toW / refW, ky = toH / refH, km = (kx + ky) / 2
+        return (src || []).map((s) => {
+          const o = JSON.parse(JSON.stringify(s))
+          if (kx !== 1 || ky !== 1) {
+            if (o.points) o.points = o.points.map((p) => [p[0] * kx, p[1] * ky])
+            if (o.size) o.size = o.size * km
+            if (o.type === 'rect') { o.x *= kx; o.y *= ky; o.w *= kx; o.h *= ky }
+          }
+          return o
+        })
+      }
       // 有效笔画来源：外置引用非空时优先，否则回退内联（兼容旧 workflow）
       const strokesValue = () => {
-        const ref = REF_KEY ? String((cur.params || {})[REF_KEY] || '') : ''
+        const ref = REF_KEY ? paramText(REF_KEY) : ''
         if (ref !== '') return ref
-        return String((cur.params || {})[P.strokesKey] || '')
+        return paramText(P.strokesKey)
       }
 
       // 解析笔画文本（内联 JSON 或外置文件内容）；解析失败不改动现有 strokes
@@ -1142,10 +1187,12 @@ function createNodeWidget(spec) {
         if (raw === strokesSrc) return
         strokesSrc = raw
         strokesErr = ''
+        strokesNoFile = false
         strokesLoading = false
         strokes = []
         if (!raw) return
-        if (isWired(raw)) return              // 绑定上游：只读，不解析
+        // 解析后仍是模板串 = 绑了上游节点输出（或 Param 里没有该键）：只读，不解析
+        if (isWired(raw)) return
         const txt = raw.trim()
         if (txt.charAt(0) === '{') {          // 内联 JSON（旧写法）
           try { applyStrokesJSON(txt) } catch (_) { strokesErr = '内联 JSON 解析失败'; strokes = [] }
@@ -1156,6 +1203,11 @@ function createNodeWidget(spec) {
         const want = raw
         fetch(mediaUrl(want), { credentials: 'same-origin' })
           .then((r) => {
+            if (r.status === 404) {           // 磁盘上还没有这个笔画文件：不算错误
+              const e = new Error('HTTP 404')
+              e.notFound = true
+              throw e
+            }
             if (!r.ok) throw new Error('HTTP ' + r.status)
             return r.text()
           })
@@ -1169,7 +1221,11 @@ function createNodeWidget(spec) {
             if (strokesSrc !== want) return
             strokesLoading = false
             strokes = []
-            strokesErr = '读取失败（' + String((e && e.message) || e) + '）'
+            // 404 = 该路径尚无笔画文件（首次绘制 / 流水线参数指向还没人画过的路径，
+            // wf181 实测）⇒ 视为空笔画、允许起手；其他失败（网络/权限/5xx/JSON 坏）
+            // 才禁止编辑，避免用空笔画覆盖原内容
+            strokesNoFile = !!(e && e.notFound)
+            strokesErr = strokesNoFile ? '' : '读取失败（' + String((e && e.message) || e) + '）'
             thumbKey = ''; renderThumb(); updateHint()
           })
       }
@@ -1228,20 +1284,44 @@ function createNodeWidget(spec) {
           : strokesLoading ? '笔画读取中…'
             : strokesErr ? '笔画读取失败，已禁止编辑（避免覆盖原内容）：' + strokesErr
               : '打开蒙版编辑器：笔刷/矩形涂抹重绘区域（白=重绘、黑=保留），橡皮修正'
+        // 解绑说明：strokes_ref 绑的是流水线参数时，画布只有 onParamsChange 改节点
+        // 参数 ⇒ 保存只能改成「本节点直填路径」（与 kind:'file' 上传控件同口径）。
+        // 提前告知 + 保存后确认，免得用户以为参数被改坏（wf181 连带疑问）。
+        // 注意刷新要在下面的 loading/err 早退之前，否则保存完那一刻提示不更新。
+        const refRaw = REF_KEY ? String((cur.params || {})[REF_KEY] || '') : ''
+        const refSrc = REF_KEY ? ((cur.paramSources || {})[REF_KEY] || {}) : {}
+        if (REF_KEY && isWired(refRaw) && refSrc.kind === 'workflow') {
+          paintNote.textContent = '↳ 笔画来自流水线参数 ' + (refSrc.paramName || '')
+            + '（保存后解除绑定，改为本节点直填路径）'
+          paintNote.style.display = 'block'
+        } else if (REF_KEY && rebindDone) {
+          paintNote.textContent = '↳ 已解除流水线参数绑定，笔画路径改为本节点直填'
+          paintNote.style.display = 'block'
+        } else {
+          paintNote.textContent = ''
+          paintNote.style.display = 'none'
+        }
         if (strokesLoading) { paintHint.textContent = '⏳ 读取笔画…'; return }
         if (strokesErr) { paintHint.textContent = '❌ ' + strokesErr; return }
+        const noFileTip = strokesNoFile ? '（尚无笔画文件）' : ''
         paintHint.textContent = strokes.length
-          ? `${strokes.length} 笔 · ${refW}×${refH}${baseImg ? '' : '（空白参照）'}`
+          ? `${strokes.length} 笔 · ${workW()}×${workH()}${baseImg ? '' : '（空白参照）'}${noFileTip}`
           : (baseImg
-            ? `底图 ${baseImg.naturalWidth}×${baseImg.naturalHeight} · 未绘制`
-            : '未绘制 · 可空白起手（512×512 参照）')
+            ? `底图 ${baseImg.naturalWidth}×${baseImg.naturalHeight} · 未绘制${noFileTip}`
+            : '未绘制 · 可空白起手（512×512 参照）' + noFileTip)
       }
 
       const maskCv = document.createElement('canvas')
+      // 缩略图画布：按工作坐标系（底图）的真实长宽比出，长边封顶 384 内部像素；
+      // 显示侧由 CSS max-height 收口（节点容器是固定高度，图太高会把下面控件挤出可视区）。
+      // 事故：原来固定按 refW 出方框（512×512 参照）⇒ 832×1216 的底图被塞进方框，
+      // 竖向压扁变形。
+      const THUMB_MAX_SIDE = 384
       const renderThumb = () => {
-        const W = Math.min(refW, 384)
-        const k = W / refW
-        const H = Math.max(1, Math.round(refH * k))
+        const ww = workW(), wh = workH()
+        const s = Math.min(THUMB_MAX_SIDE / ww, THUMB_MAX_SIDE / wh)
+        const W = Math.max(1, Math.round(ww * s))
+        const H = Math.max(1, Math.round(wh * s))
         if (thumb.width !== W || thumb.height !== H) { thumb.width = W; thumb.height = H }
         const ctx = thumb.getContext('2d')
         ctx.fillStyle = '#0b1220'
@@ -1251,7 +1331,8 @@ function createNodeWidget(spec) {
           maskCv.width = W; maskCv.height = H
           const mctx = maskCv.getContext('2d')
           mctx.clearRect(0, 0, W, H)
-          for (const st of strokes) drawStroke(mctx, st, k)
+          const k = W / ww
+          for (const st of mapStrokes(strokes, ww, wh)) drawStroke(mctx, st, k)
           ctx.save(); ctx.globalAlpha = 0.55; ctx.drawImage(maskCv, 0, 0); ctx.restore()
         }
       }
@@ -1261,18 +1342,10 @@ function createNodeWidget(spec) {
         if (closePaintEditor) return
         if (strokesLoading || strokesErr) return   // 笔画没读回来就不进编辑器（免得空笔画覆盖）
         // 工作坐标系 = 当前底图分辨率（无底图沿用存储参照）；与存储参照不同时
-        // 先把已有笔画换算过来，保存时以当前坐标系为准
-        const W0 = baseImg ? baseImg.naturalWidth : refW
-        const H0 = baseImg ? baseImg.naturalHeight : refH
-        const wk = strokes.map((s) => JSON.parse(JSON.stringify(s)))
-        if (W0 !== refW || H0 !== refH) {
-          const kx = W0 / refW, ky = H0 / refH, km = (kx + ky) / 2
-          for (const s of wk) {
-            if (s.points) s.points = s.points.map((p) => [p[0] * kx, p[1] * ky])
-            if (s.size) s.size = s.size * km
-            if (s.type === 'rect') { s.x *= kx; s.y *= ky; s.w *= kx; s.h *= ky }
-          }
-        }
+        // 先把已有笔画换算过来（mapStrokes 与缩略图同一份算法），保存时以当前坐标系为准
+        const W0 = workW()
+        const H0 = workH()
+        const wk = mapStrokes(strokes, W0, H0)
         let tool = 'brush'
         let brushSize = 40
         let curStroke = null
@@ -1368,7 +1441,7 @@ function createNodeWidget(spec) {
           ctx.textAlign = 'center'
           ctx.fillText(`空白参照 ${W0}×${H0}`, bcv.width / 2, bcv.height / 2 - 8)
           ctx.font = Math.round(bcv.width / 32) + 'px sans-serif'
-          ctx.fillText('执行一次上游节点后可衬图绘制', bcv.width / 2, bcv.height / 2 + Math.round(bcv.width / 20))
+          ctx.fillText('在节点上填本地底图或执行一次上游节点即可衬图绘制', bcv.width / 2, bcv.height / 2 + Math.round(bcv.width / 20))
         }
         const redraw = () => {
           const k = pcv.width / W0
@@ -1493,7 +1566,11 @@ function createNodeWidget(spec) {
             document.removeEventListener('keydown', onKey)
             overlay.remove()
             closePaintEditor = null
-            if (REF_KEY) setParams({ [P.strokesKey]: '', [REF_KEY]: path })
+            if (REF_KEY) {
+              // 原值是绑定（{{ Param.x }}）⇒ 本次保存把节点参数改成直填路径，提示行明说
+              rebindDone = isWired(String((cur.params || {})[REF_KEY] || ''))
+              setParams({ [P.strokesKey]: '', [REF_KEY]: path })
+            }
             // 重新从参数解析（外置：按新路径重读，保证缩略图 = 磁盘内容）
             strokesSrc = null
             syncStrokes()
@@ -1552,8 +1629,12 @@ function createNodeWidget(spec) {
             img.src = nodeProxyUrl('/images/' + inId, 'GET')
           }
         } else if (!inId && P.imagePathKey) {
-          // ③ 本地路径兜底：无上游对象 id（尚未执行）时读节点自己的本地图参数
-          const lp = String((cur.params || {})[P.imagePathKey] || '')
+          // ③ 本地路径兜底：无上游对象 id（尚未执行）时读节点自己的本地图参数。
+          //    必须走 resolveParam：模板节点普遍写 image_path: "{{ Param.image_path }}"，
+          //    直读 cur.params 拿到模板原文 ⇒ isWired 判定为「绑上游」丢弃 ⇒ 编辑器
+          //    里没有底图（wf181 事故）。resolveParam 对绑流水线参数返回其当前值，
+          //    与 kind:'file' 控件的预览（effPath）同一个口径。
+          const lp = paramText(P.imagePathKey)
           const fileKey = lp && !isWired(lp) ? 'file:' + lp : ''
           if (fileKey && fileKey !== baseFor) {
             baseFor = fileKey

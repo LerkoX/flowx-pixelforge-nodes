@@ -3,7 +3,7 @@
 bg_mode=color（纯色底，默认白底）或 image（背景图 cover 铺满）；
 前景取 image 自带 alpha，或 mask 参数（灰度）覆盖；支持羽化与偏移。
 """
-from flowx_client import emit, emit_result_preview, param, token
+from flowx_client import emit_input_media, emit, emit_result_preview, param, token
 from image_io import get_pimg, post_pimg
 
 
@@ -61,6 +61,9 @@ def process(fg, mask=None, bg_mode="color", bg_color="#FFFFFF", bg_img=None,
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
+    # 输入原图物化：画布对比控件的「原图」侧（推理服务对象 GC/TTL 后
+    # 必然 404，必须在执行当时落一份到 Studio 媒体缓存）
+    emit_input_media(url, param("image"), tok)
     fg = get_pimg(url, param("image"), tok, mode="RGBA")
     mask_id = param("mask", "")
     mask = get_pimg(url, mask_id, tok, mode="L") if mask_id else None

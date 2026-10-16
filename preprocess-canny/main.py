@@ -12,7 +12,7 @@ def main():
         "image": ref(param("image")),
         "low_threshold": param("low_threshold", 100, cast=int),
         "high_threshold": param("high_threshold", 200, cast=int),
-    }, emit_keys=["image"], timeout=600)
+    }, emit_keys=["image"], timeout=600, input_media=("image",))
 
 
 if __name__ == "__main__":

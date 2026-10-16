@@ -1,4 +1,4 @@
-from flowx_client import emit, emit_result_preview, param, token
+from flowx_client import emit_input_media, emit, emit_result_preview, param, token
 from image_batch import load_ids
 from image_montage import montage, upload_pil
 
@@ -7,6 +7,8 @@ def main():
     url = param("service_url").rstrip("/")
     tok = token()
     ids = load_ids(param("images"))
+    # 输入原图物化：取第一张作为对比控件的「原图」侧
+    emit_input_media(url, ids[0] if ids else "", tok)
     pil, grid = montage(url, ids, tok, cols=param("cols", 0, cast=int),
                         cell_w=param("cell_w", 0, cast=int),
                         cell_h=param("cell_h", 0, cast=int),

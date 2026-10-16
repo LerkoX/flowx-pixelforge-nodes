@@ -23,7 +23,7 @@ def main():
         "mask_blur": int(param("mask_blur", "9")),
         "repaint": param("repaint", "true") == "true",
         "preview_every": int(param("preview_every", "5")),
-    }, emit_keys=["image", "info"], timeout=3600)
+    }, emit_keys=["image", "info"], timeout=3600, input_media=("person",))
 
 
 if __name__ == "__main__":

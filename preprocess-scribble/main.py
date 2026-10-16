@@ -16,7 +16,7 @@ def main():
         "image": ref(param("image")),
         "detect_resolution": int(param("detect_resolution", "512")),
         "safe": _bool(param("safe", "true")),
-    }, emit_keys=["image"])
+    }, emit_keys=["image"], input_media=("image",))
 
 
 if __name__ == "__main__":

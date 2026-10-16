@@ -16,7 +16,7 @@ def main():
         "steps": param("steps", 50, cast=int),
         "cfg": param("cfg", 5.0, cast=float),
         "seed": param("seed", -1, cast=int),
-        "preview_every": param("preview_every", 0, cast=int),
+        "preview_every": param("preview_every", 5, cast=int),
     }, emit_keys=['latent', 'seed'], timeout=7200)
 
 

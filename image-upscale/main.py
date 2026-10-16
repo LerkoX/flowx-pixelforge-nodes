@@ -6,14 +6,17 @@
 且带 job 标记 ⇒ Studio 取消时可定向中断，不留孤儿任务。"""
 import time
 
-from flowx_client import (emit, emit_preview, ensure_plugin, host_base, param,
-                          ref, submit_job, token, wait_job)
+from flowx_client import (emit, emit_input_media, emit_preview, ensure_plugin,
+                          host_base, param, ref, submit_job, token, wait_job)
 
 
 def main():
     url = param("service_url").rstrip("/")
     pbase = host_base(url)   # Studio 侧可达（job 标记用）
     tok = token()
+    # 输入原图物化：画布对比控件的「原图」侧（推理服务对象 GC/TTL 后
+    # 必然 404，必须在执行当时落一份到 Studio 媒体缓存）
+    emit_input_media(url, param("image"), tok)
     ensure_plugin(url, "image.upscale", tok=tok)
     scale = param("scale", 2.0, cast=float)
     width = param("width", 0, cast=int)

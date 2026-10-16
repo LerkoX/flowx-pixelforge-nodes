@@ -20,6 +20,11 @@ def main():
     resident = res.get("resident", "(empty)")
     print(f"[model-unload] target='{target or '(all)'}' "
           f"-> unloaded={unloaded} resident={resident}", flush=True)
+    # 被 pin/租约跳过的条目打日志（服务端 skipped_reasons）——
+    # 「点了卸载却没卸掉」的排查依据，常见于残留执行租约（TTL 未到期）
+    if res.get("skipped_reasons"):
+        print(f"[model-unload] 跳过：{res['skipped_reasons']}"
+              f"（可等租约 TTL 过期 / 监控页释放租约后重试）", flush=True)
     emit(unloaded=unloaded, resident=resident)
 
 

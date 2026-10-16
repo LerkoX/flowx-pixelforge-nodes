@@ -17,7 +17,7 @@ def main():
         "variant": param("variant", "lineart"),
         "detect_resolution": int(param("detect_resolution", "512")),
         "coarse": _bool(param("coarse", "false")),
-    }, emit_keys=["image"])
+    }, emit_keys=["image"], input_media=("image",))
 
 
 if __name__ == "__main__":

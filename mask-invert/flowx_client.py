@@ -524,13 +524,34 @@ def emit_result_preview(base, oid, tok=None):
     emit_preview(f"{host}/images/{oid}", 1.0, tok, base=host)
 
 
+def emit_input_media(base, oid, tok=None, name="input"):
+    """把「输入原图」物化一份到 Studio 媒体缓存（kind=input，replace 式）。
+
+    为什么需要：画布对比控件要在节点完成后并排显示「原图 / 结果」，而原图只存在于
+    推理服务的对象存储（内存态）——GC、服务重启或对象 TTL 到期后
+    {base}/images/{oid} 必 404，历史表现为「原图缩在左边 / 原图加载失败」。经 marker
+    通道让 Studio 落盘一份后，原图与结果帧一样随媒体缓存（TTL 72h）持久可读。
+
+    只对声明了 compareInput 的节点（widget-def）有意义；oid 缺失时静默跳过；
+    同节点重复调用为覆盖式（只留最新一份）。"""
+    if not oid or not isinstance(oid, str):
+        return
+    host = host_base(base)
+    emit_media("input", url=f"{host}/images/{oid}", mode="replace", name=name,
+               tok=tok, base=host)
+
+
 def emit_preview(url, progress=None, tok=None, base=None, job_id=None):
     """经 stdout 标记通道向 Studio 上报预览帧地址（媒体本体不走 stdout/base64）：
     Studio 拦截 FLOWX_PREVIEW 行（不落日志），按 url 经 HTTP 中转拉帧给画布。
     url 指向推理服务的预览帧端点（应经 host_base() 构造，如
     {host_base}/preview/{job_id}）。
     base/job_id 供 Studio 记录服务基地址与推理 job（节点级中断、
-    op-replay 重放预览用）；旧版 Studio 忽略多余字段。"""
+    op-replay 重放预览用）；旧版 Studio 忽略多余字段。
+
+    路线 A（媒体通道统一化）：同时发 FLOWX_MEDIA（新格式）。kind=frame +
+    mode=replace 语义与旧 FLOWX_PREVIEW 等价；旧 Studio 只识别 FLOWX_PREVIEW，
+    FLOWX_MEDIA 行会落入普通日志（无害）。"""
     payload = {"url": url}
     if progress is not None:
         payload["progress"] = round(float(progress), 4)
@@ -542,3 +563,37 @@ def emit_preview(url, progress=None, tok=None, base=None, job_id=None):
         payload["job_id"] = job_id
     print("FLOWX_PREVIEW " + json.dumps(payload, separators=(",", ":")),
           flush=True)
+    emit_media("frame", url=url, mode="replace", progress=payload.get("progress"),
+               tok=tok, base=base, job_id=job_id)
+
+
+def emit_media(kind, url=None, path=None, mode=None, name=None, mime=None,
+               progress=None, tok=None, base=None, job_id=None):
+    """上报节点媒体产物（路线 A 新格式）。source：url（http，Studio 物化拉取落盘）
+    或 path（本地文件，登记不复制，须落在媒体白名单内）。kind 是不透明分类标签
+    （frame/result/... 由节点生态自描述）；mode=replace 覆盖式最新 / append 追加序列。"""
+    m = {"kind": kind}
+    if mode:
+        m["mode"] = mode
+    if name:
+        m["name"] = name
+    if mime:
+        m["mime"] = mime
+    src = {}
+    if url:
+        src["type"] = "http"
+        src["url"] = url
+        if tok:
+            src["token"] = tok
+    elif path:
+        src["type"] = "local"
+        src["path"] = path
+    if src:
+        m["source"] = src
+    if progress is not None:
+        m["progress"] = round(float(progress), 4)
+    if base:
+        m["base"] = base
+    if job_id:
+        m["job_id"] = job_id
+    print("FLOWX_MEDIA " + json.dumps(m, separators=(",", ":")), flush=True)

@@ -29,7 +29,7 @@ def main():
         inputs["upscale_model"] = ref(ups)
     run_op("tiled.apply", inputs,
            emit_keys=["image", "pre_upscaled", "seam_map", "tiles", "coverage",
-                      "width", "height"], timeout=3600)
+                      "width", "height"], timeout=3600, input_media=("image",))
 
 
 if __name__ == "__main__":

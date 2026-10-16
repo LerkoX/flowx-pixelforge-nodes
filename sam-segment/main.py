@@ -11,7 +11,7 @@ def main():
         "multimask": param("multimask", "true"),
         "pick": int(param("pick", "0")),
         "overlay": float(param("overlay", "0.5")),
-    }, emit_keys=["mask", "candidates", "score", "annotated", "width", "height"])
+    }, emit_keys=["mask", "candidates", "score", "annotated", "width", "height"], input_media=("image",))
 
 
 if __name__ == "__main__":

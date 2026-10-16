@@ -33,8 +33,9 @@
 import json
 import os
 
-from flowx_client import (emit_preview, ensure_plugin, get_json, host_base,
-                          param, submit_job, token, wait_job, yaml_scalar)
+from flowx_client import (emit_input_media, emit_preview, ensure_plugin, get_json,
+                          host_base, param, submit_job, token, wait_job,
+                          yaml_scalar)
 
 _SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -61,12 +62,30 @@ def ensure_op(url, tok, op_name):
     return op_name
 
 
-def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
+def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600,
+           input_media=()):
     """提交单个算子为异步 job 并回传输出。inputs 中对象引用用 ref() 包装；
     service_url/service_token 从节点参数读（flowx.json env 映射）。
-    check_exists 保留兼容（旧节点签名），自注册模式下无需显式传。"""
+    check_exists 保留兼容（旧节点签名），自注册模式下无需显式传。
+
+    input_media：要物化落盘的「输入原图」键名（通常 ("image",)，与 widget-def 的
+    compareInput 对应）。画布的对比控件靠它拿到持久可读的原图——推理服务对象是
+    内存态，执行结束后 GC/重启/TTL 一到就 404（详见 flowx_client.emit_input_media）。"""
     url = param("service_url").rstrip("/")
     tok = token()
+
+    # 画布预览帧 / 取消兜底都由 Studio 拉取或转发：地址必须 Studio 宿主机可达
+    # （docker 节点的 service_url 是容器内网地址 ⇒ 用 host_base 取 service_url_host）
+    pbase = host_base(url)
+
+    # 输入原图物化：趁对象还在服务端内存时落盘一份（在提交 job 之前——队列可能排队
+    # 数小时，排到之前对象就已被 GC 的情况只能靠这里的快照）；只处理 $id 形态的
+    # 对象引用，逐键取第一张
+    for _key in input_media:
+        _val = inputs.get(_key)
+        _oid = _val.get("$id") if isinstance(_val, dict) else _val
+        if isinstance(_oid, str):
+            emit_input_media(pbase, _oid, tok)
 
     op_name = ensure_op(url, tok, op_name)  # F1：解析为服务端实际名（含版本）
 
@@ -74,10 +93,6 @@ def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600):
     # 任务之后（实测 mask_refine 2.8h 挡着 SD empty-latent），按"算子自身的计算时间"
     # 定超时必然被自己的超时掐掉。默认下限 1800s；节点可用 job_timeout 参数覆盖。
     timeout = param("job_timeout", max(int(timeout or 0), 1800), int)
-
-    # 画布预览帧 / 取消兜底都由 Studio 拉取或转发：地址必须 Studio 宿主机可达
-    # （docker 节点的 service_url 是容器内网地址 ⇒ 用 host_base 取 service_url_host）
-    pbase = host_base(url)
 
     jid = submit_job(url, {"name": op_name, "inputs": inputs}, tok)
     print(f"[op] {op_name} job={jid[:8]}", flush=True)

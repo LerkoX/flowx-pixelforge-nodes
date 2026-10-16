@@ -30,7 +30,7 @@ def main():
         args["bg"] = ref(bg_id)
     run_op("iclight.relight", args,
            emit_keys=["image", "width", "height", "light_balance", "lum_left",
-                      "lum_right", "info"], timeout=3600)
+                      "lum_right", "info"], timeout=3600, input_media=("image",))
 
 
 if __name__ == "__main__":

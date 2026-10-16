@@ -17,7 +17,7 @@ def main():
         "only_center": param("only_center", "true"),
         "max_faces": int(param("max_faces", "1")),
         "det_thresh": float(param("det_thresh", "0.5")),
-    }, emit_keys=["image", "faces", "width", "height"])
+    }, emit_keys=["image", "faces", "width", "height"], input_media=("image",))
 
 
 if __name__ == "__main__":

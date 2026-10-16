@@ -12,7 +12,7 @@
 """
 from PIL import Image, ImageFilter
 
-from flowx_client import emit, emit_result_preview, param, token
+from flowx_client import emit_input_media, emit, emit_result_preview, param, token
 from image_io import get_pimg, post_pimg
 
 FILLS = {"black": (0, 0, 0), "white": (255, 255, 255), "gray": (128, 128, 128)}
@@ -83,6 +83,9 @@ def process(im, left=0, right=0, top=0, bottom=0, feather=32, fill="edge"):
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
+    # 输入原图物化：画布对比控件的「原图」侧（推理服务对象 GC/TTL 后
+    # 必然 404，必须在执行当时落一份到 Studio 媒体缓存）
+    emit_input_media(url, param("image"), tok)
     im = get_pimg(url, param("image"), tok, mode="RGB")
     out, mask = process(
         im,

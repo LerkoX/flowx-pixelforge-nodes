@@ -13,7 +13,7 @@ def main():
         "detect_resolution": int(param("detect_resolution", "1280")),
         "guassian_sigma": float(param("guassian_sigma", "2.0")),
         "intensity_threshold": int(param("intensity_threshold", "3")),
-    }, emit_keys=["image"])
+    }, emit_keys=["image"], input_media=("image",))
 
 
 if __name__ == "__main__":

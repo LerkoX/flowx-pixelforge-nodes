@@ -17,7 +17,7 @@ def main():
         "band_denoise": float(param("band_denoise", "0.25")),
         "steps": int(param("steps", "20")),
     }, emit_keys=["plan", "grid_image", "tiles", "rows", "cols", "target_w",
-                  "target_h", "est_samples", "target_size"])
+                  "target_h", "est_samples", "target_size"], input_media=("image",))
 
 
 if __name__ == "__main__":

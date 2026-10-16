@@ -13,7 +13,7 @@ def main():
         "detect_resolution": int(param("detect_resolution", "512")),
         "thr_v": float(param("thr_v", "0.1")),
         "thr_d": float(param("thr_d", "0.1")),
-    }, emit_keys=["image"])
+    }, emit_keys=["image"], input_media=("image",))
 
 
 if __name__ == "__main__":

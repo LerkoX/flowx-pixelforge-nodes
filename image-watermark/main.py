@@ -15,7 +15,7 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-from flowx_client import emit, emit_result_preview, param, token
+from flowx_client import emit_input_media, emit, emit_result_preview, param, token
 from image_io import get_pimg, post_pimg, pbool
 
 POSITIONS = ("top-left", "top-center", "top-right",
@@ -173,6 +173,9 @@ def process(image, text="", logo=None, position="bottom-right", margin=24,
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
+    # 输入原图物化：画布对比控件的「原图」侧（推理服务对象 GC/TTL 后
+    # 必然 404，必须在执行当时落一份到 Studio 媒体缓存）
+    emit_input_media(url, param("image"), tok)
     # 先取参数（本地桩冒烟测试要求 main() 里所有名字都有定义，见 test_main.py 第 6 节）
     image_id = param("image")
     logo_id = param("logo", "")

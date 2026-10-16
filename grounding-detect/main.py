@@ -13,7 +13,7 @@ def main():
         "sam_model": param("sam_model", ""),
         "overlay": float(param("overlay", "0.5")),
     }, emit_keys=["annotated", "boxes", "labels", "scores", "count", "mask",
-                  "width", "height"])
+                  "width", "height"], input_media=("image",))
 
 
 if __name__ == "__main__":

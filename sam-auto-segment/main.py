@@ -15,7 +15,7 @@ def main():
         "sort": param("sort", "area"),
         "overlay": float(param("overlay", "0.45")),
     }, emit_keys=["masks", "selected", "selected_overlay", "mask_ids", "count",
-                  "kept", "sizes", "montage_cols", "montage_tile", "union_area", "bbox"], timeout=1800)
+                  "kept", "sizes", "montage_cols", "montage_tile", "union_area", "bbox"], timeout=1800, input_media=("image",))
 
 
 if __name__ == "__main__":

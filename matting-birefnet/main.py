@@ -17,7 +17,7 @@ def main():
         "refine_radius": int(param("refine_radius", "90")),
         "alpha_gamma": float(param("alpha_gamma", "1.0")),
         "invert": param("invert", "false"),
-    }, emit_keys=["mask", "image", "width", "height"])
+    }, emit_keys=["mask", "image", "width", "height"], input_media=("image",))
 
 
 if __name__ == "__main__":

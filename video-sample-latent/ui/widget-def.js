@@ -16,6 +16,5 @@ const WIDGET_SPEC = {
     { key: 'seed', label: '种子 seed（-1=随机）', kind: 'text', default: -1 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  previewEveryKey: 'preview_every',
   note: '只采样不解码（分钟级）；输出 3D latent → vae-decode-video',
 }

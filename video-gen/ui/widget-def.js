@@ -14,13 +14,11 @@ const WIDGET_SPEC = {
     { key: 'steps', label: '采样步数（steps）', kind: 'slider', min: 1, max: 150, step: 1, default: 50 },
     { key: 'cfg', label: '引导强度（cfg）', kind: 'slider', min: 1, max: 30, step: 0.5, default: 5.0 },
     { key: 'seed', label: '随机种子（seed）', kind: 'text', default: -1 },
-    { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 5 },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200 },
     { key: 'decode_chunk_size', label: 'VAE 分块解码帧数（decode_chunk_size）', kind: 'text', default: 0 },
     { key: 'output_mode', label: '输出模式：pil=采样+解码一体输出 VIDEO（output_mode）', kind: 'text', default: 'pil' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  previewEveryKey: 'preview_every',
   note: '文/图生视频',
 }

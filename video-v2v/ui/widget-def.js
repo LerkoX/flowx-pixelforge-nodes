@@ -18,10 +18,8 @@ const WIDGET_SPEC = {
     { key: 'num_frames', label: '取前 N 帧（0=全片）', kind: 'text', default: 0 },
     { key: 'fps', label: '输出帧率 fps（0=继承源）', kind: 'text', default: 0 },
     { key: 'decode_chunk_size', label: 'VAE 分块解码 decode_chunk_size', kind: 'text', default: 0, advanced: true },
-    { key: 'preview_every', label: '预览间隔 preview_every（0=关）', kind: 'text', default: 5 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  previewEveryKey: 'preview_every',
   note: '整段 v2v（需 v2v 管道，如 AnimateDiffVideoToVideo）。strength 是截断比例：有效步数=int(steps×strength)，≥12 才看得到变化；算子会报有效步数（0 报错/1 告警）',
 }

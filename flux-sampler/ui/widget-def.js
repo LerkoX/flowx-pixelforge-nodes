@@ -10,11 +10,9 @@ const WIDGET_SPEC = {
     { key: 'steps', label: '步数（schnell 1~4）', kind: 'slider', min: 1, max: 8, step: 1, default: 4 },
     { key: 'denoise', label: '去噪强度（1=txt2img；<1=img2img）', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
     { key: 'seed', label: 'seed（-1 随机）', kind: 'text', mono: true },
-    { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 1, advanced: true },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5, advanced: true },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  previewEveryKey: 'preview_every',
   note: '输出 LATENT 接 VAE 解码；empty-latent→txt2img，vae-encode+denoise<1→img2img',
 }

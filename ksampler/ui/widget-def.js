@@ -14,11 +14,9 @@ const WIDGET_SPEC = {
     { key: 'sampler_name', label: '采样器（更新公式）：euler / euler_（sampler_name）', kind: 'select', options: ['euler', 'euler_a', 'ddim', 'lms', 'dpmpp_2m', 'dpmpp_2m_sde', 'uni_pc'], default: 'euler' },
     { key: 'scheduler', label: 'sigma 排布：normal / karras（scheduler）', kind: 'select', options: ['normal', 'karras', 'exponential', 'beta'], default: 'normal' },
     { key: 'denoise', label: '去噪强度 0.0-1.0（denoise）', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
-    { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 1 },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 2 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  previewEveryKey: 'preview_every',
   note: '扩散采样',
 }

@@ -11,11 +11,9 @@ const WIDGET_SPEC = {
     { key: 'steps', label: '采样步数（steps）', kind: 'slider', min: 1, max: 150, step: 1, default: 28 },
     { key: 'cfg', label: '引导强度（cfg）', kind: 'slider', min: 1, max: 30, step: 0.5, default: 4.5 },
     { key: 'denoise', label: '去噪强度：1.0 文生图（denoise）', kind: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
-    { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 1 },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  previewEveryKey: 'preview_every',
   note: 'SD3.5 flow matching 采样器',
 }

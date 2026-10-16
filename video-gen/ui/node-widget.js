@@ -34,9 +34,6 @@
  *       图上已有更合适的展示位时用，避免同一张图在节点上重复两遍（mask-paint 反馈：
  *       底图已在蒙版控件里显示，下面再贴一张预览纯属噪音）
  *     （service_url/service_token 等连接参数建议 advanced，保持节点紧凑）
- *   replay[]      （可选）▶预览按钮：经节点级通用代理重放算子（POST /op），
- *                 overrides 从这些字段当前值收集（slider 转 Number、check 转 Boolean）；
- *                 依赖 outputs 的 __op_name/__inputs_resolved
  *   pointSelect   （可选）{pointsKey, boxKey, baseImage}：点/框选画布编辑器
  *                 （点=正样本、Shift点=负样本、拖拽=框选；原图坐标写回参数）
  *   maskMontage   （可选）{keepKey, montageKey, selectedKey}：编号网格点选保留/排除
@@ -44,9 +41,12 @@
  *   boxList       （可选）{labelsKey, scoresKey, boxesKey}：检测框+置信度列表
  *   tileGridOverlay（可选）{gridKey}：切片网格覆盖层 + 块数/行列/预估读数
  *   compareInput  （可选）'image' 等输入键名：完成后显示前后对比滑块
- *                 （原图对象 id 从 outputs.__inputs_resolved 解析，经节点级通用代理
- *                 GET /images/{id} 拉取，结果图 = 预览区最终帧）
- *   previewEveryKey （可选）'preview_every'：显示"实时预览"开关（采样类节点）
+ *                 （点击可弹放大对比窗）。原图两条链：① 优先 props.media.input —— 
+ *                 节点执行时经 FLOWX_MEDIA{kind:"input"} 物化到 Studio 媒体缓存的
+ *                 输入原图（推理服务对象是内存态，GC/重启/TTL 后必 404，物化产物
+ *                 才持久可读）；② 降级：outputs.__inputs_resolved 解析对象 id，
+ *                 经节点级通用代理 GET /images/{id} 实时拉取。结果图 = 预览区最终帧。
+ *                 原图缺失时提示并退化为单图弹窗（不显示空壳分割线）
  *   mediaImageParam  （可选）参数键名（如 'image_path'）：直读本地图片显示
  *                    （Studio 同源媒体端点 /api/v1/media/file，点击进可缩放 lightbox）；
  *                    绑定态（{{ }}）显示占位提示
@@ -84,7 +84,7 @@
  *   note          （可选）输出说明行
  *
  * 布局顺序（固定，图像预览置顶）：状态行 → 过程/结果预览帧 → 前后对比 →
- *   蒙版手绘 → 本地图片/视频（含路径说明行）→ ▶重放按钮 → 实时预览开关 → 参数控件 →
+ *   蒙版手绘 → 本地图片/视频（含路径说明行）→ 参数控件 →
  *   输出。未启用的块 display:none 不占位。
  */
 
@@ -372,6 +372,9 @@ function createNodeWidget(spec) {
       'box-sizing: border-box',
       'height: 100%',
     ].join(';')
+    // nowheel/nodrag：节点内容滚动与内部交互不被画布缩放/拖拽拦截（回放态只读时控件
+    // 已 disabled，但滚轮滑动长节点内容不应触发画布缩放、点图片应能放大）。
+    el.classList.add('nowheel', 'nodrag')
 
     let cur = props
     const refreshers = []
@@ -397,10 +400,63 @@ function createNodeWidget(spec) {
     // ——✕ 按钮、点遮罩空白、Esc——所以 onClose 必须绑上 closeLightbox，且 Esc
     // 监听常驻注册（不依赖 spec.mediaImageParam：kind:'file' 控件也有预览）。
     let lightboxEl = null
-    const closeLightbox = () => { if (lightboxEl) { lightboxEl.remove(); lightboxEl = null } }
+    // __cleanup：弹层携带的清理回调（如对比窗的 window 拖拽监听），关闭时一并移除防泄漏
+    const closeLightbox = () => { if (lightboxEl) { if (lightboxEl.__cleanup) lightboxEl.__cleanup(); lightboxEl.remove(); lightboxEl = null } }
     const setLightbox = (el) => { closeLightbox(); lightboxEl = el }
     const onEsc = (e) => { if (e.key === 'Escape') closeLightbox() }
     document.addEventListener('keydown', onEsc)
+    // 对比放大弹层：原图 vs 结果，可拖分割线（compareInput 区单击进入；编辑/回放态均可）。
+    // 原图用 clip-path 裁切（与节点内对比区同款方案，见下）；分割线拖拽的 window 监听
+    // 挂到 overlay.__cleanup，随关闭移除。
+    const showCompareLightbox = (beforeUrl, afterUrl) => {
+      const overlay = h('div', 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;cursor:zoom-out')
+      const box = h('div', 'position:relative;cursor:default;line-height:0')
+      const afterImg = h('img', 'max-width:92vw;max-height:86vh;object-fit:contain;display:block;pointer-events:none')
+      afterImg.src = afterUrl
+      const tagR = h('span', 'position:absolute;right:6px;top:6px;font-size:11px;line-height:1.4;background:rgba(0,0,0,0.6);border-radius:4px;padding:1px 7px;color:rgba(255,255,255,0.9);pointer-events:none', '结果')
+      box.append(afterImg, tagR)
+      // 原图不可用（上游对象已驱逐且未物化）时退化为单图放大，不给空壳分割线
+      if (!beforeUrl) {
+        overlay.append(box)
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLightbox() })
+        setLightbox(overlay)
+        document.body.append(overlay)
+        return
+      }
+      const beforeImg = h('img', 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;pointer-events:none')
+      beforeImg.src = beforeUrl
+      const divider = h('div', 'position:absolute;top:0;bottom:0;width:2px;background:#22d3ee;cursor:ew-resize;box-shadow:0 0 6px rgba(34,211,238,0.8)')
+      const knob = h('div', 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:#22d3ee;color:#0b1220;font-size:12px;display:flex;align-items:center;justify-content:center;pointer-events:none', '⇄')
+      divider.append(knob)
+      const tagL = h('span', 'position:absolute;left:6px;top:6px;font-size:11px;line-height:1.4;background:rgba(0,0,0,0.6);border-radius:4px;padding:1px 7px;color:rgba(255,255,255,0.9);pointer-events:none', '原图')
+      box.insertBefore(beforeImg, tagR)
+      box.insertBefore(divider, tagR)
+      box.insertBefore(tagL, tagR)
+      let ratio = 0.5, dragging = false
+      const apply = () => {
+        beforeImg.style.clipPath = `inset(0 ${(100 - ratio * 100).toFixed(2)}% 0 0)`
+        divider.style.left = `calc(${(ratio * 100).toFixed(2)}% - 1px)`
+      }
+      apply()
+      const move = (e) => {
+        const rect = box.getBoundingClientRect()
+        if (!rect.width) return
+        const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left
+        ratio = Math.min(0.98, Math.max(0.02, x / rect.width))
+        apply()
+      }
+      divider.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); e.stopPropagation() })
+      const onMove = (e) => { if (dragging) move(e) }
+      const onUp = () => { dragging = false }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+      box.addEventListener('click', move)
+      overlay.__cleanup = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+      overlay.append(box)
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLightbox() })
+      setLightbox(overlay)
+      document.body.append(overlay)
+    }
     // 参数当前值：字面值优先，绑定值从 paramSources 取运行时/当前值（模型下拉等
     // 需要真实 service_url/token 发请求时用）
     const resolveParam = (key) => {
@@ -1001,9 +1057,6 @@ function createNodeWidget(spec) {
       if (!raw) return null
       try { return typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return null }
     }
-    let replayImgUrl = ''    // ▶预览重放结果帧：覆盖 preview/对比区显示，直到新 preview 帧到达
-    let replayBasePvUrl = '' // 重放时的 preview url（用于检测新帧到达）
-
     // 当前任务标识：优先 preview.jobId（executor-base 上报）；老节点包只在
     // preview url 里携带（{base}/preview/{job_id}），作解析回退
     const currentJobId = () => {
@@ -1041,62 +1094,96 @@ function createNodeWidget(spec) {
     // ---- 前后对比区（compareInput）：输入图 vs 结果帧，拖拽分割线 ----
     const cmpWrap = h('div', 'display:none;margin-bottom:6px')
     if (spec.compareInput) {
-      const box = h('div', 'position:relative;width:100%;border-radius:8px;overflow:hidden;background:rgba(0,0,0,0.3);user-select:none;touch-action:none')
+      const box = h('div', 'position:relative;width:100%;border-radius:8px;overflow:hidden;background:rgba(0,0,0,0.3);user-select:none;touch-action:none;cursor:zoom-in')
       const afterImg = h('img', 'width:100%;display:block;pointer-events:none')   // 结果（底层全显）
-      const beforeWrap = h('div', 'position:absolute;inset:0;overflow:hidden;pointer-events:none')
-      const beforeImg = h('img', 'width:100%;display:block;pointer-events:none')  // 输入（顶层被裁）
-      beforeWrap.append(beforeImg)
+      // 原图与结果同幅铺满 box，clip-path 按分割线裁掉右侧——替代旧「beforeWrap 定宽 +
+      // beforeImg width:100/ratio%」换算（那会被全局 img max-width:100% 顶回 beforeWrap
+      // 宽度，把原图缩在左边、失去对比效果）。
+      const beforeImg = h('img', 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;pointer-events:none')
       const divider = h('div', 'position:absolute;top:0;bottom:0;width:2px;background:#22d3ee;cursor:ew-resize;box-shadow:0 0 6px rgba(34,211,238,0.8)')
       const knob = h('div', 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:50%;background:#22d3ee;color:#0b1220;font-size:10px;display:flex;align-items:center;justify-content:center;pointer-events:none', '⇄')
       divider.append(knob)
       const tagL = h('span', 'position:absolute;left:4px;top:4px;font-size:9px;background:rgba(0,0,0,0.55);border-radius:4px;padding:1px 5px;color:rgba(255,255,255,0.85);pointer-events:none', '原图')
       const tagR = h('span', 'position:absolute;right:4px;top:4px;font-size:9px;background:rgba(0,0,0,0.55);border-radius:4px;padding:1px 5px;color:rgba(255,255,255,0.85);pointer-events:none', '结果')
-      box.append(afterImg, beforeWrap, divider, tagL, tagR)
+      box.append(afterImg, beforeImg, divider, tagL, tagR)
       const cmpHint = h('div', 'font-size:9px;color:rgba(255,255,255,0.35);margin-top:2px')
       cmpWrap.append(box, cmpHint)
       let ratio = 0.5
       const applyRatio = () => {
-        beforeWrap.style.width = (ratio * 100) + '%'
-        beforeImg.style.width = (100 / Math.max(ratio, 0.001)) + '%'
+        beforeImg.style.clipPath = `inset(0 ${(100 - ratio * 100).toFixed(2)}% 0 0)`
         divider.style.left = `calc(${(ratio * 100)}% - 1px)`
       }
       applyRatio()
       let dragging = false
       const move = (e) => {
         const rect = box.getBoundingClientRect()
+        if (!rect.width) return
         const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left
         ratio = Math.min(0.98, Math.max(0.02, x / rect.width))
         applyRatio()
       }
-      divider.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault() })
+      divider.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); e.stopPropagation() })
       window.addEventListener('mousemove', (e) => { if (dragging) move(e) })
       window.addEventListener('mouseup', () => { dragging = false })
-      box.addEventListener('click', move)
+      // 单击（非拖分割线）→ 弹放大对比窗；拖分割线走 divider 自身
+      // 原图加载失败时不把空 src 带进弹窗（退化为单图放大）
+      box.addEventListener('click', () => {
+        if (afterImg.src) showCompareLightbox(cmpBeforeState === 'fail' ? '' : beforeImg.src, afterImg.src)
+      })
       let cmpLoadedFor = ''
+      // 原图当前用的 URL（物化产物或实时代理链）：用于换源重载
+      let cmpBeforeFor = ''
+      // 原图加载状态：'' 未定 / 'ok' / 'fail'；用于提示文案与弹窗降级
+      let cmpBeforeState = ''
+      // 提示文案只由原图状态决定。不能让 afterImg.onload 无条件改文案：原图失败时
+      // 两事件完成顺序不定，会被正常文案覆盖，把失败提示吃掉（曾致「原图缩在左边」）。
+      const syncHint = () => {
+        cmpHint.textContent = cmpBeforeState === 'fail'
+          ? '原图加载失败（对象已驱逐且未物化，仅显示结果）'
+          : '拖动分割线对比 原图 / 结果（点击放大）'
+      }
+      beforeImg.onload = () => { cmpBeforeState = 'ok'; syncHint() }
+      beforeImg.onerror = () => { cmpBeforeState = 'fail'; syncHint() }
+      afterImg.onload = syncHint
+      syncHint()
       refreshers.push(() => {
-        // 结果帧 = 预览区最终帧（progress 1.0）或重放结果；原图对象 id 从
-        // outputs.__inputs_resolved 解析，经节点级通用代理拉取
+        // 结果帧 = 预览区最终帧（progress 1.0）；原图优先取 Studio 物化的 kind=input
+        // 产物（props.media.input）：推理服务的图像对象是内存态（GC/重启/TTL 后必 404），
+        // 物化产物随媒体缓存持久可读。拿不到物化产物时降级走节点级代理实时拉取。
         const pv = cur.preview
-        const effectiveUrl = replayImgUrl || (pv && pv.url)
-        const done = effectiveUrl && (replayImgUrl || typeof pv.progress !== 'number' || pv.progress >= 1)
-        if (!done || !cur.execution) { cmpWrap.style.display = 'none'; cmpLoadedFor = ''; return }
-        if (cmpLoadedFor === effectiveUrl) { cmpWrap.style.display = 'block'; return }
+        const effectiveUrl = pv && pv.url
+        const done = effectiveUrl && (typeof pv.progress !== 'number' || pv.progress >= 1)
+        if (!done || !cur.execution) {
+          cmpWrap.style.display = 'none'
+          cmpLoadedFor = ''
+          cmpBeforeFor = ''
+          return
+        }
         const resolved = resolvedInputs()
         const ref = resolved && resolved[spec.compareInput]
         const inId = ref && (typeof ref === 'string' ? ref : (ref.$id || ref.id || ''))
-        if (!inId) {
+        const pinned = cur.media && cur.media.input
+        if (!pinned && !inId) {
           cmpWrap.style.display = 'none'
           cmpLoadedFor = ''
+          cmpBeforeFor = ''
           return
         }
-        cmpLoadedFor = effectiveUrl
-        afterImg.src = effectiveUrl
-        beforeImg.src = nodeProxyUrl('/images/' + inId, 'GET')
-        beforeImg.onerror = () => { cmpHint.textContent = '原图加载失败（对象已驱逐或未执行过）' }
-        afterImg.onload = () => {
-          // 结果与原图尺寸不同（如放大 4x）：beforeImg 按 box 宽度缩放即可对比构图/细节
-          cmpWrap.style.display = 'block'
-          cmpHint.textContent = '拖动分割线对比 原图 / 结果'
+        // 立即显示对比区并隐藏上方预览区：不能等 afterImg.onload——结果帧往往命中
+        // 浏览器缓存（预览区已加载过同 URL），重复赋相同 src 不再触发 load 事件，
+        // 会致对比区/预览区双双停在隐藏态。
+        cmpWrap.style.display = 'block'
+        prevWrap.style.display = 'none'
+        if (cmpLoadedFor !== effectiveUrl) {
+          cmpLoadedFor = effectiveUrl
+          afterImg.src = effectiveUrl
+        }
+        const beforeUrl = pinned || nodeProxyUrl('/images/' + inId, 'GET')
+        if (cmpBeforeFor !== beforeUrl) {
+          cmpBeforeFor = beforeUrl
+          cmpBeforeState = ''
+          syncHint()
+          beforeImg.src = beforeUrl
         }
       })
     }
@@ -1713,7 +1800,7 @@ function createNodeWidget(spec) {
         }
         const pos = psPts.filter((p) => p[2]).length
         psHint.textContent = `正样本 ${pos} 点 / 负样本 ${psPts.length - pos} 点 / 框选 ${psBoxSel ? 1 : 0} 处`
-          + (editable() ? '；编辑后点「▶ 预览」看结果' : '（只读）')
+          + (editable() ? '；编辑结果随下次执行生效' : '（只读）')
         psClear.disabled = !editable()
         psClear.style.opacity = editable() ? '1' : '0.5'
       }
@@ -1778,7 +1865,7 @@ function createNodeWidget(spec) {
         psDraw()
         if (psMaskOn) {
           const pv = cur.preview
-          const url = replayImgUrl || (pv && pv.url)
+          const url = pv && pv.url
           if (url) psMask.src = url
         }
       })
@@ -1809,7 +1896,7 @@ function createNodeWidget(spec) {
         const ks = mmKeep()
         mmHint.textContent = ks.size === 0
           ? `${mmN} 个蒙版（未选择 = 全选）`
-          : `已选 ${ks.size}/${mmN}：${[...ks].sort((a, b) => a - b).join(', ')}（改完点「▶ 预览」重跑）`
+          : `已选 ${ks.size}/${mmN}：${[...ks].sort((a, b) => a - b).join(', ')}（随下次执行生效）`
         for (let i = 0; i < Math.min(mmN, 64); i++) {
           const on = ks.has(i)
           const chip = h('span', `font-size:9px;padding:1px 5px;border-radius:4px;cursor:pointer;background:${on ? 'rgba(52,211,153,0.85)' : 'rgba(255,255,255,0.12)'};color:${on ? '#06251a' : 'rgba(255,255,255,0.7)'}`, String(i))
@@ -1905,84 +1992,15 @@ function createNodeWidget(spec) {
       })
     }
 
-    // ---- ▶预览（op-replay 重放） ----
+    // ---- ▶预览（op-replay 重放）：已移除 ----
+    // 重放依赖推理服务内存中的上次输入对象，对象 TTL（默认 1h）到期后必然失败，对
+    // 「看历史结果」无意义，故移除入口；历史结果一律走物化预览帧（媒体缓存，TTL 72h）。
     const replayRow = h('div', 'display:none;align-items:center;margin-bottom:6px')
-    if (spec.replay && spec.replay.length) {
-      const btn = h('button', BTN_CSS + ';color:#34d399;border-color:rgba(52,211,153,0.4)', '▶ 预览')
-      btn.title = '用上次执行的输入 + 当前参数重放该算子（秒级），结果直接刷新预览区'
-      const hint = h('span', 'font-size:9px;color:rgba(255,255,255,0.4);margin-left:6px')
-      const overrides = () => {
-        const o = {}
-        for (const key of spec.replay) {
-          const f = (spec.fields || []).find((x) => x.key === key)
-          const v = readParam(key, f && f.default)
-          if (f && (f.kind === 'slider')) o[key] = Number(v)
-          else if (f && f.kind === 'check') o[key] = (v === true || v === 'true' || v === '1' || v === 1)
-          else o[key] = v
-        }
-        return o
-      }
-      btn.addEventListener('click', async () => {
-        if (!cur.execution) { hint.textContent = '无执行实例，先运行一次'; return }
-        const op = cur.outputs && cur.outputs.__op_name
-        const resolved = resolvedInputs()
-        if (!op || !resolved) { hint.textContent = '需先用当前版本节点执行一次'; return }
-        btn.disabled = true
-        hint.textContent = '重放中…'
-        try {
-          const r = await fetch(nodeProxyUrl('/op', 'POST'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: op, inputs: { ...resolved, ...overrides() } }),
-          })
-          if (!r.ok) {
-            hint.textContent = r.status === 409 ? '需先用当前版本节点执行一次' : `失败 HTTP ${r.status}`
-          } else {
-            const resp = await r.json()
-            const outs = ((resp.data || resp).outputs) || {}
-            let imgId = ''
-            for (const k of Object.keys(outs)) {
-              const m = outs[k]
-              if (m && m.type === 'IMAGE' && m.id) { imgId = m.id; break }
-            }
-            if (imgId) {
-              replayBasePvUrl = (cur.preview && cur.preview.url) || ''
-              replayImgUrl = nodeProxyUrl('/images/' + imgId, 'GET') + '&t=' + Date.now()
-              prevImg.src = replayImgUrl
-              prevWrap.style.display = 'block'
-              cmpLoadedFor = '' // 强制对比区以重放结果帧重载
-              refreshers.forEach((fn) => fn())
-              hint.textContent = ''
-            } else {
-              hint.textContent = '重放完成（无图像输出）'
-            }
-          }
-        } catch (e) {
-          hint.textContent = '失败：' + e
-        } finally {
-          btn.disabled = false
-        }
-      })
-      refreshers.push(() => { btn.disabled = false })
-      replayRow.style.display = 'flex'
-      replayRow.append(btn, hint)
-    }
 
-    // ---- 实时预览开关（采样类） ----
+    // ---- 实时预览：默认开启，不提供开关 ----
+    // preview_every 由执行器默认 1（>0 即开）兜底；过程帧是物化历史预览的数据来源，
+    // 故不再提供开关/参数控件（避免被关掉导致无历史预览帧）。
     const peRow = h('div', 'margin-bottom:6px;display:none')
-    if (spec.previewEveryKey) {
-      const k = spec.previewEveryKey
-      const wrap = h('label', 'display:flex;align-items:center;gap:6px;font-size:10px;color:rgba(255,255,255,0.75);cursor:pointer')
-      const cb = h('input', 'accent-color:#22d3ee')
-      cb.type = 'checkbox'
-      const cur_ = () => Number(readParam(k, 0)) > 0
-      cb.checked = cur_()
-      cb.addEventListener('change', () => setParam(k, cb.checked ? '5' : '0'))
-      wrap.append(cb, document.createTextNode('实时预览（preview_every=5）'))
-      refreshers.push(() => { cb.disabled = !editable(); cb.checked = cur_() })
-      peRow.style.display = 'block'
-      peRow.append(wrap)
-    }
 
     // ---- 参数控件区（advanced:true 的字段收进折叠区，保持节点紧凑）----
     const controls = h('div', 'margin-bottom:6px')
@@ -2059,9 +2077,7 @@ function createNodeWidget(spec) {
       const pv = p.preview
       if (pv && pv.url) {
         prevWrap.style.display = 'block'
-        // 新一轮 preview 帧（url 变化）到达时解除重放结果覆盖
-        if (replayImgUrl && pv.url !== replayBasePvUrl) { replayImgUrl = ''; replayBasePvUrl = '' }
-        const effective = replayImgUrl || pv.url
+        const effective = pv.url
         if (effective !== lastPreviewUrl) {
           lastPreviewUrl = effective
           prevImg.src = effective
@@ -2157,14 +2173,12 @@ const WIDGET_SPEC = {
     { key: 'steps', label: '采样步数（steps）', kind: 'slider', min: 1, max: 150, step: 1, default: 50 },
     { key: 'cfg', label: '引导强度（cfg）', kind: 'slider', min: 1, max: 30, step: 0.5, default: 5.0 },
     { key: 'seed', label: '随机种子（seed）', kind: 'text', default: -1 },
-    { key: 'preview_every', label: 'preview_every（0=关）', kind: 'text', default: 5 },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200 },
     { key: 'decode_chunk_size', label: 'VAE 分块解码帧数（decode_chunk_size）', kind: 'text', default: 0 },
     { key: 'output_mode', label: '输出模式：pil=采样+解码一体输出 VIDEO（output_mode）', kind: 'text', default: 'pil' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  previewEveryKey: 'preview_every',
   note: '文/图生视频',
 }
 

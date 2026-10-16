@@ -23,10 +23,8 @@ const WIDGET_SPEC = {
     { key: 'control_net', label: '结构条件 CONTROL_NET（可空）', kind: 'text', mono: true, advanced: true },
     { key: 'control_frames', label: '条件帧序列 frames（可空，留空用源帧）', kind: 'text', mono: true, advanced: true },
     { key: 'control_strength', label: 'ControlNet 强度 control_strength', kind: 'slider', min: 0, max: 2, step: 0.05, default: 1.0, advanced: true },
-    { key: 'preview_every', label: '预览间隔 preview_every（0=关）', kind: 'text', default: 1 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  previewEveryKey: 'preview_every',
   note: '逐帧重绘（v2v）：低 strength 保运动换外观；pos 接 IPAdapter/InstantID 参考人物 ⇒ 视频换人；每帧结果实时上画布',
 }

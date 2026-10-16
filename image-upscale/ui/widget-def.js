@@ -13,5 +13,6 @@ const WIDGET_SPEC = {
     { key: 'poll_interval', label: '轮询间隔 poll_interval（秒）', kind: 'text', mono: true, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  note: '图像放大',
+  compareInput: 'image',
+  note: '图像放大（完成后可与原图滑动对比）',
 }

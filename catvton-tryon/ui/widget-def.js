@@ -15,12 +15,10 @@ const WIDGET_SPEC = {
     { key: 'seed', label: '种子（-1 随机）', kind: 'text' },
     { key: 'width', label: '画布宽', kind: 'text', advanced: true },
     { key: 'height', label: '画布高', kind: 'text', advanced: true },
-    { key: 'preview_every', label: '过程帧间隔', kind: 'slider', min: 0, max: 10, step: 1, default: 5, advanced: true },
     { key: 'service_url', label: '服务地址', kind: 'text', advanced: true },
     { key: 'service_url_host', label: '服务地址（画布侧）', kind: 'text', advanced: true },
     { key: 'service_token', label: '令牌', kind: 'text', advanced: true },
   ],
   compareInput: 'person',
-  previewEveryKey: 'preview_every',
   note: '专用 VTON 模型：衣服版型/图案来自参考图本身（不是提示词），蒙版没盖到的旧衣服不会被替换',
 }

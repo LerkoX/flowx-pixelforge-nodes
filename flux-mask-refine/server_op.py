@@ -1,4 +1,12 @@
 """flux-mask-refine 服务端算子注册文件：注册 flux.mask_refine
+
+瓶颈定位打点（dev-log §62，P1）：环境变量 **FLOWX_PROFILE**（在**推理服务进程**上
+设置，默认 0 = 关闭、零开销、行为与旧版逐字节一致）：
+  1 = 轻量分段计时：CUDA event 总时长 + 每步墙钟 + 反量化入口累计
+      （候选逐个 patch）+ transformer.forward 累计；
+  2 = 在 1 之上再挂 torch.profiler，打印 top-20 算子表。
+报告经 job.progress["profile"] 旁路回传（GET /jobs/{id} 可取，节点侧再打印），
+同时写服务端日志。判据：反量化占比高 ⇒ 坐实 Q4 GGUF 逐层反量化为主因。
 """
 import os
 import random
@@ -9,6 +17,127 @@ import torch
 from app import execution, preview
 
 FLUX_DIR = os.environ.get("FLUX_DIR", "/models/flux")
+
+
+def _profile_level():
+    """FLOWX_PROFILE 开关：0=关（默认）/ 1=轻量分段 / 2=+torch.profiler。"""
+    try:
+        return int(os.environ.get("FLOWX_PROFILE", "0") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+class _Profiler:
+    """单次执行的计时打点（仅诊断用）。反量化入口用嵌套深度去重：
+    内外两层都 patch 时只计最外层，避免双计（不同 diffusers/gguf 版本入口位置不同）。"""
+
+    def __init__(self, level, steps, guide_size):
+        self.level = level
+        self.steps = steps
+        self.guide_size = guide_size
+        self.dequant = {"n": 0, "t": 0.0}
+        self.forward = {"n": 0, "t": 0.0}
+        self.cb = 0.0
+        self.walls = []
+        self._patched = []
+        self._depth = 0
+        self._t_last = None
+        self._prof = None
+        self._table = None
+
+    def _wrap(self, holder, attr, stat):
+        orig = getattr(holder, attr, None)
+        if orig is None or not callable(orig):
+            return False
+        prof = self
+
+        def wrapper(*a, **kw):
+            if prof._depth > 0:      # 嵌套调用：外层已统计，跳过
+                return orig(*a, **kw)
+            prof._depth += 1
+            t = time.perf_counter()
+            try:
+                return orig(*a, **kw)
+            finally:
+                prof._depth -= 1
+                stat["n"] += 1
+                stat["t"] += time.perf_counter() - t
+
+        try:
+            setattr(holder, attr, wrapper)
+        except Exception:
+            return False
+        self._patched.append((holder, attr, orig))
+        return True
+
+    def patch(self, model):
+        # 反量化入口：gguf 库最内层优先，回退 diffusers 的 GGUFParameter.dequantize
+        done = False
+        try:
+            import gguf.quants as _q
+            done = self._wrap(_q, "dequantize", self.dequant)
+        except Exception:
+            done = False
+        if not done:
+            try:
+                import diffusers.quantizers.gguf.utils as _gu
+                cls = getattr(_gu, "GGUFParameter", None)
+                if cls is not None:
+                    self._wrap(cls, "dequantize", self.dequant)
+            except Exception:
+                pass
+        # transformer 整次 forward（采样时每步调用一次）
+        self._wrap(type(model), "forward", self.forward)
+
+    def unpatch(self):
+        for holder, attr, orig in self._patched:
+            try:
+                setattr(holder, attr, orig)
+            except Exception:
+                pass
+        self._patched = []
+
+    def start(self):
+        self._t_last = time.perf_counter()
+
+    def tick(self):
+        now = time.perf_counter()
+        self.walls.append(now - self._t_last if self._t_last is not None else 0.0)
+        self._t_last = now
+
+    def profiler(self):
+        if self.level < 2:
+            return None
+        from torch.profiler import ProfilerActivity, profile
+        self._prof = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA])
+        return self._prof
+
+    def close_profiler(self):
+        if self._prof is None:
+            return
+        self._prof.__exit__(None, None, None)
+        try:
+            self._table = self._prof.key_averages().table(
+                sort_by="cuda_time_total", row_limit=20)
+        except Exception as e:
+            self._table = f"(profiler table failed: {e})"
+
+    def report(self, total_s, crop):
+        def pct(x):
+            return f"{x / total_s * 100:.1f}%" if total_s else "n/a"
+        out = [f"=== flux.mask_refine PROFILE (level={self.level}) ===",
+               f"steps={self.steps} guide_size={self.guide_size} crop={crop}",
+               f"TOTAL(cuda event) {total_s:.1f}s | "
+               f"dequant {self.dequant['t']:.1f}s ({pct(self.dequant['t'])}, "
+               f"{self.dequant['n']} calls) | "
+               f"forward {self.forward['t']:.1f}s ({pct(self.forward['t'])}, "
+               f"{self.forward['n']} calls) | callback {self.cb:.2f}s"]
+        for i, w in enumerate(self.walls, 1):
+            out.append(f"  step {i}: {w:.1f}s")
+        if self._table:
+            out.append(self._table)
+        return "\n".join(out)
 
 
 def _fresh_scheduler():
@@ -112,6 +241,13 @@ def register(registry):
 
         t0 = time.time()
 
+        level = _profile_level()
+        prof = _Profiler(level, steps, guide_size) if level >= 1 else None
+        if prof:
+            print(f"[flux.mask_refine] PROFILE level={level} ON "
+                  f"(steps={steps} guide_size={guide_size})", flush=True)
+            prof.patch(model)
+
         model.to("cuda")
         vae.to("cuda")
         torch.cuda.empty_cache()
@@ -129,8 +265,18 @@ def register(registry):
             execution.check_cancelled()
             if job:
                 job.set_progress(si + 1, steps)
+            if prof:
+                prof.tick()
             return kw
 
+        i2i_prof = prof.profiler() if prof else None
+        if i2i_prof:
+            i2i_prof.__enter__()
+        ev0 = torch.cuda.Event(enable_timing=True) if prof else None
+        if ev0:
+            ev0.record()
+        if prof:
+            prof.start()
         refined_big = i2i(
             prompt_embeds=pe, pooled_prompt_embeds=pooled,
             image=crop_img_big, strength=float(denoise),
@@ -139,6 +285,14 @@ def register(registry):
             callback_on_step_end=_cb,
             callback_on_step_end_tensor_inputs=[],
         ).images[0]
+        gpu_total = 0.0
+        if ev0:
+            ev1 = torch.cuda.Event(enable_timing=True)
+            ev1.record()
+            torch.cuda.synchronize()
+            gpu_total = ev0.elapsed_time(ev1) / 1000.0
+        if prof:
+            prof.close_profiler()
 
         refined = refined_big.resize(crop_img.size, Image.Resampling.LANCZOS)
 
@@ -169,5 +323,12 @@ def register(registry):
         print(f"[flux.mask_refine] crop ({cx1},{cy1},{cx2},{cy2}) -> {tw}x{th} "
               f"denoise={denoise} steps={steps} ({time.time()-t0:.1f}s)",
               flush=True)
+
+        if prof:
+            rep = prof.report(gpu_total, f"{tw}x{th}")
+            print(rep, flush=True)
+            prof.unpatch()
+            if job:                 # 最后塞入（set_progress 会重置 progress dict）
+                job.progress["profile"] = rep
 
         return {"image": out_img}

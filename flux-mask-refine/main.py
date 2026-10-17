@@ -6,8 +6,8 @@
 """
 import time
 
-from flowx_client import (emit, emit_preview, ensure_plugin, host_base, param,
-                          ref, submit_job, token, wait_job)
+from flowx_client import (emit, emit_preview, ensure_plugin, get_job, host_base,
+                          param, ref, submit_job, token, wait_job)
 
 
 def main():
@@ -51,6 +51,19 @@ def main():
     outs = result["outputs"]
     image_id = outs["image"]["id"]
     print(f"[flux-mask-refine] done in {time.time()-t0:.1f}s -> image={image_id}", flush=True)
+
+    # 取回服务端 profiling 报告（仅 FLOWX_PROFILE>=1 时存在；旁路在 job.progress）
+    try:
+        view = get_job(url, jid, tok)
+        rep = (view.get("progress") or {}).get("profile")
+        if rep:
+            print(f"[flux-mask-refine] PROFILE report:\n{rep}", flush=True)
+        else:
+            print("[flux-mask-refine] no PROFILE report (FLOWX_PROFILE off)",
+                  flush=True)
+    except Exception as e:  # 诊断旁路失败不得影响主流程
+        print(f"[flux-mask-refine] profile fetch skipped ({e})", flush=True)
+
     emit(image=image_id)
 
 

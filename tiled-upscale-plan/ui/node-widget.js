@@ -110,6 +110,16 @@ function h(tag, style, text) {
 
 const isWired = (v) => typeof v === 'string' && v.indexOf('{{') >= 0
 
+// 移动端窄屏判定：与 Studio 的 useIsMobile 同断点（768px）。手机上节点宽度仅
+// ~300px，提示词这类长文本在内联小框里无法编辑，点击后走全屏弹层放大编辑。
+function isMobileViewport() {
+  try {
+    return window.matchMedia('(max-width: 768px)').matches
+  } catch (_) {
+    return false
+  }
+}
+
 // ---- 笔画抽稀（mask-paint 等 paint 控件的存储瘦身）----
 // 手绘时 pointermove 每帧都会 push 一个点（一笔可达数千点，实测 6 笔 7476 点 =
 // 104KB 文本），而笔画在局部近似直线，绝大多数点是冗余的。保存前用
@@ -403,6 +413,59 @@ function createNodeWidget(spec) {
     // __cleanup：弹层携带的清理回调（如对比窗的 window 拖拽监听），关闭时一并移除防泄漏
     const closeLightbox = () => { if (lightboxEl) { if (lightboxEl.__cleanup) lightboxEl.__cleanup(); lightboxEl.remove(); lightboxEl = null } }
     const setLightbox = (el) => { closeLightbox(); lightboxEl = el }
+
+    // ---- 长文本全屏编辑弹层（移动端）：内联 textarea 点击后放大编辑 ----
+    // 弹层挂 document.body：节点在 react-flow 的 transform 容器里，fixed 会相对
+    // 该容器定位，必须脱离出去才是真全屏。输入逐字符实时写回参数（与内联框
+    // change 语义一致），关闭即已生效——不提供「取消还原」，避免手机上误触
+    // 返回键丢内容。字号 16px：iOS 聚焦 <16px 会强制放大整页。
+    let textEditorEl = null
+    const closeTextEditor = () => { if (textEditorEl) { textEditorEl.remove(); textEditorEl = null } }
+    const openTextEditor = (opts) => {
+      const o = opts || {}
+      closeTextEditor()
+      const overlay = h('div', [
+        'position:fixed', 'inset:0', 'z-index:10000',
+        'background:rgba(6,8,15,0.97)', 'backdrop-filter:blur(6px)',
+        'display:flex', 'flex-direction:column', 'box-sizing:border-box',
+        'padding:calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom))',
+      ].join(';'))
+      const bar = h('div', 'display:flex;align-items:center;gap:8px;padding:0 2px 8px')
+      const label = h('span', 'font-size:11px;color:rgba(255,255,255,0.6)', o.title || '')
+      const count = h('span', 'font-size:10px;color:rgba(255,255,255,0.3)',
+        String((o.value || '').length))
+      const done = h('button', [
+        'margin-left:auto', 'font-size:12px', 'font-weight:500', 'cursor:pointer',
+        'background:rgba(99,102,241,0.9)', 'border:none', 'border-radius:6px',
+        'padding:6px 14px', 'color:#fff',
+      ].join(';'), '完成')
+      done.type = 'button'
+      const ta = h('textarea', [
+        'flex:1', 'width:100%', 'box-sizing:border-box', 'resize:none',
+        'background:rgba(255,255,255,0.06)', 'border:1px solid rgba(255,255,255,0.16)',
+        'border-radius:8px', 'padding:10px', 'outline:none',
+        'font-size:16px', 'line-height:1.6', 'color:rgba(255,255,255,0.92)',
+        'font-family:inherit',
+      ].join(';'))
+      ta.value = o.value || ''
+      ta.placeholder = o.placeholder || ''
+      ta.spellcheck = false
+      ta.addEventListener('input', () => {
+        count.textContent = String(ta.value.length)
+        if (typeof o.onInput === 'function') o.onInput(ta.value)
+      })
+      done.addEventListener('click', closeTextEditor)
+      // Esc 关闭：监听挂在 textarea 上（焦点在其中），不污染全局 keydown
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); closeTextEditor() }
+      })
+      bar.append(label, count, done)
+      overlay.append(bar, ta)
+      document.body.appendChild(overlay)
+      textEditorEl = overlay
+      setTimeout(() => { try { ta.focus() } catch (_) {} }, 0)
+      return overlay
+    }
     const onEsc = (e) => { if (e.key === 'Escape') closeLightbox() }
     document.addEventListener('keydown', onEsc)
     // 对比放大弹层：原图 vs 结果，可拖分割线（compareInput 区单击进入；编辑/回放态均可）。
@@ -825,6 +888,34 @@ function createNodeWidget(spec) {
         const nv = (cur.params || {})[f.key]
         inp.value = nv !== undefined ? nv : (f.default !== undefined ? String(f.default) : '')
       })
+      // 移动端：内联框退化为「摘要 + 放大入口」，点击开全屏弹层编辑长文本。
+      // 只读 + pointer 光标：避免软键盘弹在 56px 高的小框里；回放态（不可编辑）
+      // 点开无效，与桌面一致保持只读
+      if (isMobileViewport()) {
+        inp.readOnly = true
+        inp.style.cursor = 'pointer'
+        inp.style.paddingBottom = '16px'
+        const wrap = h('div', 'position:relative')
+        const hint = h('span', [
+          'position:absolute', 'right:7px', 'bottom:3px', 'font-size:9px',
+          'color:rgba(165,180,252,0.75)', 'pointer-events:none',
+        ].join(';'), '⤢ 放大编辑')
+        const expand = (e) => {
+          if (e && e.preventDefault) e.preventDefault()
+          if (!editable()) return
+          openTextEditor({
+            title: f.label || f.key,
+            value: inp.value,
+            placeholder: f.placeholder || '',
+            onInput: (v) => { inp.value = v; setParam(f.key, v) },
+          })
+        }
+        inp.addEventListener('click', expand)
+        inp.addEventListener('focus', () => expand())
+        refreshers.push(() => { hint.style.display = editable() ? 'block' : 'none' })
+        wrap.append(inp, hint)
+        return wrap
+      }
       return inp
     }
 
@@ -2146,7 +2237,7 @@ function createNodeWidget(spec) {
 
     return {
       update(next) { render(next) },
-      unmount() { if (closePaintEditor) closePaintEditor(); closeLightbox(); document.removeEventListener('keydown', onEsc); el.textContent = '' },
+      unmount() { if (closePaintEditor) closePaintEditor(); closeLightbox(); closeTextEditor(); document.removeEventListener('keydown', onEsc); el.textContent = '' },
     }
   }
 }

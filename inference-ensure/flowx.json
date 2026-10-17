@@ -1,8 +1,8 @@
 {
   "name": "inference-ensure",
   "displayName": "推理服务健康检查",
-  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用。min_vram_mb>0 时兼作显存闸门：可用显存不足则在 wait_seconds 内等待重试，超时明确失败（避免流水线退化到分钟级/步，dev-plan §21）",
-  "version": "1.1.0",
+  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用。显存闸门：min_vram_mb（乐观口径可用显存）不足则在 wait_seconds 内等待重试、超时明确失败；require_headroom_mb（物理余量）不足同样拦截；服务处于物理超订态（vram_oversubscribed，CUDA 已借主机内存，WSL2 不报 OOM）时**硬失败不重试**——避免流水线退化到分钟级/步（dev-plan §21，exec 795 事故）",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -33,7 +33,14 @@
     {
       "name": "min_vram_mb",
       "type": "integer",
-      "description": "显存闸门：要求服务可用显存至少这么多 MB（0=不检查）；不足时按 wait_seconds 等待重试",
+      "description": "显存闸门：要求服务可用显存（乐观口径 = 驱动余量 + 可回收缓存）至少这么多 MB（0=不检查）；不足时按 wait_seconds 等待重试",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "require_headroom_mb",
+      "type": "integer",
+      "description": "物理余量闸门（B1）：要求 vram_total_mb − vram_process_reserved_mb 至少这么多 MB（0=不检查）。与 min_vram_mb 的区别：后者是乐观口径（含分配器缓存），前者是物理口径——WSL2/WDDM 超订时只有后者能拦住（CUDA 借主机内存不报 OOM，采样静默退化到分钟级/步）",
       "required": false,
       "default": 0
     },
@@ -49,7 +56,8 @@
     "SERVICE_URL": "{{ Param.service_url }}",
     "WAIT_SECONDS": "{{ Param.wait_seconds }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
-    "MIN_VRAM_MB": "{{ Param.min_vram_mb }}"
+    "MIN_VRAM_MB": "{{ Param.min_vram_mb }}",
+    "REQUIRE_HEADROOM_MB": "{{ Param.require_headroom_mb }}"
   },
   "outputs": [
     {
@@ -86,6 +94,16 @@
       "name": "offload_mode",
       "type": "string",
       "description": "服务端显存治理档位 none/model/sequential"
+    },
+    {
+      "name": "vram_headroom_mb",
+      "type": "string",
+      "description": "物理真余量（MB）= 显存总量 − 已分配额度；与 vram_free_mb 的乐观口径互补（B1）"
+    },
+    {
+      "name": "vram_oversubscribed",
+      "type": "string",
+      "description": "服务是否处于物理超订态（CUDA 借主机内存，true/false）——为 true 时采样会退化到分钟级/步"
     }
   ],
   "extract": {

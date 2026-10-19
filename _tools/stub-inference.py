@@ -31,6 +31,8 @@ OP_OUTPUTS = {
     "flux.empty_latent": {"latent": "stublatent"},
     "flux.vae_encode": {"latent": "stublatent"},
     "flux.vae_decode": {"image": "stubimage"},
+    "mesh.triposr": {"mesh": "stubmesh", "num_vertices": "1024",
+                     "num_faces": "2048", "format": "glb"},
 }
 PENDING = 1
 

@@ -54,7 +54,8 @@ _OP_KEYS = ("model", "clip", "clip2", "vae", "cond", "uncond", "latent", "image"
             "mask", "seed", "info", "width", "height", "count", "ids", "refs",
             "model_ref", "clip_ref", "vae_ref", "t5", "text", "tokens", "score",
             "boxes", "candidates", "sizes", "plan", "meta", "report", "video",
-            "frames", "motion", "audio", "list", "detail", "preview")
+            "frames", "motion", "audio", "list", "detail", "preview",
+            "mesh", "num_vertices", "num_faces", "format", "download_url")
 
 
 # 数值型输出键（其余一律给字符串，模拟 Studio 的 string 端口）

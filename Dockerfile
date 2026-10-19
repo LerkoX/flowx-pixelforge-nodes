@@ -41,6 +41,7 @@ COPY cond-set-area/*.py              /opt/flowx-nodes/cond-set-area/
 COPY controlnet-apply/*.py           /opt/flowx-nodes/controlnet-apply/
 COPY controlnet-load/*.py            /opt/flowx-nodes/controlnet-load/
 COPY detail-refine/*.py              /opt/flowx-nodes/detail-refine/
+COPY tripo-sr/*.py                  /opt/flowx-nodes/tripo-sr/
 COPY embedding-load/*.py             /opt/flowx-nodes/embedding-load/
 COPY image-upscale/*.py              /opt/flowx-nodes/image-upscale/
 COPY ipadapter-apply/*.py            /opt/flowx-nodes/ipadapter-apply/

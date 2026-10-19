@@ -44,7 +44,8 @@ import sys
 # 其余一律要支持 docker。本集合即"确证碰本机文件系统"的节点，声明里出现 docker/image/bundled
 # 会被 gate E 拦下（image-batch-load 读本机目录、image-batch-save 写本机文件）。
 LOCAL_ONLY = {"save-image", "save-video", "load-image", "mask-paint",
-              "image-batch-load", "image-batch-save", "load-video"}
+              "image-batch-load", "image-batch-save", "load-video",
+              "save-mesh"}
 
 # 已删除的 Studio 业务端点（去业务耦合：4 个业务端点 → 2 个通用代理）：
 # widget 里再引用就是指向 404 的死链接，第三方 API 路径语义必须自持。

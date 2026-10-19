@@ -189,11 +189,11 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 | --- | --- | --- | --- |
 | A 推理服务客户端 | 79 个（`checkpoint-loader`、`vae-load`、`controlnet-*`、`preprocess-*`（10 个，含 G7 预处理器族）、`image-upscale`、`detail-refine` …） | `supportedTypes: [local, docker]`，`preferredType: docker`，`bundled: true` + `image` | 只经 HTTP 调推理服务，镜像内 `python main.py` 即可跑（纯 stdlib） |
 | B Studio 侧图像/蒙版/滤镜（PIL） | `image-rotate/flip/crop/composite`、`mask-*`（9 个）、G5 传统滤镜 8 个（`image-adjust` / `image-hsl` / `image-curves` / `image-blur` / `image-sharpen` / `image-noise` / `image-channel-extract` / `image-channel-merge`）、`image-pad`（扩画布） | 同上 | **图片本体经服务对象仓库传递**（`get_bytes /images/{id}` → PIL 计算 → `post_bytes /images`），不碰本地文件 ⇒ 进镜像 + 装 Pillow（离线 wheel，见下）；G5 滤镜族共享实现为 `_common/image_filters.py`（由 `_tools/sync-common.py` 分发，副本漂移即门槛失败） |
-| C 读写宿主文件 | `save-image`、`save-video`、`load-image`、`load-video`、`mask-paint` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到 ⇒ **只能 local**。`load-image`/`mask-paint` 的本地路径字段声明了画布侧上传控件（widget `kind:'file'`），上传物落在 `~/flowx-input/uploads/` |
+| C 读写宿主文件 | `save-image`、`save-video`、`save-mesh`、`load-image`、`load-video`、`mask-paint` | `supportedTypes: [local]`，无 `image`/`bundled` | 直接读写 Studio 宿主（手机）上的文件路径；容器内看不到 ⇒ **只能 local**。`load-image`/`mask-paint` 的本地路径字段声明了画布侧上传控件（widget `kind:'file'`），上传物落在 `~/flowx-input/uploads/` |
 | — | `model-unload` | 常驻模型显式卸载（`[local, docker]`，偏好 docker） | 走 `POST /model/unload` 腾显存，配套 `inference-ensure` 的 `min_vram_mb` 闸门（dev-plan §21） |
 | `_common`/`_tools`/`_widget-template` | — | 非节点目录，不进镜像 |
 
-`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 C 这份名单（`save-image`、`save-video`、`load-image`、`load-video`、`mask-paint`、`image-batch-load`、`image-batch-save`），改分类时两处一起改。
+`sync-flowx-json.py` / `check-bundle.py` 里的 `LOCAL_ONLY` 常量就是 C 这份名单（`save-image`、`save-video`、`save-mesh`、`load-image`、`load-video`、`mask-paint`、`image-batch-load`、`image-batch-save`），改分类时两处一起改。
 
 ## docker 节点的服务地址必须用内网
 

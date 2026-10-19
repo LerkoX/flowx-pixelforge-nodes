@@ -1,0 +1,111 @@
+{
+  "name": "save-mesh",
+  "displayName": "保存 3D 网格",
+  "description": "从推理服务下载 3D 网格（GLB/OBJ）保存到本地目录（对标 save-video）。下载端点 /ext/meshes/{id} 由 tripo-sr 节点包自注册。仅本地执行器运行：文件须落在 Studio 宿主机媒体白名单目录（默认 ~/flowx-output）。",
+  "version": "1.0.0",
+  "author": "flowx-pixelforge",
+  "tags": [
+    "3d",
+    "inference"
+  ],
+  "icon": "💾",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "mesh",
+      "type": "string",
+      "description": "推理服务端的 MESH 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "tripo-sr",
+        "output": "mesh",
+        "description": "由 TripoSR 重建节点输出提供"
+      }
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "description": "格式提示（glb/obj，用于无法嗅探时的后缀；GLB 会自动识别，一般保持默认）",
+      "required": false,
+      "default": "glb"
+    },
+    {
+      "name": "filename_prefix",
+      "type": "string",
+      "description": "文件名前缀（自动追加时间戳与后缀），非法字符会被替换为下划线",
+      "required": false,
+      "default": "flowx-mesh"
+    },
+    {
+      "name": "output_dir",
+      "type": "string",
+      "description": "本地保存目录（支持 ~ 展开），不存在时自动创建",
+      "required": false,
+      "default": "~/flowx-output"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "MESH": "{{ Param.mesh }}",
+    "FORMAT": "{{ Param.format }}",
+    "FILENAME_PREFIX": "{{ Param.filename_prefix }}",
+    "OUTPUT_DIR": "{{ Param.output_dir }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "file_path",
+      "type": "string",
+      "description": "保存后的本地网格文件路径"
+    },
+    {
+      "name": "size_bytes",
+      "type": "integer",
+      "description": "文件大小（字节）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block",
+    "maxOutputSize": 6291456
+  },
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 260,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

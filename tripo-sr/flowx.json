@@ -1,0 +1,161 @@
+{
+  "name": "tripo-sr",
+  "displayName": "TripoSR 单图 3D 重建",
+  "description": "TripoSR 单图 3D 重建：输入一张（最好已去背的）物体图，输出 3D 网格（GLB/OBJ，带顶点色）。算子与 /ext/meshes 下载端点由本包经插件契约 v2 自注册到推理服务。权重 MIT 许可（stabilityai/TripoSR）。",
+  "version": "1.0.0",
+  "author": "flowx-pixelforge",
+  "tags": [
+    "3d",
+    "inference"
+  ],
+  "icon": "🧊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.6",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布/取消兜底）可达的服务地址；docker 节点跑在远端宿主时 service_url 是容器内地址，必须另绑本参数（留空则同 service_url）"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "待重建的图像对象 ID（建议已去背，BiRefNet 抠图节点输出最佳；带背景会因 rembg 未安装报错）",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码 / 抠图 / load-image 节点的图像输出提供"
+      }
+    },
+    {
+      "name": "foreground_ratio",
+      "type": "float",
+      "description": "前景占比 0~1：物体在输入图中所占比例（缩放对齐用），默认 0.85；物体偏小时调大",
+      "required": false,
+      "default": 0.85
+    },
+    {
+      "name": "mc_resolution",
+      "type": "integer",
+      "description": "marching cubes 网格分辨率：越高细节越丰富但越慢、文件越大。256=默认均衡，128=快速草稿，320+=精细（显存/耗时显著上升）",
+      "required": false,
+      "default": 256
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "description": "网格格式：glb（推荐，单文件二进制带顶点色，Blender/Windows 3D 查看器直接开）或 obj（文本格式，兼容性最广）",
+      "required": false,
+      "default": "glb"
+    },
+    {
+      "name": "vram",
+      "type": "string",
+      "description": "显存策略：keep=模型常驻（连续出图快）；after_op=用完即释放（与 SD 等模型错峰共存时选）",
+      "required": false,
+      "default": "keep"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务等待超时秒数（排队+重建）",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔秒数",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务 token（服务端配了 INFERENCE_TOKEN 时必填同一值）",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "IMAGE": "{{ Param.image }}",
+    "FOREGROUND_RATIO": "{{ Param.foreground_ratio }}",
+    "MC_RESOLUTION": "{{ Param.mc_resolution }}",
+    "FORMAT": "{{ Param.format }}",
+    "VRAM": "{{ Param.vram }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+  },
+  "outputs": [
+    {
+      "name": "mesh",
+      "type": "string",
+      "description": "3D 网格对象 ID（MESH 类型；接 save-mesh 落盘，或记下后用 /ext/meshes/{id} 下载）"
+    },
+    {
+      "name": "num_vertices",
+      "type": "string",
+      "description": "网格顶点数"
+    },
+    {
+      "name": "num_faces",
+      "type": "string",
+      "description": "网格三角面数"
+    },
+    {
+      "name": "format",
+      "type": "string",
+      "description": "实际输出格式（glb/obj）"
+    },
+    {
+      "name": "download_url",
+      "type": "string",
+      "description": "宿主侧可直接 GET 的网格下载地址（.glb/.obj 字节流）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 360,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
+}

@@ -2264,7 +2264,6 @@ const WIDGET_SPEC = {
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
   boxList: { labelsKey: 'labels', scoresKey: 'scores', boxesKey: 'boxes' },
-  replay: ['prompt', 'box_threshold', 'text_threshold', 'max_boxes', 'sam_model'],
   compareInput: 'image',
   note: 'sam_model 非空时 mask 为像素级（框→SAM）；空时为框矩形并集',
 };

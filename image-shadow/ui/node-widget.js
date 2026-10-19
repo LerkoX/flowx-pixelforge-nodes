@@ -2266,7 +2266,6 @@ const WIDGET_SPEC = {
     { key: 'background', label: '底图对象 ID（留空输出透明画布）', kind: 'text', mono: true, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['angle', 'distance', 'blur', 'opacity', 'squash', 'fade', 'color', 'canvas'],
   compareInput: 'image',
   note: 'shadow_box 之外逐字节不变（可复核）；canvas=expand 主体像素逐字节保留。'
         + '商品图有 alpha 时不必接蒙版节点。',

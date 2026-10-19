@@ -5,6 +5,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # ---------------------------------------------------------------------------
@@ -401,7 +402,241 @@ def interrupt_job(base, job_id=None, tok=None, timeout=30):
     return post_json(base, "/interrupt", payload, tok, timeout)
 
 
+# ---------------------------------------------------------------------------
+# WebSocket 事件等待（P1-16）：WS 优先、断线自动回退轮询
+# ---------------------------------------------------------------------------
+# 纯 stdlib 实现（RFC 6455 握手 + 帧解析），零依赖纪律不变。WS 只是"等结果
+# 的方式"：任务状态机与终态判定仍以 REST 视图为准（终态事件到达后 GET 一次
+# /jobs/{id} 取完整 result）。任何通道类问题（握手被拒/断开/读超时/帧异常）
+# 抛 _WsFallback，由 wait_job 回退到原轮询路径——旧服务端（无 /ws）+ 新节点、
+# 新服务端 + 旧节点两个方向都必须可用。FLOWX_WS=0 可整体关闭（一处 workaround
+# 一个开关）。
+_WS_DISABLED = os.environ.get("FLOWX_WS", "1").lower() in ("0", "false", "no")
+_WS_READ_TIMEOUT = 45.0  # 服务端应用层 ping 间隔 30s + 15s 余量
+
+
+class _WsFallback(Exception):
+    """WS 通道不可用（握手失败/断开/读超时）：wait_job 捕获后回退轮询。"""
+
+
+class _WsConn:
+    """最小 WebSocket 连接：握手后的帧收（自动回 pong / 拼续帧 / 过滤 ping-pong）。
+    只收不发（订阅由 URL 查询参数表达），唯一主动发送是 pong 与潜在 close。"""
+
+    def __init__(self, sock, leftover=b""):
+        self.sock = sock
+        self.buf = bytearray(leftover)
+
+    def _read(self, n):
+        while len(self.buf) < n:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise _WsFallback("连接被对端关闭")
+            self.buf += chunk
+        out = bytes(self.buf[:n])
+        del self.buf[:n]
+        return out
+
+    def send_frame(self, opcode, payload=b""):
+        """客户端发送必须掩码（RFC 6455 §5.3）；只用于 pong。"""
+        import struct as _st
+        mask = os.urandom(4)
+        header = bytearray([0x80 | opcode])
+        ln = len(payload)
+        if ln < 126:
+            header.append(0x80 | ln)
+        elif ln < 65536:
+            header += bytes([0x80 | 126]) + _st.pack(">H", ln)
+        else:
+            header += bytes([0x80 | 127]) + _st.pack(">Q", ln)
+        self.sock.sendall(bytes(header) + mask
+                          + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+    def recv_event(self):
+        """收一个完整文本消息并解析为 dict。协议 ping 自动回 pong；
+        close 帧 / 连接断抛 _WsFallback。"""
+        import struct as _st
+        data = bytearray()
+        while True:
+            hdr = self._read(2)
+            fin = hdr[0] & 0x80
+            op = hdr[0] & 0x0F
+            masked = hdr[1] & 0x80
+            ln = hdr[1] & 0x7F
+            if ln == 126:
+                ln = _st.unpack(">H", self._read(2))[0]
+            elif ln == 127:
+                ln = _st.unpack(">Q", self._read(8))[0]
+            if ln > 8 * 1024 * 1024:
+                raise _WsFallback(f"帧过大: {ln}")
+            mask = self._read(4) if masked else None
+            payload = self._read(ln) if ln else b""
+            if mask:
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            if op == 0x9:    # ping → pong（uvicorn 默认 20s 协议级 ping，不回会被断）
+                self.send_frame(0xA, payload)
+                continue
+            if op == 0xA:    # pong
+                continue
+            if op == 0x8:
+                raise _WsFallback("收到 close 帧")
+            if op in (0x0, 0x1, 0x2):
+                data += payload
+                if fin:
+                    return json.loads(bytes(data))
+            # 保留 opcode 忽略
+
+
+def _ws_connect(base, tok, job_id, timeout=10):
+    """WebSocket 握手（http→ws / https→wss 随 base 的 scheme）。
+    成功返回 _WsConn；任何失败抛 _WsFallback。握手响应之后随包到达的
+    帧字节（如 snapshot）收进 leftover 不丢。"""
+    import base64 as _b64
+    import socket as _sock
+    import ssl as _ssl
+    u = urllib.parse.urlparse(base)
+    secure = u.scheme in ("https", "wss")
+    host = u.hostname
+    port = u.port or (443 if secure else 80)
+    path = (u.path.rstrip("/") or "") + f"/ws?job_id={urllib.parse.quote(str(job_id), safe='')}"
+    if tok:
+        path += "&token=" + urllib.parse.quote(str(tok), safe="")
+    try:
+        s = _sock.create_connection((host, port), timeout=timeout)
+        if secure:
+            s = _ssl.create_default_context().wrap_socket(s, server_hostname=host)
+        key = _b64.b64encode(os.urandom(16)).decode()
+        s.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+                   "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                   f"Sec-WebSocket-Key: {key}\r\n"
+                   "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+            if len(resp) > 65536:
+                break
+        head, _, leftover = resp.partition(b"\r\n\r\n")
+        status = head.split(b"\r\n", 1)[0]
+        if b" 101" not in status:
+            raise _WsFallback(
+                f"握手被拒: {status.decode(errors='replace')[:80]}")
+        s.settimeout(_WS_READ_TIMEOUT)
+        return _WsConn(s, leftover)
+    except _WsFallback:
+        raise
+    except Exception as e:
+        raise _WsFallback(str(e))
+
+
+def _wait_job_ws(base, job_id, tok, timeout, on_poll, log):
+    """WS 事件驱动等待。done 返回 result dict；任务 failed/cancelled/超时抛
+    RuntimeError（与轮询路径同语义）；通道问题抛 _WsFallback（调用方回退轮询）。"""
+    t0 = time.time()
+    last = ""
+    last_beat = time.time()
+    conn = _ws_connect(base, tok, job_id)
+    view = {"status": "pending", "progress": {"current": 0, "total": 0}}
+
+    def _terminal():
+        # 终态以 REST 视图为准（含完整 result/error；done 事件里的 result 同内容）
+        try:
+            v = get_job(base, job_id, tok)
+        except RuntimeError as e:
+            raise _WsFallback(f"终态确认失败: {e}")
+        st = v.get("status")
+        if st == "done":
+            return v.get("result") or {}
+        raise RuntimeError(f"job {job_id} {st}: {v.get('error')}")
+
+    try:
+        while True:
+            try:
+                ev = conn.recv_event()
+            except _WsFallback:
+                raise
+            except Exception as e:  # socket.timeout / OSError / JSON 错
+                raise _WsFallback(str(e))
+            et = ev.get("type")
+            if et == "ping":
+                if log and time.time() - last_beat >= HEARTBEAT_SECONDS:
+                    # 加载阶段无 progress 事件，靠服务端 30s ping 驱动心跳输出
+                    # （docker 节点 stdout 保活，同轮询路径的 HEARTBEAT 语义）
+                    p = view.get("progress") or {}
+                    log(f"[job {job_id[:8]}] {view.get('status')} "
+                        f"{p.get('current', 0)}/{p.get('total', 0)}"
+                        f"（心跳 {time.time()-t0:.0f}s）")
+                    last_beat = time.time()
+                continue
+            if et == "error":
+                raise _WsFallback(str(ev.get("error") or "ws error"))
+            if et == "snapshot":
+                view = ev.get("job") or view
+            elif et in ("submitted",):
+                view["status"] = "pending"
+            elif et == "running":
+                view["status"] = "running"
+            elif et == "progress":
+                view["status"] = "running"
+                view["progress"] = {"current": ev.get("current", 0),
+                                    "total": ev.get("total", 0)}
+            elif et == "stage":
+                view["stage"] = {"index": ev.get("index"), "total": ev.get("total"),
+                                 "node": ev.get("node"), "op": ev.get("op")}
+            elif et in ("done", "failed", "cancelled"):
+                return _terminal()
+            else:
+                continue
+            if view.get("status") in ("done", "failed", "cancelled"):
+                # snapshot 直接带终态（订阅时任务已结束）
+                return _terminal()
+            if on_poll is not None:
+                try:
+                    on_poll(view)
+                except Exception:
+                    pass
+            p = view.get("progress") or {}
+            line = f"[job {job_id[:8]}] {view.get('status')} " \
+                   f"{p.get('current', 0)}/{p.get('total', 0)}"
+            if log and line != last:
+                log(line)
+                last = line
+                last_beat = time.time()
+            if time.time() - t0 > timeout:
+                try:
+                    interrupt_job(base, job_id, tok)
+                except RuntimeError:
+                    pass
+                raise RuntimeError(
+                    f"job {job_id} timeout after {timeout}s (interrupted)")
+    finally:
+        _unregister_inflight(job_id)
+        try:
+            conn.sock.close()
+        except Exception:
+            pass
+
+
 def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=flush_print,
+             on_poll=None, max_poll_errors=12, error_window=300.0):
+    """等待任务到终态：WS 事件优先（P1-16），WS 不可用自动回退轮询。
+    done 返回 result dict；failed/cancelled/超时抛异常（超时先尽力 interrupt，
+    避免孤儿任务继续占 GPU）。FLOWX_WS=0 强制走轮询。"""
+    if not _WS_DISABLED:
+        t0 = time.time()
+        try:
+            return _wait_job_ws(base, job_id, tok, timeout, on_poll, log)
+        except _WsFallback as e:
+            if log:
+                log(f"[job {job_id[:8]}] ws 不可用（{e}），回退轮询")
+            timeout = max(60.0, timeout - (time.time() - t0))
+    return _wait_job_poll(base, job_id, tok, timeout, poll, log, on_poll,
+                          max_poll_errors, error_window)
+
+
+def _wait_job_poll(base, job_id, tok=None, timeout=7200, poll=5.0, log=flush_print,
              on_poll=None, max_poll_errors=12, error_window=300.0):
     # 心跳间隔（秒）：docker 节点靠 stdout 保活 docker exec 流（见下方注释）
     """轮询任务直到终态。done 返回 result dict；failed/cancelled/超时抛异常

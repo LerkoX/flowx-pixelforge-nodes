@@ -2259,7 +2259,6 @@ const WIDGET_SPEC = {
     { key: 'safe', label: 'safe 模式（更平滑）', kind: 'check', default: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['variant', 'detect_resolution', 'safe'],
   compareInput: 'image',
   note: '黑底白边软边缘 → controlnet-apply 的 hint（配 softedge ControlNet）',
 }

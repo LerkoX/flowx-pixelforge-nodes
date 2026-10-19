@@ -13,7 +13,6 @@ const WIDGET_SPEC = {
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
   pointSelect: { pointsKey: 'points', boxKey: 'box', baseImage: 'image' },
-  replay: ['points', 'box', 'pick', 'multimask', 'overlay'],
   compareInput: 'image',
   note: '画布点选：点=正样本、Shift/右键点=负样本、拖拽=框选；「▶ 预览」重放分割结果',
 };

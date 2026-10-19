@@ -8,6 +8,5 @@ const WIDGET_SPEC = {
     { key: 'reload', label: '强制重装', kind: 'select', options: ['false', 'true'], default: "false" },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['variant', 'dtype'],
   note: '变体权重：modelscope 912MB（默认）/ paper 912MB / artistic 912MB / paper_tiny 220MB；装载后常驻 LRU（可被淘汰，也可用 model-unload 卸载）',
 };

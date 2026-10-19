@@ -10,6 +10,5 @@ const WIDGET_SPEC = {
     { key: 'end_percent', label: '生效终点 end_percent', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1.0 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  replay: ['strength', 'start_percent', 'end_percent'],
   note: '输出 control → 采样节点 control 端口；strength=0 ≡ 关闭',
 }

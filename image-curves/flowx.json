@@ -111,5 +111,5 @@
     "preferredType": "docker",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.4"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.5"
 }

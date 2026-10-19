@@ -2259,7 +2259,6 @@ const WIDGET_SPEC = {
     { key: 'thr_d', label: '横线阈值', kind: 'slider', min: 0.05, max: 0.5, step: 0.05, default: 0.1 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['detect_resolution', 'thr_v', 'thr_d'],
   compareInput: 'image',
   note: '黑底白直线 → controlnet-apply 的 hint（配 mlsd ControlNet）',
 }

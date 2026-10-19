@@ -2272,7 +2272,6 @@ const WIDGET_SPEC = {
     { key: 'upscale_model', label: 'UPSCALE_MODEL 句柄（pre=model）', kind: 'text', mono: true, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['tile', 'overlap', 'scale', 'pre', 'denoise', 'seam_fix', 'band_denoise', 'steps', 'cfg', 'scheduler', 'seed'],
   compareInput: 'image',
   progressBar: true,
   note: '逐块进度条来自服务端真实 job progress；pre_upscaled 可与结果做 AB 对比，seam_map 是接缝权重图（越均匀越好）',

@@ -13,7 +13,6 @@ const WIDGET_SPEC = {
     { key: 'det_thresh', label: '检测置信度阈值', kind: 'slider', min: 0.2, max: 0.9, step: 0.05, default: 0.5 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['model', 'upscale', 'padding', 'feather', 'max_faces', 'only_center', 'det_thresh'],
   compareInput: 'image',
   note: '与 detail-refine 的分工：只做修复增强（老照片/低清脸），不重新生成内容。GFPGAN 固定 512²（upscale 必须 1.0）；RestoreFormer 可 upscale=2',
 };

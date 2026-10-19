@@ -10,7 +10,6 @@ const WIDGET_SPEC = {
     { key: 'feather', label: '羽化 feather(px)', kind: 'slider', min: 0, max: 64, step: 2, default: 16 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  replay: ['face_index', 'det_thresh', 'expand', 'feather'],
   compareInput: 'image',
   note: '人脸 bbox → 羽化蒙版 + crop 框坐标 → 接 image-crop / image-composite 做 FaceDetailer',
 }

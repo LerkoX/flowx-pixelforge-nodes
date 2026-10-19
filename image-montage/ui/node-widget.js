@@ -2266,7 +2266,6 @@ const WIDGET_SPEC = {
     { key: 'fit', label: '缩放方式', kind: 'select', options: ['fit', 'cover'], default: "fit" },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['cols', 'cell_w', 'cell_h', 'pad', 'label'],
   compareInput: 'image',
   note: '输出尺寸公式：W = cols*cell_w + (cols+1)*pad；H = rows*cell_h + (rows+1)*pad + rows*label_h（复核脚本按此判据对表）',
 };

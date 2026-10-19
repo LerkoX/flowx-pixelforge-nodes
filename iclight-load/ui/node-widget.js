@@ -2259,7 +2259,6 @@ const WIDGET_SPEC = {
     { key: 'reload', label: '强制重装', kind: 'select', options: ['false', 'true'], default: "false" },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['variant', 'dtype'],
   note: 'fc=前景条件（默认，靠 light_dir+prompt 打光）；fbc=前景+背景条件（给背景图按图打光）。权重 1.64GB + SD1.5 基座 ⇒ 常驻约 4.3GB；与 flux 常驻（6.4GB）在 8GB 卡上互斥，单链使用或先 model-unload',
 };
 

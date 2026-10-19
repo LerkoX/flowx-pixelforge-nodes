@@ -7,7 +7,6 @@ const WIDGET_SPEC = {
     { key: 'detect_resolution', label: '检测分辨率 detect_resolution', kind: 'slider', min: 256, max: 1024, step: 64, default: 512 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  replay: ['detect_resolution'],
   compareInput: 'image',
   note: '灰度深度图（近亮远暗）→ controlnet-apply 的 hint（配 depth ControlNet）',
 }

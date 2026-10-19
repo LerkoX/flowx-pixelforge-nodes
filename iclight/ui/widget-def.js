@@ -22,7 +22,6 @@ const WIDGET_SPEC = {
     { key: 'scheduler', label: '采样器', kind: 'select', options: ['dpmpp', 'ddim'], default: "dpmpp" },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['light_dir', 'prompt', 'seed', 'steps', 'cfg'],
   compareInput: 'image',
   note: 'fc：light_dir 造 i2i 初始梯度（none=纯文生图）；fbc：bg 图作为背景条件。带 mask 时按官方 run_rmbg(sigma=0) 合成 127 灰底（等价 B2 matting-composite 白底换灰底）。同种子逐字节可复现（DDIM 与 dpmpp-sde 实测差 0）⇒ 可作回归判据',
 };

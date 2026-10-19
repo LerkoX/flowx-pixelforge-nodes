@@ -2259,7 +2259,6 @@ const WIDGET_SPEC = {
     { key: 'coarse', label: '粗松线稿（仅 lineart 档）', kind: 'check', default: false },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['variant', 'detect_resolution', 'coarse'],
   compareInput: 'image',
   note: '黑底白线线稿 → controlnet-apply 的 hint（配 lineart / lineart_anime ControlNet）',
 }

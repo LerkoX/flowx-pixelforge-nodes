@@ -18,7 +18,6 @@ const WIDGET_SPEC = {
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
   tileGridOverlay: { gridKey: 'grid_image' },
-  replay: ['scale', 'target_w', 'target_h', 'tile', 'overlap', 'pre', 'denoise', 'seam_fix', 'band_denoise', 'steps'],
   compareInput: 'image',
   note: '「▶ 预览」出网格覆盖层；把 plan 输出接到 tiled-upscale-apply 可保证两边口径一致',
 };

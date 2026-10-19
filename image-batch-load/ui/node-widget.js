@@ -2263,7 +2263,6 @@ const WIDGET_SPEC = {
     { key: 'reverse', label: '倒序', kind: 'check', default: false },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['dir', 'pattern', 'sort', 'limit', 'offset'],
   note: 'Studio 无循环概念 ⇒ 批量只能落在 I/O 上：本节点把目录里的图上传成 ID 列表，给 image-montage（拼联系表）或 image-batch-save（另存目录）用。只能 local 执行器',
 };
 

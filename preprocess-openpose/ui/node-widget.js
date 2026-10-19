@@ -2258,7 +2258,6 @@ const WIDGET_SPEC = {
     { key: 'include_face', label: '面部特征 include_face', kind: 'check', default: false },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  replay: ['include_hand', 'include_face'],
   note: '输出骨架图 → controlnet-apply 的 hint（配 openpose ControlNet）',
 }
 

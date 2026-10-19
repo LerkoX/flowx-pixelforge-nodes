@@ -2257,7 +2257,6 @@ const WIDGET_SPEC = {
     { key: 'detect_resolution', label: '分块分辨率', kind: 'slider', min: 256, max: 1024, step: 64, default: 512 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['detect_resolution'],
   compareInput: 'image',
   note: '打乱块 → controlnet-apply 的 hint（配 shuffle ControlNet；保构图换内容）',
 }

@@ -13,7 +13,6 @@ const WIDGET_SPEC = {
     { key: 'invert', label: '蒙版反相', kind: 'check', default: false },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['variant', 'resolution', 'refine', 'refine_radius', 'alpha_gamma', 'invert'],
   compareInput: 'image',
   note: '输出 mask（灰度 alpha，喂 mask-feather / image-composite / latent-set-noise-mask）+ RGBA 去背图',
 };

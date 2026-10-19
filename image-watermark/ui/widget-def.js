@@ -22,8 +22,6 @@ const WIDGET_SPEC = {
     { key: 'font_path', label: '字体文件路径（中文必填）', kind: 'text', mono: true, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['text', 'position', 'opacity', 'font_size', 'margin', 'stroke_width',
-           'tile', 'angle', 'tile_gap'],
   compareInput: 'image',
   note: '不改动非水印区像素（box 输出即水印覆盖区，可复核）；tile=true 时按 angle 斜铺。'
         + '中文需在 font_path 指定含 CJK 的 TTF。',

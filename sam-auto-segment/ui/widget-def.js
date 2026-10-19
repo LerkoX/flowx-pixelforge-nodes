@@ -16,7 +16,6 @@ const WIDGET_SPEC = {
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
   maskMontage: { keepKey: 'keep', montageKey: 'masks', selectedKey: 'selected' },
-  replay: ['points_per_side', 'pred_iou_thresh', 'stability_score_thresh', 'min_area', 'max_masks', 'keep', 'sort'],
   compareInput: 'image',
   note: '先跑一次看编号网格图，再点格子挑选（写回 keep），重跑得到选中并集',
 };

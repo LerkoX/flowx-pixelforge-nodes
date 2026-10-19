@@ -2259,7 +2259,6 @@ const WIDGET_SPEC = {
     { key: 'intensity_threshold', label: '强度阈值', kind: 'slider', min: 1, max: 10, step: 1, default: 3 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  replay: ['detect_resolution', 'guassian_sigma', 'intensity_threshold'],
   compareInput: 'image',
   note: '黑底白线高精度线稿 → controlnet-apply 的 hint（配 anyline/MistoLine ControlNet）',
 }

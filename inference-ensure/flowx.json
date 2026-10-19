@@ -1,8 +1,8 @@
 {
   "name": "inference-ensure",
   "displayName": "推理服务健康检查",
-  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用。显存闸门：min_vram_mb（乐观口径可用显存）不足则在 wait_seconds 内等待重试、超时明确失败；require_headroom_mb（物理余量）不足同样拦截；服务处于物理超订态（vram_oversubscribed，CUDA 已借主机内存，WSL2 不报 OOM）时**硬失败不重试**——避免流水线退化到分钟级/步（dev-plan §21，exec 795 事故）",
-  "version": "1.2.0",
+  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用。显存闸门：min_vram_mb（乐观口径可用显存）不足则在 wait_seconds 内等待重试、超时明确失败；require_headroom_mb（物理余量）不足同样拦截；服务处于物理超订态（vram_oversubscribed，CUDA 已借主机内存，WSL2 不报 OOM）时**硬失败不重试**——避免流水线退化到分钟级/步（dev-plan §21，exec 795 事故）。复用感知：expect_resident 列出本流水线要用且期望复用的模型，若它们**全部已常驻**则跳过 min_vram_mb（下游 loader 命中缓存不占新显存），require_headroom_mb 仍生效",
+  "version": "1.3.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -33,9 +33,16 @@
     {
       "name": "min_vram_mb",
       "type": "integer",
-      "description": "显存闸门：要求服务可用显存（乐观口径 = 驱动余量 + 可回收缓存）至少这么多 MB（0=不检查）；不足时按 wait_seconds 等待重试",
+      "description": "显存闸门：要求服务可用显存（乐观口径 = 驱动余量 + 可回收缓存）至少这么多 MB（0=不检查）；不足时按 wait_seconds 等待重试。若 expect_resident 的模型已全部常驻（下游复用缓存、不新增显存），本项自动跳过",
       "required": false,
       "default": 0
+    },
+    {
+      "name": "expect_resident",
+      "type": "string",
+      "description": "期望复用的已常驻模型（逗号分隔，可写模型文件名/MODELS_DIR 名字/完整缓存键，如 ponyDiffusionV6XL_v6StartWithThisOne,controlnet-canny-sdxl-1.0）。列出本流水线接下来要加载的模型：若它们全部已在 /health 的 resident_models 里则跳过 min_vram_mb 检查（复用不占新显存），未命中时仍严格校验并在报错列出未命中项。留空 = 不启用复用感知（行为同 1.2.0）。⚠️ 同名模型不同 dtype/offload/use_t5 旋钮 = 不同缓存键，旋钮不一致不会复用",
+      "required": false,
+      "default": ""
     },
     {
       "name": "require_headroom_mb",
@@ -57,6 +64,7 @@
     "WAIT_SECONDS": "{{ Param.wait_seconds }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
     "MIN_VRAM_MB": "{{ Param.min_vram_mb }}",
+    "EXPECT_RESIDENT": "{{ Param.expect_resident }}",
     "REQUIRE_HEADROOM_MB": "{{ Param.require_headroom_mb }}"
   },
   "outputs": [
@@ -104,6 +112,21 @@
       "name": "vram_oversubscribed",
       "type": "string",
       "description": "服务是否处于物理超订态（CUDA 借主机内存，true/false）——为 true 时采样会退化到分钟级/步"
+    },
+    {
+      "name": "expect_resident",
+      "type": "string",
+      "description": "本次声明的期望复用模型清单（回显，逗号分隔；未设置时为空）"
+    },
+    {
+      "name": "expect_resident_hit",
+      "type": "string",
+      "description": "期望复用模型的命中情况（如 2/2；未设置 expect_resident 时为空）"
+    },
+    {
+      "name": "min_vram_checked",
+      "type": "string",
+      "description": "本次是否执行了 min_vram_mb 检查（true/false；false = 期望模型已全部常驻，按复用跳过）"
     }
   ],
   "extract": {

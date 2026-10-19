@@ -199,7 +199,7 @@ POINT = '''  Apply{wtag}:
   Score{wtag}:
     name: Score w={w} cn={c}
     config:
-      nodeRef: face-similarity@1.1.0
+      nodeRef: face-similarity@1.2.0
       executor: local
       params:
         service_url: "{{{{ Param.service_url }}}}"
@@ -207,6 +207,7 @@ POINT = '''  Apply{wtag}:
         service_url_host: "{{{{ Param.service_url_host }}}}"
         image_a: "{{{{ Decode{wtag}.image }}}}"
         image_b: "{{{{ LoadRef.image }}}}"
+        soft: true
 '''
 
 UNLOAD = '''  Unload:

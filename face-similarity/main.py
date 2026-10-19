@@ -15,7 +15,8 @@ def main():
         "face_index_a": int(param("face_index_a", "-1")),
         "face_index_b": int(param("face_index_b", "-1")),
         "det_thresh": float(param("det_thresh", "0.5")),
-    }, emit_keys=["similarity"])
+    }, emit_keys=["similarity"],
+       soft=param("soft", "false").strip().lower() in ("1", "true", "yes"))
 
 
 if __name__ == "__main__":

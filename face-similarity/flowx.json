@@ -2,7 +2,7 @@
   "name": "face-similarity",
   "displayName": "人脸相似度",
   "description": "两张图各自取目标人脸（默认最大脸），返回身份余弦相似度（insightface antelopev2 normed_embedding 点积，onnxruntime CPU，不占显存）——InstantID 身份保持效果的验收/调试量化：同人典型 >=0.5，陌生人典型 <0.3。任一侧未检出人脸明确报错。服务端插件 instantid_ops.py 的 face.similarity 算子",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -82,6 +82,13 @@
       "default": 0.5
     },
     {
+      "name": "soft",
+      "label": "软失败（打分容错）",
+      "type": "boolean",
+      "default": false,
+      "description": "true 时 job 失败/无脸不炸节点：输出 soft_failed=true + error，整跑保持 success（P1-17 扫描类工作流用）"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
@@ -104,6 +111,16 @@
       "name": "similarity",
       "type": "float",
       "description": "身份余弦相似度 [−1,1]：同人典型 >=0.5，陌生人典型 <0.3"
+    },
+    {
+      "name": "soft_failed",
+      "type": "STRING",
+      "description": "soft=true 且失败时为 \"true\""
+    },
+    {
+      "name": "error",
+      "type": "STRING",
+      "description": "软失败原因（消毒后单行）"
     }
   ],
   "extract": {

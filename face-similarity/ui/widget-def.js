@@ -8,6 +8,7 @@ const WIDGET_SPEC = {
     { key: 'face_index_a', label: 'A 选脸 face_index_a（-1=最大脸）', kind: 'slider', min: -1, max: 9, step: 1, default: -1 },
     { key: 'face_index_b', label: 'B 选脸 face_index_b（-1=最大脸）', kind: 'slider', min: -1, max: 9, step: 1, default: -1 },
     { key: 'det_thresh', label: '检测阈值 det_thresh', kind: 'slider', min: 0.05, max: 0.9, step: 0.05, default: 0.5 },
+    { key: 'soft', label: '软失败（扫描容错：失败不拖垮整跑）', kind: 'check', default: false, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
   note: '两图目标人脸身份余弦相似度：同人典型 ≥0.5，陌生人 <0.3 —— InstantID 验收量化',

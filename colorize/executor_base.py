@@ -32,6 +32,7 @@
 """
 import json
 import os
+import re
 
 from flowx_client import (emit_input_media, emit_preview, ensure_plugin, get_json,
                           host_base, param, submit_job, token, wait_job,
@@ -63,7 +64,7 @@ def ensure_op(url, tok, op_name):
 
 
 def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600,
-           input_media=()):
+           input_media=(), soft=False):
     """提交单个算子为异步 job 并回传输出。inputs 中对象引用用 ref() 包装；
     service_url/service_token 从节点参数读（flowx.json env 映射）。
     check_exists 保留兼容（旧节点签名），自注册模式下无需显式传。
@@ -116,7 +117,27 @@ def run_op(op_name, inputs, emit_keys=(), check_exists=False, timeout=3600,
         prog = (cur / tot) if tot else None
         emit_preview(f"{pbase}/preview/{jid}", prog, tok, base=pbase, job_id=jid)
 
-    result = wait_job(url, jid, tok, timeout=timeout, poll=2.0, on_poll=on_poll)
+    if soft:
+        # P1-17 扫描/打分类节点容错：job 失败/取消/超时不炸节点，整跑保持
+        # success，失败信息留在输出里。纪律 #10：error 必须消毒（换行/反引号/#
+        # 会炸 Studio 的 codec-block 解析）。
+        try:
+            result = wait_job(url, jid, tok, timeout=timeout, poll=2.0,
+                              on_poll=on_poll)
+        except RuntimeError as e:
+            err = re.sub(r"[`\r\n#]+", " ", str(e)).strip()[:400]
+            print(f"[op] {op_name} 软失败（soft=true）: {err}", flush=True)
+            print("```flowx-yaml")
+            print("outputs_json: {}")
+            print(f"__op_name: {yaml_scalar(op_name)}")
+            print('soft_failed: "true"')
+            print(f"error: {yaml_scalar(err)}")
+            for k in emit_keys:
+                print(f'{k}: ""')
+            print("```")
+            return {}
+    else:
+        result = wait_job(url, jid, tok, timeout=timeout, poll=2.0, on_poll=on_poll)
     outputs = (result or {}).get("outputs", {})
     flat = {k: m.get("id", m.get("value")) for k, m in outputs.items()}
     print(f"[op] {op_name} -> {json.dumps(flat, ensure_ascii=False)}", flush=True)

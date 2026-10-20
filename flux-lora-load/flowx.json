@@ -1,0 +1,120 @@
+{
+  "name": "flux-lora-load",
+  "displayName": "FLUX LoRA 加载",
+  "description": "给 FLUX GGUF transformer 挂 LoRA 增量补丁（对标 ComfyUI LoraLoader）：吃 flux-unet-load 的 MODEL，输出挂好补丁的同一 MODEL 引用，串在 flux-sampler 之前生效。服务端算子 flux.lora_apply 由 server_op.py 自注册（PEFT 注入，diffusers FluxLoraLoaderMixin 键名转换）。可多次叠加不同 LoRA；同名重挂先卸再载。注意补丁打在 LRU 常驻的共享 transformer 上（进程级状态）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "lora",
+    "inference"
+  ],
+  "icon": "🎚️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布/取消兜底）可达的服务地址；docker 节点跑在远端宿主时 service_url 是容器内地址，必须另绑本参数（留空则同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "FLUX MODEL 组件引用（flux-unet-load 输出的 transformer 对象 ID）",
+      "required": true,
+      "source": {
+        "nodeRef": "flux-unet-load",
+        "output": "model",
+        "description": "推荐由 FLUX UNET 加载节点输出提供"
+      }
+    },
+    {
+      "name": "lora_name",
+      "type": "string",
+      "description": "LoRA 文件名（推理服务 LORAS_DIR 下，可省略扩展名），如 flux-RealismLora",
+      "required": true
+    },
+    {
+      "name": "strength",
+      "type": "float",
+      "description": "LoRA 强度，1.0 为完整生效；0.5-0.8 常用于减弱风格，>1 会过强，0 等于停用",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务超时（秒）；排队+计算总预算（冷读盘+PEFT 注入分钟级）",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "MODEL": "{{ Param.model }}",
+    "LORA_NAME": "{{ Param.lora_name }}",
+    "STRENGTH": "{{ Param.strength }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+  },
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "挂好 LoRA 补丁的 FLUX MODEL 组件引用（接 flux-sampler 的 model）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "挂载信息（adapter 名/强度/文件/耗时）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  }
+}

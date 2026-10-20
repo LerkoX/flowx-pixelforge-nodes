@@ -43,7 +43,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "f2447596b467"
+OP_VERSION = "09e2c3f5c479"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -325,12 +325,15 @@ def _assemble_txt2img(unet):
 
 
 def _flux_latent_preview_pil(pipe, latents, height, width, max_size=256):
-    """采样中间 packed latent → PIL 预览帧（通道分组均值投影，粗糙但结构可辨）。"""
+    """采样中间 packed latent → PIL 预览帧（通道分组均值投影，粗糙但结构可辨）。
+
+    height/width 是**像素**尺寸（latent 束的 width/height），直接交给
+    `_unpack_latents`——该函数内部自己做 `2*(h//(vsf*2))` 的降采样；
+    调用方若先除一遍会二次降采样，view() token 数对不上 packed latent
+    （768px：144 vs 9216）→ RuntimeError → 预览永远退化成进度卡片（exec 826）。"""
     from PIL import Image
     with torch.no_grad():
-        h2 = 2 * (int(height) // (pipe.vae_scale_factor * 2))
-        w2 = 2 * (int(width) // (pipe.vae_scale_factor * 2))
-        lat = pipe._unpack_latents(latents, h2, w2,
+        lat = pipe._unpack_latents(latents, int(height), int(width),
                                    pipe.vae_scale_factor)[0].float()
         rgb = torch.stack([lat[0:6].mean(0), lat[6:11].mean(0),
                            lat[11:16].mean(0)])
@@ -593,7 +596,12 @@ def register(registry):
                     rec.push_pil(
                         _flux_latent_preview_pil(p, latents, H, W),
                         (i + 1) / total)
-                except Exception:
+                except Exception as e:
+                    # 投影失败降级进度卡片，但必须留痕（曾静默吞异常，
+                    # 结果整场采样只剩卡片、无人发现，见 exec 826）
+                    print(f"[flux.sample] latent preview projection failed "
+                          f"(fallback to progress card): {type(e).__name__}: {e}",
+                          flush=True)
                     rec.push_pil(preview.progress_card(i + 1, total),
                                  (i + 1) / total)
             return kw

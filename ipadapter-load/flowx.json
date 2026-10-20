@@ -84,5 +84,5 @@
       "description": "IPADAPTER 对象 ID"
     }
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.7"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.8"
 }

@@ -106,6 +106,13 @@
   "extract": {
     "type": "codec-block"
   },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 220,
+    "collapsed": false,
+    "apiVersion": 1
+  },
   "mock": {
     "enabled": true,
     "entry": "mock.py"
@@ -113,8 +120,11 @@
   "timeout": 3900,
   "executor": {
     "supportedTypes": [
-      "local"
+      "local",
+      "docker"
     ],
-    "preferredType": "local"
-  }
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.8"
 }

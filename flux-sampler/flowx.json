@@ -143,9 +143,9 @@
   },
   "outputs": [
     {
-      "name": "image",
+      "name": "latent",
       "type": "string",
-      "description": "图像引用（VAE 解码已内置，直接接保存图像节点）"
+      "description": "采样后的 LATENT 束引用（接 flux-vae-decode 的 latent；本节点不做 VAE 解码）"
     },
     {
       "name": "seed",

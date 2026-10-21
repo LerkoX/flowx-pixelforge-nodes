@@ -20,12 +20,35 @@
    working set 仍需余量）。注意：**同名模型不同 dtype/offload 旋钮 = 不同缓存键**
    （`名字|dtype=..|offload=..|t5=..`），旋钮不一致不会复用。
 
+3. **复用感知**（1.3.0，`expect_resident`）：显存里已有同一模型时，下游 loader
+   会命中服务端缓存（幂等，不新增显存占用），`min_vram_mb`「为新加载预留空间」的
+   前提就不成立。列出本流水线要用、且期望复用的模型名后，只要它们**全部已常驻**，
+   就跳过 `min_vram_mb` 检查（`require_headroom_mb` 与超订检查仍生效，采样
+   working set 仍需余量）。注意：**同名模型不同 dtype/offload 旋钮 = 不同缓存键**
+   （`名字|dtype=..|offload=..|t5=..`），旋钮不一致不会复用。
+
+4. **FIFO 串行化闸门**（1.4.0，`queue_wait_seconds`）：多条流水线同时到达时，
+   经 POST /leases/acquire 排队——只有队首且服务空闲（无其它活跃租约、无其它
+   租约的 running/pending 任务）才放行。流水线结束后服务端按
+   lease_idle_release_seconds（默认 300s 无活动）自动交还闸门，或由末尾的
+   lease-release 节点立即交还。0 = 不排队（保持旧行为）。
+
+5. **清场**（1.4.0，`evict_unused`，默认开）：轮到本执行后，把**本流水线不需要**
+   的常驻模型全部淘汰（POST /model/unload keep=expect_resident）——上一轮流水线
+   留下的模型即使没有任何租约占用也会一直占着显存，把新流水线顶进超订态
+   （exec 839 事故：flux 三件套闲置 9.5h，reserved 12340MB > 物理 8192MB，
+   新流水线 2.5s 硬失败）。pinned/其它租约持有的条目服务端自动跳过，不会误伤。
+   清场后仍超订时（保留模型的分配器缓存没还驱动，exec 839 的实际形态）
+   再补一把 POST /gc 收缩缓存（仅在持有闸门时做，/gc 会清整个对象仓库）；
+   /gc 也收不动时（缓存与保留模型同段交织，exec 845 实测）升级为连保留模型
+   一并卸载——保留让位于可运行性，下游 loader 会重载。
+
 另把显存/常驻模型信息 emit 给下游（原实现只打日志），供画布与排障查看。
 """
 import sys
 import time
 
-from flowx_client import emit, get_json, param, token
+from flowx_client import emit, get_json, lease_id, param, post_json, token
 
 # 模型文件名常见扩展名（比较常驻键与用户填写的名字时剥掉）
 _EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf")
@@ -86,6 +109,148 @@ def main():
     raw_expect = param("expect_resident", "", str) or ""
     expect = [t.strip() for t in raw_expect.replace(";", ",").split(",") if t.strip()]
     tok = token()
+    # 1.4.0：FIFO 排队 + 清场
+    queue_wait = param("queue_wait_seconds", 3600, int)
+    queue_poll = max(1, param("queue_poll_seconds", 5, int))
+    evict_unused = str(param("evict_unused", "true", str) or "").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if not expect:
+        print("[ensure] WARNING: expect_resident 未填写（生图流水线必填）——"
+              "清场将卸载**所有**未被保护的常驻模型（同流水线连跑会每次重载），"
+              "且复用感知不生效。请按 loader 节点实际使用的模型填写"
+              "（如 ponyDiffusionV6XL_v6StartWithThisOne 或 "
+              "flux-unet:flux1-schnell-Q4_K_S.gguf,flux-clip:t5=...,flux-vae:vae）",
+              file=sys.stderr, flush=True)
+
+    t_start = time.time()
+    queue_waited = 0.0
+    gate_held = False
+    # ---- FIFO 串行化闸门：轮到本执行再进场 ----
+    # 无租约标识（命令行直跑/未注入 FLOWX_EXECUTION_ID）时跳过排队，保持旧行为
+    if queue_wait > 0 and lease_id():
+        qdeadline = t_start + queue_wait
+        while True:
+            try:
+                res = post_json(url, "/leases/acquire", {}, tok, timeout=30)
+            except RuntimeError as e:
+                # 旧版服务端无 /leases/acquire（404/405/501）⇒ 跳过排队，
+                # 保持 1.3.0 旧行为（不盲等 queue_wait_seconds 才失败）
+                if any(f"HTTP {c}" in str(e) for c in (400, 404, 405, 501)):
+                    print(f"[ensure] 服务端不支持排队闸门（{e}）——旧版服务？"
+                          f"跳过排队（多流水线并发请升级服务端）", flush=True)
+                    break
+                if time.time() >= qdeadline:
+                    raise
+                print(f"[ensure] acquire 瞬态失败（重试）: {e}", flush=True)
+                time.sleep(queue_poll)
+                continue
+            if res.get("acquired"):
+                gate_held = True
+                break
+            queue_waited = time.time() - t_start
+            if time.time() >= qdeadline:
+                raise RuntimeError(
+                    f"[ensure] 排队 {queue_waited:.0f}s 仍未轮到（queue_wait_seconds="
+                    f"{queue_wait}）。当前：position={res.get('position')} "
+                    f"ahead={res.get('ahead')} "
+                    f"holders={[h.get('lease') for h in res.get('holders', [])]} "
+                    f"active_jobs={len(res.get('active_jobs', []))}。"
+                    f"办法：① 等前面的流水线跑完；② 调大 queue_wait_seconds；"
+                    f"③ 确认无僵尸占用（监控页 / DELETE /leases/<id>）")
+            pos = res.get("position")
+            if pos:
+                print(f"[ensure] 排队中：前面还有 {pos} 条流水线 "
+                      f"{res.get('ahead')}（已等 {queue_waited:.0f}s）", flush=True)
+            else:
+                print(f"[ensure] 已到队首，等待服务空闲：holders="
+                      f"{[h.get('lease') for h in res.get('holders', [])]} "
+                      f"active_jobs={len(res.get('active_jobs', []))}"
+                      f"（已等 {queue_waited:.0f}s）", flush=True)
+            time.sleep(queue_poll)
+        queue_waited = time.time() - t_start
+        if queue_waited >= 1:
+            print(f"[ensure] 获得闸门（排队 {queue_waited:.0f}s）", flush=True)
+
+    # ---- 清场：淘汰本流水线不需要的常驻模型（evict_unused）----
+    evicted, kept = "", ""
+    if evict_unused:
+        try:
+            resident0 = (_probe(url, tok).get("resident_models") or [])
+        except RuntimeError as e:
+            resident0 = None
+            print(f"[ensure] 清场前探测失败（跳过清场，交显存闸门判定）: {e}",
+                  flush=True)
+        if resident0:
+            try:
+                # 旧版服务端 /model/unload 无 keep 参数（会静默全卸，误伤想复用的
+                # 模型）⇒ 先探能力：lease_idle_release_seconds 是随 keep 同版本
+                # 引入的 policy 旋钮，存在即支持 keep
+                pol = get_json(url, "/model/policy", tok, timeout=10)
+                supports_keep = "lease_idle_release_seconds" in pol
+            except RuntimeError:
+                supports_keep = False
+            try:
+                if supports_keep:
+                    res = post_json(url, "/model/unload",
+                                    {"target": "all", "keep": expect},
+                                    tok, timeout=300)
+                    evicted = res.get("unloaded", "(none)")
+                    kept = res.get("kept", "(none)")
+                    if res.get("skipped_reasons"):
+                        print(f"[ensure] 清场跳过：{res['skipped_reasons']}", flush=True)
+                else:
+                    # 回退：节点侧按 _matches 算出受害者，逐个按缓存键卸载
+                    victims = [k for k in resident0
+                               if not any(_matches(t, k) for t in expect)]
+                    done = []
+                    for k in victims:
+                        r = post_json(url, "/model/unload", {"target": k},
+                                      tok, timeout=300)
+                        if r.get("unloaded") not in (None, "", "(none)"):
+                            done.append(k)
+                    evicted = ",".join(done) if done else "(none)"
+                    kept_list = [k for k in resident0
+                                 if any(_matches(t, k) for t in expect)]
+                    kept = ",".join(kept_list) if kept_list else "(none)"
+                    print("[ensure] 旧版服务端（无 keep 支持），已按节点侧匹配逐个清场",
+                          flush=True)
+                if evicted and evicted != "(none)":
+                    print(f"[ensure] 清场：淘汰不需要的常驻模型 {evicted}"
+                          f"（保留 {kept}）", flush=True)
+            except RuntimeError as e:
+                print(f"[ensure] WARNING: 清场失败（不阻断，交显存闸门判定）: {e}",
+                      file=sys.stderr, flush=True)
+
+    # ---- 缓存收缩：清场后仍超订（保留模型的分配器缓存顶着）→ /gc 一把 ----
+    # 场景（exec 839 正是这样）：上一条流水线用的就是这批模型，keep 全保留，
+    # 但采样留下的分配器缓存（几 GB，可回收）没还给驱动 ⇒ reserved 仍 > 物理
+    # ⇒ 超订硬失败。empty_cache 即可回收，不需要卸载任何模型。
+    # 只在持有闸门时做：/gc 会清整个对象仓库，无闸门时可能 nuking 别的执行的
+    # 对象；持有闸门 ⇒ 无其它活跃执行，对象仓库里只剩历史垃圾，安全。
+    if gate_held:
+        try:
+            occ = _probe(url, tok)
+            if occ.get("vram_oversubscribed"):
+                print("[ensure] 清场后仍超订（分配器缓存未还驱动）"
+                      "→ POST /gc 收缩缓存", flush=True)
+                post_json(url, "/gc", {}, tok, timeout=120)
+                occ = _probe(url, tok)
+            if occ.get("vram_oversubscribed"):
+                # 升级处置（exec 845 实测）：/gc 的 empty_cache 只能释放**完全空闲**
+                # 的分配器段；缓存与保留模型的权重在同一段里交织时一个字节也放不掉
+                # （当时保留 pony 6952MB + 缓存 1576MB，/gc 后 reserved 纹丝不动，
+                # 全卸后 8528→194MB 才恢复）。此时保留语义让位于可运行性：
+                # 连保留模型一并卸载——反正下游 loader 会重载（慢 2-3 分钟，
+                # 但比硬失败/分钟级每步的退化强）。
+                print("[ensure] /gc 后仍超订（缓存与保留模型同段交织，收不动）"
+                      "→ 连保留模型一并卸载（下游 loader 将重载）", flush=True)
+                res = post_json(url, "/model/unload", {"target": "all"},
+                                tok, timeout=300)
+                print(f"[ensure] 超订升级卸载：{res.get('unloaded')}", flush=True)
+                kept = "(none)"
+        except RuntimeError as e:
+            print(f"[ensure] WARNING: 超订收縮/升级卸载失败（交显存闸门判定）: {e}",
+                  file=sys.stderr, flush=True)
 
     hits, miss, reuse_ok = [], [], False
     deadline = time.time() + wait
@@ -162,6 +327,9 @@ def main():
         "status": info.get("status", "ok"),
         "gpu_name": gpu,
         "offload_mode": info.get("offload_mode", ""),
+        "queue_waited_seconds": round(queue_waited, 1),
+        "evicted_models": evicted or "(none)",
+        "kept_models": kept or "(none)",
     }
     if expect:
         fields["expect_resident"] = ",".join(expect)

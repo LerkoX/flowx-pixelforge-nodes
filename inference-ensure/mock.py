@@ -6,7 +6,8 @@ expect = (param("expect_resident", "") or "").strip()
 print(f"[ensure][mock] ready: {url}")
 fields = dict(service_url=url, status="ok", gpu_name="mock-gpu", offload_mode="none",
               vram_free_mb=7000, vram_total_mb=8192, vram_headroom_mb=7000,
-              resident_models="(empty)")
+              resident_models="(empty)", queue_waited_seconds=0,
+              evicted_models="(none)", kept_models="(none)")
 if expect:
     items = [t.strip() for t in expect.replace(";", ",").split(",") if t.strip()]
     fields.update(expect_resident=",".join(items),

@@ -18,6 +18,7 @@ COPY clip-text-encode/*.py   /opt/flowx-nodes/clip-text-encode/
 COPY empty-latent/*.py       /opt/flowx-nodes/empty-latent/
 COPY inference-ensure/*.py   /opt/flowx-nodes/inference-ensure/
 COPY inference-op/*.py       /opt/flowx-nodes/inference-op/
+COPY lease-release/*.py      /opt/flowx-nodes/lease-release/
 COPY ksampler/*.py           /opt/flowx-nodes/ksampler/
 COPY lora-loader/*.py        /opt/flowx-nodes/lora-loader/
 COPY motion-loader/*.py      /opt/flowx-nodes/motion-loader/

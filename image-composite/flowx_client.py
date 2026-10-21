@@ -194,6 +194,13 @@ def get_json(base, path, tok=None, timeout=60, retries=None, headers=None):
                        retries)
 
 
+def delete_json(base, path, tok=None, timeout=60, retries=None, headers=None):
+    """DELETE 幂等：瞬态错误自动重试（4xx 不重试）。lease-release 节点用。"""
+    return _with_retry(lambda: json.loads(_req("DELETE", base, path, None, tok,
+                                               timeout, headers=headers)),
+                       retries)
+
+
 def get_bytes(base, path, tok=None, timeout=300, retries=None):
     """GET 幂等：瞬态错误自动重试（隧道抖动兜底，4xx 不重试）。"""
     return _with_retry(lambda: _req("GET", base, path, None, tok, timeout),

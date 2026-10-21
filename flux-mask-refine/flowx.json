@@ -23,7 +23,7 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.8",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
   "parameters": [
     {
       "name": "service_url",

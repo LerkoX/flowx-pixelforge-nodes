@@ -1,0 +1,78 @@
+{
+  "name": "lease-release",
+  "displayName": "租约释放",
+  "description": "显式释放本执行的推理服务租约（DELETE /leases/{execution_id}），挂在流水线末尾：跑完立即交还 FIFO 排队闸门，下一条流水线的 inference-ensure 无需等待 lease_idle_release_seconds（默认 300s）空闲超时。幂等：租约不存在/已过期视为成功。只摘除租约登记、不卸载模型——常驻模型留给下一条流水线复用（或由其 ensure 清场淘汰）。执行中算子仍受 pin 保护，不受释放影响",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "infra"
+  ],
+  "icon": "🔓",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100；通常由 inference-ensure 输出的 service_url 提供",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "released",
+      "type": "string",
+      "description": "是否实际释放了租约（true/false；false = 租约已不存在或已过期，视为成功）"
+    },
+    {
+      "name": "lease_id",
+      "type": "string",
+      "description": "本执行的租约标识（FLOWX_EXECUTION_ID；非 Studio 环境为空）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 160,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 60,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
+}

@@ -1,8 +1,8 @@
 {
   "name": "inference-ensure",
   "displayName": "推理服务健康检查",
-  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用。显存闸门：min_vram_mb（乐观口径可用显存）不足则在 wait_seconds 内等待重试、超时明确失败；require_headroom_mb（物理余量）不足同样拦截；服务处于物理超订态（vram_oversubscribed，CUDA 已借主机内存，WSL2 不报 OOM）时**硬失败不重试**——避免流水线退化到分钟级/步（dev-plan §21，exec 795 事故）。复用感知：expect_resident 列出本流水线要用且期望复用的模型，若它们**全部已常驻**则跳过 min_vram_mb（下游 loader 命中缓存不占新显存），require_headroom_mb 仍生效",
-  "version": "1.3.0",
+  "description": "检查文生图推理服务（flowx-inference-server）是否可用，等待其就绪后输出 service_url；作为 workflow 首节点保证后续节点可用。FIFO 串行化闸门（1.4.0）：多条流水线同时到达时排队（queue_wait_seconds），只有队首且服务空闲才放行；清场（evict_unused，默认开）：轮到本执行后淘汰 expect_resident 之外的常驻模型——上轮流水线留下的模型会占住显存把新流水线顶进超订态（exec 839）。显存闸门：min_vram_mb（乐观口径可用显存）不足则在 wait_seconds 内等待重试、超时明确失败；require_headroom_mb（物理余量）不足同样拦截；服务处于物理超订态（vram_oversubscribed，CUDA 已借主机内存，WSL2 不报 OOM）时**硬失败不重试**——避免流水线退化到分钟级/步（dev-plan §21，exec 795 事故）。复用感知：expect_resident 列出本流水线要用且期望复用的模型，若它们**全部已常驻**则跳过 min_vram_mb（下游 loader 命中缓存不占新显存），require_headroom_mb 仍生效",
+  "version": "1.4.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -15,7 +15,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.8",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
   "parameters": [
     {
       "name": "service_url",
@@ -40,9 +40,8 @@
     {
       "name": "expect_resident",
       "type": "string",
-      "description": "期望复用的已常驻模型（逗号分隔，可写模型文件名/MODELS_DIR 名字/完整缓存键，如 ponyDiffusionV6XL_v6StartWithThisOne,controlnet-canny-sdxl-1.0）。列出本流水线接下来要加载的模型：若它们全部已在 /health 的 resident_models 里则跳过 min_vram_mb 检查（复用不占新显存），未命中时仍严格校验并在报错列出未命中项。留空 = 不启用复用感知（行为同 1.2.0）。⚠️ 同名模型不同 dtype/offload/use_t5 旋钮 = 不同缓存键，旋钮不一致不会复用",
-      "required": false,
-      "default": ""
+      "description": "【生图流水线必填】本流水线将使用的模型清单（逗号分隔，按服务端常驻键格式书写：checkpoint 写裸名如 ponyDiffusionV6XL_v6StartWithThisOne；flux 组件带前缀如 flux-unet:flux1-schnell-Q4_K_S.gguf,flux-clip:t5=t5xxl-Q4_K_S.gguf,flux-vae:vae；controlnet 写 cn:controlnet-canny-sdxl-1.0）。两个作用：① 清场保留清单——evict_unused 开启时只卸载清单之外的常驻模型，留空会把模型全卸掉（同流水线连跑时每次重载数分钟）；② 复用感知——全部命中常驻时跳过 min_vram_mb 检查。AI 创建/修改生图流水线时必须按 loader 节点实际使用的模型填写（默认值即 flux 节点 flowx.json 的 default）",
+      "required": true
     },
     {
       "name": "require_headroom_mb",
@@ -50,6 +49,27 @@
       "description": "物理余量闸门（B1）：要求 vram_total_mb − vram_process_reserved_mb 至少这么多 MB（0=不检查）。与 min_vram_mb 的区别：后者是乐观口径（含分配器缓存），前者是物理口径——WSL2/WDDM 超订时只有后者能拦住（CUDA 借主机内存不报 OOM，采样静默退化到分钟级/步）",
       "required": false,
       "default": 0
+    },
+    {
+      "name": "queue_wait_seconds",
+      "type": "integer",
+      "description": "FIFO 串行化闸门：多条流水线同时到达时的最长排队秒数（每 queue_poll_seconds 轮询一次；轮到本执行且服务空闲才放行）。0 = 不排队（保持 1.3.0 旧行为）",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "queue_poll_seconds",
+      "type": "integer",
+      "description": "排队轮询间隔秒数",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "evict_unused",
+      "type": "boolean",
+      "description": "清场（默认开）：轮到本执行后，淘汰 expect_resident 之外的所有常驻模型——上轮流水线留下的模型会占住显存把新流水线顶进超订态（exec 839）。pinned/其它租约持有的条目服务端自动跳过。expect_resident 留空 = 全清",
+      "required": false,
+      "default": true
     },
     {
       "name": "service_token",
@@ -65,7 +85,10 @@
     "SERVICE_TOKEN": "{{ Param.service_token }}",
     "MIN_VRAM_MB": "{{ Param.min_vram_mb }}",
     "EXPECT_RESIDENT": "{{ Param.expect_resident }}",
-    "REQUIRE_HEADROOM_MB": "{{ Param.require_headroom_mb }}"
+    "REQUIRE_HEADROOM_MB": "{{ Param.require_headroom_mb }}",
+    "QUEUE_WAIT_SECONDS": "{{ Param.queue_wait_seconds }}",
+    "QUEUE_POLL_SECONDS": "{{ Param.queue_poll_seconds }}",
+    "EVICT_UNUSED": "{{ Param.evict_unused }}"
   },
   "outputs": [
     {
@@ -127,6 +150,21 @@
       "name": "min_vram_checked",
       "type": "string",
       "description": "本次是否执行了 min_vram_mb 检查（true/false；false = 期望模型已全部常驻，按复用跳过）"
+    },
+    {
+      "name": "queue_waited_seconds",
+      "type": "string",
+      "description": "本次在 FIFO 闸门排队等待的秒数（0 = 无需排队直接获得）"
+    },
+    {
+      "name": "evicted_models",
+      "type": "string",
+      "description": "清场淘汰的常驻模型（逗号分隔；(none) = 没有需要淘汰的）"
+    },
+    {
+      "name": "kept_models",
+      "type": "string",
+      "description": "清场保留的常驻模型（expect_resident 命中的项；(none) = 无）"
     }
   ],
   "extract": {

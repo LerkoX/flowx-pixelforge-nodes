@@ -60,8 +60,8 @@
     {
       "name": "controlnet",
       "type": "string",
-      "description": "InstantID ControlNet 对象 ID（controlnet-load，目录 instantid-controlnet）",
-      "required": true,
+      "description": "InstantID ControlNet 对象 ID（controlnet-load，目录 instantid-controlnet）（可留空：去 CN 化仅 IPA 身份注入，8GB 卡推荐）",
+      "required": false,
       "source": {
         "nodeRef": "controlnet-load",
         "output": "control_net"

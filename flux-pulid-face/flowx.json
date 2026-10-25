@@ -1,0 +1,100 @@
+{
+  "name": "flux-pulid-face",
+  "displayName": "FLUX PuLID 人脸编码",
+  "description": "FLUX PuLID 人脸身份编码（PuLID-FLUX v0.9.1 移植）：insightface ArcFace + facexlib 对齐/抠脸 + EVA-CLIP → IDFormer 融合出 id_embedding，连同交叉注意力模块打包为 FACE 对象；接 flux-sampler 的 pulid 输入做身份注入——文本提示词仍主导画面，只有人脸锁定参考图。自包含节点：server_op.py 运行时自注册；服务端需预置 /models/pulid 下 PuLID 适配器、EVA-CLIP 权重、facexlib 权重与 lib 源码包（见插件 docstring）。注意 PuLID 权重官方声明仅限研究/非商用。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": ["flux", "pulid", "face", "identity"],
+  "icon": "🎭",
+  "language": "python",
+  "entry": "main.py",
+  "files": ["flowx_client.py", "executor_base.py", "server_op.py"],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布/取消兜底）可达的服务地址；docker 节点跑在远端宿主时 service_url 是容器内地址，必须另绑本参数（留空则同 service_url）"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "参考图对象 ID（含清晰人脸，任意尺寸；节点自行检测/对齐/抠脸，无需预裁剪）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由加载图像节点提供"
+      }
+    },
+    {
+      "name": "face_index",
+      "type": "integer",
+      "description": "选哪张脸：-1=最大脸（默认），0..N-1=按面积降序第 N 张",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务超时（秒）；首次冷加载 EVA-CLIP（1.7GB）+ PuLID 适配器（1.1GB）从机械盘读可能数分钟，故默认 3600",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "FACE_INDEX": "{{ Param.face_index }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "pulid",
+      "type": "string",
+      "description": "FACE 对象引用（id_embedding + 20×PerceiverAttentionCA），接 flux-sampler 的 pulid 参数"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "编码统计（特征形状、耗时、检出方式）"
+    }
+  ],
+  "extract": {"type": "codec-block"},
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": ["local", "docker"],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11"
+}

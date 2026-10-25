@@ -1,8 +1,8 @@
 {
   "name": "preprocess-openpose",
   "displayName": "OpenPose 姿态提取",
-  "description": "controlnet_aux OpenposeDetector 姿态骨架提取：全身骨架（默认），可选手部/面部细节；产出骨架叠加图，供 ControlNet openpose 控制采样作 hint（姿态复刻/指定姿势出图）。服务端插件 preprocess_ops.py 为唯一实现来源",
-  "version": "1.1.0",
+  "description": "controlnet_aux OpenposeDetector 姿态骨架提取：全身骨架（默认），可选手部/面部细节；产出骨架叠加图，供 ControlNet openpose 控制采样作 hint（姿态复刻/指定姿势出图）。服务端插件 preprocess_ops.py 为唯一实现来源 v1.2.1（修复 dwpose 绘图路径关键点列数 bug）+ v1.2.0：新增 detector 参数（openpose/dwpose）——DWPose 对侧身回头/遮挡/交叉肢体显著更准（ONNX 后端，服务端 /models/preprocessors/dwpose）。",
+  "version": "1.2.1",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -60,6 +60,17 @@
       "description": "面部特征点（默认 false）",
       "required": false,
       "default": false
+    },
+    {
+      "name": "detector",
+      "type": "string",
+      "required": false,
+      "default": "openpose",
+      "enum": [
+        "openpose",
+        "dwpose"
+      ],
+      "description": "姿态检测器：openpose（默认，正/背面可靠）/ dwpose（侧身回头/遮挡/交叉肢体更准，ONNX CPU 推理约 10~30s/张）"
     },
     {
       "name": "service_token",

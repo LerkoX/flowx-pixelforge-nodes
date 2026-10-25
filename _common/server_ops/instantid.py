@@ -31,7 +31,7 @@ License 注意：InstantID 权重官方声明仅限研究/非商用（代码 Apa
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "24e5469e52cc"
+OP_VERSION = "82d91e124355"
 OP_FAMILY = "instantid"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -395,7 +395,7 @@ class InstantIDModel(_core_ops.ModelRef):
         self.ipa = ipa
 
 
-def instantid_apply(model, ipadapter, controlnet, face, weight=0.8,
+def instantid_apply(model, ipadapter, controlnet=None, face=None, weight=0.8,
                     cn_strength=0.8, start_percent=0.0, end_percent=1.0,
                     cn_start_percent=0.0, cn_end_percent=1.0):
     """InstantID Apply：FACE 身份特征 + InstantID 权重捆绑进采样链。
@@ -403,7 +403,13 @@ def instantid_apply(model, ipadapter, controlnet, face, weight=0.8,
     驱动面部位置/姿态），分别接 sample 的 model / control 端口。
     weight=IPA 身份强度（官方默认 0.8）；cn_strength=关键点控制强度
     （官方默认 0.8）；两对 start/end_percent 分别限定 IPA / CN 的生效步窗口。
-    仅支持 SDXL 底模（InstantID 权重按 SDXL 训练，cross_attention_dim=2048）。"""
+    仅支持 SDXL 底模（InstantID 权重按 SDXL 训练，cross_attention_dim=2048）。
+
+    CN 可拆（去 CN 化）：controlnet=None 或 cn_strength<=0 时跳过
+    controlnet_apply，control 输出 None——身份仍由 IPA 注入（"像不像"由
+    IPA 的 512 维人脸特征决定），面部位置/姿态改由提示词自由构图。
+    8GB 卡上 SDXL UNet(5.1GB)+CN(2.4GB) 物理装不下，去 CN 是显存救命选项
+    （exec 883~887 连续 OOM 的解法）。"""
     pipe, patches = _core_ops.resolve_pipe(model)
     if not hasattr(pipe, "unet"):
         raise ValueError(
@@ -450,12 +456,18 @@ def instantid_apply(model, ipadapter, controlnet, face, weight=0.8,
     neg_tok = toks[0:1].to(device=device, dtype=dtype)
     pos_tok = toks[1:2].to(device=device, dtype=dtype)
 
-    ctl = _core_ops.controlnet_apply(
-        controlnet, face["kps_image"], strength=cn_strength,
-        start_percent=float(cn_start_percent),
-        end_percent=float(cn_end_percent))["control"]
-    ctl.hidden_neg = neg_tok  # CN cross-attention 覆写（ops.sample 消费）
-    ctl.hidden_pos = pos_tok
+    # CN 可拆：controlnet=None / cn_strength<=0 → 不建 CONTROL（采样零开销）
+    if controlnet is None or cn_strength <= 0:
+        ctl = None
+        print(f"[instantid.apply] 去 CN 化：controlnet={'缺' if controlnet is None else '在'} "
+              f"cn_strength={cn_strength} ⇒ 仅 IPA 身份注入", flush=True)
+    else:
+        ctl = _core_ops.controlnet_apply(
+            controlnet, face["kps_image"], strength=cn_strength,
+            start_percent=float(cn_start_percent),
+            end_percent=float(cn_end_percent))["control"]
+        ctl.hidden_neg = neg_tok  # CN cross-attention 覆写（ops.sample 消费）
+        ctl.hidden_pos = pos_tok
 
     # IPAdapter 侧人脸特征必须带 seq 维（[1,1,512]）：
     # MultiIPAdapterImageProjection 把 [b,num_images,seq,dim] 前两维合并后

@@ -32,7 +32,9 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 - flux.encode(clip, text, max_seq, release_t5) → COND{prompt_embeds, pooled}
 - flux.empty_latent(width, height, batch_size) → LATENT（samples=None）
 - flux.sample(model, cond, latent, seed, steps, guidance, denoise,
-  preview_every) → LATENT（packed）
+  preview_every, pulid?, pulid_weight?) → LATENT（packed）；pulid 为
+  flux.pulid_encode 的 FACE 对象时按 PuLID-FLUX 机制做身份注入（前向
+  hook，仅本次调用生效）
 - flux.vae_decode(vae, latent) → IMAGE
 - flux.vae_encode(vae, image) → LATENT（未 pack，归一化）
 - flux.detail_refine(model, vae, cond, image, ...) → IMAGE（ADetailer 式，
@@ -43,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "09e2c3f5c479"
+OP_VERSION = "c88de186eb70"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -175,10 +177,11 @@ def _t5_cache_fname(hf_name):
     return hf_name.replace(".", "__") + ".npy"
 
 
-def _t5_state_dict_from_gguf(gguf_path, dtype, device="cpu", cache_dir=None):
+def _t5_state_dict_from_gguf(gguf_path, dtype, device="cpu", cache_dir=None,
+                             device_fn=None):
     """GGUF → HF T5 state_dict。gguf shape 是 [in,out]，数据行主序按 [out,in]
     存 → reshape(shape[::-1])。cache_dir 逐张量 npy 落盘（safetensors 全量
-    副本会在 12GB 内存盒 OOM）。"""
+    副本会在 12GB 内存盒 OOM）。device_fn(hf_name)→device 可按张量分层直载。"""
     import numpy as np
     from gguf import GGUFReader
     from gguf.quants import dequantize
@@ -195,9 +198,10 @@ def _t5_state_dict_from_gguf(gguf_path, dtype, device="cpu", cache_dir=None):
         if cache_dir:
             np.save(os.path.join(cache_dir, _t5_cache_fname(hf)),
                     arr.astype(np.float32))
-        w = torch.from_numpy(np.ascontiguousarray(arr.copy())).to(dtype)
-        if device != "cpu":
-            w = w.to(device)
+        w = torch.from_numpy(np.ascontiguousarray(arr)).to(dtype)
+        dev = device_fn(hf) if device_fn else device
+        if dev != "cpu":
+            w = w.to(dev)
         sd[hf] = w
         del arr, w
     if cache_dir:
@@ -205,7 +209,7 @@ def _t5_state_dict_from_gguf(gguf_path, dtype, device="cpu", cache_dir=None):
     return sd
 
 
-def _t5_state_dict_from_cache(cache_dir, dtype, device):
+def _t5_state_dict_from_cache(cache_dir, dtype, device, device_fn=None):
     import numpy as np
     sd = {}
     for fn in sorted(os.listdir(cache_dir)):
@@ -214,30 +218,35 @@ def _t5_state_dict_from_cache(cache_dir, dtype, device):
         hf = fn[:-4].replace("__", ".")
         arr = np.load(os.path.join(cache_dir, fn))
         w = torch.from_numpy(arr).to(dtype)
-        if device != "cpu":
-            w = w.to(device)
+        dev = device_fn(hf) if device_fn else device
+        if dev != "cpu":
+            w = w.to(dev)
         sd[hf] = w
         del arr, w
     return sd
 
 
-def load_t5_gguf(gguf_path, config_path, dtype=torch.bfloat16, device="cpu"):
+def load_t5_gguf(gguf_path, config_path, dtype=torch.bfloat16, device="cpu",
+                 device_fn=None):
     """GGUF T5 → T5EncoderModel（bf16 默认；fp16 高激活崩坏勿改）。
-    meta 壳 + assign=True；逐张量 npy 缓存。device="cuda" 逐张量直上卡。"""
+    meta 壳 + assign=True；逐张量 npy 缓存。device="cuda" 逐张量直上卡。
+    device_fn(hf_name)→device：逐张量选设备（分层直载，绕开 RAM 峰值）。"""
     from transformers import T5Config, T5EncoderModel
 
     cache_dir = gguf_path + f".{str(dtype).split('.')[-1]}.cache"
     cfg = T5Config(**json.load(open(config_path)))
     if os.path.isfile(os.path.join(cache_dir, _T5_CACHE_MARK)):
         t0 = time.time()
-        sd = _t5_state_dict_from_cache(cache_dir, dtype, device)
+        sd = _t5_state_dict_from_cache(cache_dir, dtype, device,
+                                       device_fn=device_fn)
         print(f"[flux] t5 缓存命中（{time.time()-t0:.1f}s）", flush=True)
     else:
         t0 = time.time()
-        write_cache = (device == "cpu")
+        write_cache = (device == "cpu" and device_fn is None)
         sd = _t5_state_dict_from_gguf(
             gguf_path, dtype, device=device,
-            cache_dir=cache_dir if write_cache else None)
+            cache_dir=cache_dir if write_cache else None,
+            device_fn=device_fn)
         print(f"[flux] t5 gguf->sd {time.time()-t0:.1f}s tensors={len(sd)}"
               f"{'（缓存已写）' if write_cache else ''}", flush=True)
     sd.setdefault("encoder.embed_tokens.weight", sd["shared.weight"])
@@ -307,6 +316,76 @@ def _move_transformers(device):
         print(f"[flux] {n} transformer -> {device}", flush=True)
 
 
+def _move_vaes(device):
+    """把所有已注册 AutoencoderKL 搬到指定设备（采样相位腾 VRAM）。"""
+    n = 0
+    for p in list(_models()._pipes.values()):
+        if type(p).__name__ == "AutoencoderKL":
+            p.to(device)
+            n += 1
+    if n:
+        torch.cuda.empty_cache()
+        print(f"[flux] {n} vae -> {device}", flush=True)
+
+
+def _dispatch_t5_split(model, k):
+    """挂 accelerate 跨设备钩子：前 k 层与 embed 已在 GPU、其余驻 CPU
+    （权重驻留不搬动，仅激活跨设备）。device_map 必须全覆盖，
+    否则 accelerate 报 missing parameters。"""
+    from accelerate import dispatch_model
+    n = len(model.encoder.block)
+    embed_dev = 0 if k > 0 else "cpu"
+    device_map = {f"encoder.block.{i}": (0 if i < k else "cpu") for i in range(n)}
+    device_map["shared"] = embed_dev
+    device_map["encoder.embed_tokens"] = embed_dev
+    device_map["encoder.final_layer_norm"] = "cpu"
+    dispatch_model(model, device_map=device_map)
+    print(f"[flux.encode] t5 split hooks: {k}/{n} blocks on cuda", flush=True)
+
+
+def _t5_param_bytes(t5_cfg_path):
+    """T5 bf16 全量参数字节数预估（embed + 24 层 attn/ffn）+10% 冗余。"""
+    cfgd = json.load(open(t5_cfg_path))
+    n, d, dff = int(cfgd["num_layers"]), int(cfgd["d_model"]), int(cfgd["d_ff"])
+    vocab = int(cfgd.get("vocab_size", 32128))
+    params = vocab * d + n * (4 * d * d + 3 * d * dff)
+    return int(params * 2 * 1.1)
+
+
+def _t5_split_k(t5_cfg_path, budget_frac=0.9, reserve_mb=1024):
+    """估算可直载 GPU 的 T5 层数（bf16 2 字节/参数）。
+    WSL2 下 mem_get_info 驱动层恒报 0，且 expandable_segments 下 reserved
+    降不下来（cached-free 段本进程仍可复用）——真正不可用的只有 allocated，
+    故按分配器账本估算：free ≈ 物理总量 - allocated - 固定开销。"""
+    cfgd = json.load(open(t5_cfg_path))
+    n = int(cfgd["num_layers"])
+    d, dff = int(cfgd["d_model"]), int(cfgd["d_ff"])
+    per = int((4 * d * d + 3 * d * dff) * 2 * 1.05)  # attn+ffn 参数 + 5% 冗余
+    total = torch.cuda.get_device_properties(0).total_memory
+    allocated = torch.cuda.memory_allocated()
+    free = max(0, total - allocated - reserve_mb * 1024 * 1024)
+    k = max(0, min(n - 1, int(free * budget_frac) // max(per, 1)))
+    print(f"[flux.encode] t5 分层计划: {k}/{n} 层 -> cuda "
+          f"(free_est={free // 2 ** 20}MB allocated={allocated // 2 ** 20}MB "
+          f"per_layer={per // 2 ** 20}MB)", flush=True)
+    return k, n
+
+
+def _t5_block_device_fn(k):
+    """device_fn：encoder.block.{i} 前 k 层 -> cuda；embed 随前段上卡，
+    final_norm/其余 -> cpu（与 _dispatch_t5_split 的 device_map 对齐）。"""
+    def fn(hf):
+        if hf.startswith("encoder.block."):
+            try:
+                return "cuda" if int(hf.split(".")[2]) < k else "cpu"
+            except (ValueError, IndexError):
+                return "cpu"
+        if hf == "shared.weight":
+            return "cuda" if k > 0 else "cpu"
+        return "cpu"
+    return fn
+
+
 def _fresh_scheduler():
     from diffusers import FlowMatchEulerDiscreteScheduler
     return FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -346,6 +425,54 @@ def _flux_latent_preview_pil(pipe, latents, height, width, max_size=256):
         img = img.resize((round(img.width * scale),
                           round(img.height * scale)), Image.BILINEAR)
     return img
+
+
+# ---------------------------------------------------------------------------
+# PuLID-FLUX 身份注入（前向 hook 版，对拍 InstantX/PuLID flux/model.py）：
+# double blocks i%2==0 与 single blocks i%4==0 的输出 img token 段做残差
+# 加法 img += weight * ca[idx](id_embedding, img)。diffusers 0.35 双/单 block
+# 均返回 (encoder_hidden_states, hidden_states)，hook 统一处理。
+# FACE 对象（flux.pulid_encode 产物）自带 CA 模块：{"id_embedding", "ca"}。
+# 显存策略（GTX1080 8GB）：CA 按块惰性上卡、用完回 CPU（20 块 × ~40MB
+# 每步往返 PCIe，相对 Pascal 单步耗时可忽略），id_embedding 全程驻留
+# （仅 ~128KB）。
+# ---------------------------------------------------------------------------
+
+def _pulid_install_hooks(model, pulid, weight):
+    if not (isinstance(pulid, dict) and "id_embedding" in pulid
+            and "ca" in pulid):
+        raise ValueError("flux.sample: pulid 需为 flux.pulid_encode 的输出 "
+                         "FACE 对象（含 id_embedding 与 ca 字段）")
+    cas = pulid["ca"]
+    id_emb = pulid["id_embedding"].to("cuda", model.dtype)
+    weight = float(weight)
+    handles = []
+
+    def _mk(idx):
+        ca = cas[idx]
+
+        def _hook(module, args, output):
+            if not (isinstance(output, tuple) and len(output) == 2):
+                return output  # 非预期签名：放行不注入
+            txt, img = output
+            dev, dt = img.device, img.dtype
+            ca.to(dev, dt)
+            img = img + weight * ca(id_emb.to(dt), img)
+            ca.to("cpu")
+            return (txt, img)
+
+        return _hook
+
+    idx = 0
+    for bi, blk in enumerate(model.transformer_blocks):
+        if bi % 2 == 0:
+            handles.append(blk.register_forward_hook(_mk(idx)))
+            idx += 1
+    for bi, blk in enumerate(model.single_transformer_blocks):
+        if bi % 4 == 0:
+            handles.append(blk.register_forward_hook(_mk(idx)))
+            idx += 1
+    return handles
 
 
 _DETECTOR_CACHE = {}
@@ -495,22 +622,71 @@ def register(registry):
         t0 = time.time()
         # 相位切换：transformer 回 CPU 腾 VRAM，T5/CLIP-L 上卡
         _move_transformers("cpu")
-        if clip.t5 is None:
-            clip.t5 = load_t5_gguf(clip.t5_gguf, clip.t5_cfg, device="cuda")
-        else:
-            clip.t5.to("cuda")
-        clip.clip_l.to("cuda")
+        enc_dev = torch.device("cuda")
+        # 预检：T5 全量 bf16 预估放不下就跳过必败的全卡尝试——
+        # 失败不只是浪费几分钟，半成品张量还会弄坏分配器账本（allocated 虚高），
+        # 导致后续分层计划算出 k=0、全量压进 RAM 被 OOM Kill
+        need = _t5_param_bytes(clip.t5_cfg)
+        total_vram = torch.cuda.get_device_properties(0).total_memory
+        avail = total_vram - torch.cuda.memory_allocated() - (1024 ** 3)
+        direct_split = clip.t5 is None and need > int(avail * 0.9)
+        if direct_split:
+            print(f"[flux.encode] T5 预估 {need // 2 ** 20}MB > 可用 "
+                  f"{avail // 2 ** 20}MB，跳过全卡尝试直接分层直载", flush=True)
+        try:
+            if direct_split:
+                raise RuntimeError("out of memory (preflight: T5 全量超可用显存)")
+            if clip.t5 is None:
+                clip.t5 = load_t5_gguf(clip.t5_gguf, clip.t5_cfg, device="cuda")
+            else:
+                clip.t5.to("cuda")
+            clip.clip_l.to("cuda")
+        except RuntimeError as e:
+            if "out of memory" not in str(e).lower():
+                raise
+            # OOM 兜底（8GB 卡 T5-XXL bf16 ~9.8GB 超物理显存、WSL2 分页失效时）：
+            # T5 分层直载——前 k 层逐张量直载 GPU（不占 RAM），其余驻 CPU，
+            # 避免「全量进 RAM 再分发」把 WSL 内存盒撑爆（OOM Kill）；
+            # CLIP-L 回 CPU，编码入口改走 CPU
+            print(f"[flux.encode] T5 上卡 OOM，降级 GPU/CPU 分层直载: {e}", flush=True)
+            import gc
+            # 关键：清掉异常 traceback——它钉住加载帧里的半成品 GPU 张量，
+            # 不清则 allocated 虚高 7.5GB，分层计划会被算成 0 层
+            e.__traceback__ = None
+            if clip.t5 is not None:
+                clip.t5.to("cpu")
+            gc.collect()
+            torch.cuda.empty_cache()
+            k, _n = _t5_split_k(clip.t5_cfg)
+            if clip.t5 is None:
+                clip.t5 = load_t5_gguf(clip.t5_gguf, clip.t5_cfg,
+                                       device_fn=_t5_block_device_fn(k))
+            _dispatch_t5_split(clip.t5, k)
+            clip.clip_l.to("cpu")
+            enc_dev = torch.device("cpu")
         pipe = FluxPipeline(scheduler=None, vae=None,
                             text_encoder=clip.clip_l, tokenizer=clip.tokenizer,
                             text_encoder_2=clip.t5,
                             tokenizer_2=clip.tokenizer_2, transformer=None)
         with torch.no_grad():
             pe, pooled, _ = pipe.encode_prompt(
-                prompt=str(text), prompt_2=None, device=torch.device("cuda"),
+                prompt=str(text), prompt_2=None, device=enc_dev,
                 max_sequence_length=int(max_seq))
         del pipe
         clip.clip_l.to("cpu")
         if int(release_t5):
+            # 分层驻留的 T5 先逐块确定性搬回 CPU 再删除——expandable_segments
+            # 下让 gc 乱序释放跨设备 dispatched 张量会触发 CUDACachingAllocator
+            # INTERNAL ASSERT，弄坏全进程分配器（后续 unet 上卡必崩）
+            try:
+                t5 = clip.t5
+                if t5 is not None:
+                    if getattr(t5, "shared", None) is not None:
+                        t5.shared.to("cpu")
+                    for blk in getattr(getattr(t5, "encoder", None), "block", []):
+                        blk.to("cpu")
+            except Exception as ex:
+                print(f"[flux] t5 回迁 CPU 异常（忽略）: {ex}", flush=True)
             clip.t5 = None
             import gc
             gc.collect()
@@ -540,16 +716,22 @@ def register(registry):
         "flux.sample",
         inputs={"model": "MODEL", "cond": "COND", "latent": "LATENT",
                 "seed": "INT", "steps": "INT", "guidance": "FLOAT",
-                "denoise": "FLOAT", "preview_every": "INT"},
+                "denoise": "FLOAT", "preview_every": "INT",
+                "pulid": "FACE", "pulid_weight": "FLOAT"},
         outputs={"latent": "LATENT", "seed": "INT"},
         description="FLUX Sampler（对标 ComfyUI SamplerCustomAdvanced，schnell "
                     "蒸馏 guidance=0）：吃 latent 吐 latent（output_type=latent，"
                     "VAE 解码独立成节点）。latent.samples=None → txt2img 全调度；"
                     "samples 有值（vae_encode 产物）且 denoise<1 → img2img 尾段"
                     "调度（手动 flow-match 加噪，对拍 diffusers 语义）；denoise>=1 "
-                    "给 latent 等价重生成。预览：逐步 latent 投影帧 + job 进度")
+                    "给 latent 等价重生成。可选 pulid（flux.pulid_encode 的 FACE "
+                    "对象）+ pulid_weight：PuLID-FLUX 身份注入（前向 hook 挂在 "
+                    "double i%2==0 / single i%4==0 block 输出，仅本次调用生效，"
+                    "结束即摘除，不污染常驻模型）。预览：逐步 latent 投影帧 + "
+                    "job 进度")
     def _op_flux_sample(model, cond, latent, seed=-1, steps=4, guidance=0.0,
-                        denoise=1.0, preview_every=1):
+                        denoise=1.0, preview_every=1, pulid=None,
+                        pulid_weight=1.0):
         import numpy as np
         from diffusers import FluxPipeline
         from diffusers.pipelines.flux.pipeline_flux import calculate_shift
@@ -576,6 +758,12 @@ def register(registry):
                if job and int(preview_every) > 0 else None)
 
         # 相位切换：transformer 上卡（采样不需要文本组件/VAE）
+        # VAE 先回 CPU 腾空间——8GB 卡上 unet 6.8GB + VAE 0.4GB 会超限；
+        # 解码算子自己会 vae.to("cuda") 拉回，无需还原
+        _move_vaes("cpu")
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
         model.to("cuda")
         torch.cuda.empty_cache()
         pipe = _assemble_txt2img(model)
@@ -607,6 +795,12 @@ def register(registry):
             return kw
 
         t0 = time.time()
+        # PuLID 身份注入：仅本次调用生效，finally 摘除，常驻模型不受污染
+        pulid_handles = (_pulid_install_hooks(model, pulid, pulid_weight)
+                         if pulid is not None else [])
+        if pulid_handles:
+            print(f"[flux.sample] PuLID 注入 weight={float(pulid_weight)} "
+                  f"hooks={len(pulid_handles)}", flush=True)
         try:
             if samples is None:
                 # ---- txt2img：全调度，latents=None 由管道按 seed 生噪声 ----
@@ -669,6 +863,9 @@ def register(registry):
             import traceback
             print("[flux.sample] ERROR:", traceback.format_exc(), flush=True)
             raise
+        finally:
+            for h in pulid_handles:
+                h.remove()
         print(f"[flux.sample] done in {time.time()-t0:.1f}s {W}x{H} "
               f"steps={steps} denoise={denoise} seed={seed}", flush=True)
         return {"latent": {"samples": out.cpu(), "packed": True,
@@ -688,6 +885,9 @@ def register(registry):
         if not isinstance(latent, dict) or latent.get("samples") is None:
             raise ValueError("flux.vae_decode: latent 需为 flux.sample/"
                              "flux.vae_encode 的输出（含 samples）")
+        # 相位切换：transformer 回 CPU 腾 VRAM（8GB 卡全分辨率解码必备），
+        # 采样算子自己会 model.to("cuda") 拉回，无需还原
+        _move_transformers("cpu")
         vae.to("cuda")
         s = latent["samples"]
         if latent.get("packed", True):
@@ -698,7 +898,19 @@ def register(registry):
         with torch.no_grad():
             z = (z.to("cuda", vae.dtype) / vae.config.scaling_factor) \
                 + vae.config.shift_factor
-            img = vae.decode(z, return_dict=False)[0]
+            try:
+                img = vae.decode(z, return_dict=False)[0]
+            except RuntimeError as e:
+                if "out of memory" not in str(e).lower():
+                    raise
+                e.__traceback__ = None
+                print(f"[flux.vae_decode] OOM，启用 tiled decode 重试: {e}",
+                      flush=True)
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                vae.enable_tiling()
+                img = vae.decode(z, return_dict=False)[0]
         proc = VaeImageProcessor(vae_scale_factor=16)
         pil = proc.postprocess(img, output_type="pil")
         print(f"[flux.vae_decode] {latent['width']}x{latent['height']} -> IMAGE",
@@ -714,13 +926,27 @@ def register(registry):
                     "denoise<1 做 img2img / hires-fix")
     def _op_flux_vae_encode(vae, image):
         from diffusers.image_processor import VaeImageProcessor
+        # 相位切换：transformer 回 CPU 腾 VRAM
+        _move_transformers("cpu")
         vae.to("cuda")
         proc = VaeImageProcessor(vae_scale_factor=16)
         images = image if isinstance(image, list) else [image]
         tensors = [proc.preprocess(img) for img in images]
         img_t = torch.cat(tensors).to(device="cuda", dtype=vae.dtype)
         with torch.no_grad():
-            z = vae.encode(img_t).latent_dist.sample()
+            try:
+                z = vae.encode(img_t).latent_dist.sample()
+            except RuntimeError as e:
+                if "out of memory" not in str(e).lower():
+                    raise
+                e.__traceback__ = None
+                print(f"[flux.vae_encode] OOM，启用 tiled encode 重试: {e}",
+                      flush=True)
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                vae.enable_tiling()
+                z = vae.encode(img_t).latent_dist.sample()
         z = (z - vae.config.shift_factor) * vae.config.scaling_factor
         W, H = images[0].size
         print(f"[flux.vae_encode] {W}x{H} -> LATENT {tuple(z.shape)}", flush=True)

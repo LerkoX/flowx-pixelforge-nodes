@@ -1,8 +1,8 @@
 {
   "name": "controlnet-apply",
   "displayName": "ControlNet 应用",
-  "description": "ControlNetModel + hint 图（边缘/姿态等线稿，预处理器产出）捆绑为 CONTROL；strength=残差强度（默认 1.0，0 ≡ 关闭）；start/end_percent 为生效步窗口（默认全程）。暂不与 cond.set_area 组合",
-  "version": "1.1.0",
+  "description": "ControlNetModel + hint 图（边缘/姿态等线稿，预处理器产出）捆绑为 CONTROL；strength=残差强度（默认 1.0，0 ≡ 关闭）；start/end_percent 为生效步窗口（默认全程）。暂不与 cond.set_area 组合。v1.2.0：新增可选输入 control——接上一个 controlnet-apply 的 control 输出即串成多 ControlNet 链（采样时每路各自前向、残差×各自 strength 求和注入，对标 ComfyUI 多 CN 串联）。",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -58,6 +58,18 @@
       }
     },
     {
+      "name": "control",
+      "type": "string",
+      "description": "（可选）上一个 controlnet-apply 的 control 输出：非空时本次捆绑追加成多 ControlNet 链，采样时多路残差求和；留空=单 ControlNet（旧行为）",
+      "required": false,
+      "default": "",
+      "source": {
+        "nodeRef": "controlnet-apply",
+        "output": "control",
+        "description": "多 ControlNet 串联时由上一个 apply 节点输出提供"
+      }
+    },
+    {
       "name": "strength",
       "type": "float",
       "description": "残差强度（默认 1.0，0 ≡ 关闭）",
@@ -94,7 +106,8 @@
     "IMAGE": "{{ Param.image }}",
     "STRENGTH": "{{ Param.strength }}",
     "START_PERCENT": "{{ Param.start_percent }}",
-    "END_PERCENT": "{{ Param.end_percent }}"
+    "END_PERCENT": "{{ Param.end_percent }}",
+    "CONTROL": "{{ Param.control }}"
   },
   "outputs": [
     {

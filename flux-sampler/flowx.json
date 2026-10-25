@@ -1,8 +1,8 @@
 {
   "name": "flux-sampler",
   "displayName": "FLUX 采样器",
-  "description": "FLUX 采样（对标 ComfyUI SamplerCustomAdvanced，schnell 蒸馏 guidance=0 免负向）：消费 UNET+COND+LATENT 组件，输出采样后 LATENT（VAE 解码独立成 flux-vae-decode）。latent 来自 empty-latent → txt2img；来自 vae-encode 且 denoise<1 → img2img/hires-fix。异步 job + 逐步 latent 预览帧。自包含节点：server_op.py 运行时自注册",
-  "version": "2.0.0",
+  "description": "FLUX 采样（对标 ComfyUI SamplerCustomAdvanced，schnell 蒸馏 guidance=0 免负向）：消费 UNET+COND+LATENT 组件，输出采样后 LATENT（VAE 解码独立成 flux-vae-decode）。latent 来自 empty-latent → txt2img；来自 vae-encode 且 denoise<1 → img2img/hires-fix。异步 job + 逐步 latent 预览帧。自包含节点：server_op.py 运行时自注册。v2.1.0：新增可选 pulid/pulid_weight 参数（PuLID-FLUX 人脸身份注入，FACE 对象来自 flux-pulid-face 节点；仅在绑定后生效，文本仍主导画面）。",
+  "version": "2.1.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -98,6 +98,25 @@
       "default": 0.0
     },
     {
+      "name": "pulid",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "可选：PuLID FACE 对象引用（flux-pulid-face 节点的 pulid 输出）。绑定后采样时按 PuLID-FLUX 机制注入参考人脸身份；留空则不注入（行为同旧版）",
+      "source": {
+        "nodeRef": "flux-pulid-face",
+        "output": "pulid",
+        "description": "由 FLUX PuLID 人脸编码节点提供"
+      }
+    },
+    {
+      "name": "pulid_weight",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "PuLID 注入强度（0~1+，默认 1.0）：越大脸越像参考图但越可能压构图/风格；仅 pulid 绑定时生效"
+    },
+    {
       "name": "preview_every",
       "type": "integer",
       "description": "每 N 步留一帧进度卡片（0 关闭）",
@@ -139,7 +158,9 @@
     "PREVIEW_EVERY": "{{ Param.preview_every }}",
     "JOB_TIMEOUT": "{{ Param.job_timeout }}",
     "POLL_INTERVAL": "{{ Param.poll_interval }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "PULID": "{{ Param.pulid }}",
+    "PULID_WEIGHT": "{{ Param.pulid_weight }}"
   },
   "outputs": [
     {

@@ -1,0 +1,155 @@
+{
+  "name": "service-monitor",
+  "displayName": "推理服务监控（Monitor）",
+  "description": "在画布节点上实时显示推理服务 monitor 页关键信息：GPU 利用率/温度/功耗、VRAM 分段占用、常驻模型（含租约归属）、活跃租约、任务队列。UI 经设计期代理每 3s 轮询，无需运行流水线；节点运行时输出一份监控快照，可供下游做闸门判断（如显存不足则分支）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "icon": "📊",
+  "tags": [
+    "inference",
+    "infra",
+    "monitor"
+  ],
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 520,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "extract": {
+    "type": "codec-block"
+  },
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "timeout": 60,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机可达的服务地址（节点 UI 实时轮询用）。docker 节点的 service_url 可能是容器内网地址，宿主机取不到时填此项；留空回退 service_url"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "ok",
+      "type": "string",
+      "description": "是否成功抓取（true/false）"
+    },
+    {
+      "name": "gpu_name",
+      "type": "string",
+      "description": "GPU 型号名"
+    },
+    {
+      "name": "gpu_util_percent",
+      "type": "integer",
+      "description": "SM 利用率 %（NVML；不可用时为 -1）"
+    },
+    {
+      "name": "gpu_temp_c",
+      "type": "integer",
+      "description": "GPU 温度 ℃（不可用时为 -1）"
+    },
+    {
+      "name": "gpu_power_w",
+      "type": "integer",
+      "description": "功耗 W（不可用时为 -1）"
+    },
+    {
+      "name": "vram_used_mb",
+      "type": "integer",
+      "description": "显存已用 MB（NVML 口径，无 NVML 时为本进程 reserved）"
+    },
+    {
+      "name": "vram_total_mb",
+      "type": "integer",
+      "description": "显存总量 MB"
+    },
+    {
+      "name": "vram_headroom_mb",
+      "type": "integer",
+      "description": "物理余量 MB（闸门口径；不可用为 -1）"
+    },
+    {
+      "name": "resident_count",
+      "type": "integer",
+      "description": "常驻模型条目数"
+    },
+    {
+      "name": "max_resident_models",
+      "type": "integer",
+      "description": "常驻上限（策略值；未知为 -1）"
+    },
+    {
+      "name": "lease_count",
+      "type": "integer",
+      "description": "活跃执行租约数"
+    },
+    {
+      "name": "jobs_running",
+      "type": "integer",
+      "description": "running 任务数"
+    },
+    {
+      "name": "jobs_pending",
+      "type": "integer",
+      "description": "pending 排队任务数"
+    },
+    {
+      "name": "oversubscribed",
+      "type": "string",
+      "description": "显存是否超订退化（true/false）"
+    },
+    {
+      "name": "detail",
+      "type": "string",
+      "description": "人类可读一行摘要"
+    },
+    {
+      "name": "snapshot",
+      "type": "string",
+      "description": "压缩 JSON 快照（GPU/VRAM/常驻/租约/队列），回放态节点 UI 据此渲染"
+    }
+  ]
+}

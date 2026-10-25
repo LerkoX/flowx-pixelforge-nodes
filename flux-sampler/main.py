@@ -35,7 +35,13 @@ def main():
         "denoise": denoise,
         "preview_every": preview_every,
     }
-    print(f"[flux-sampler] steps={steps} denoise={denoise} seed={seed}",
+    # 可选 PuLID 身份注入（FACE 对象引用，留空字符串 = 不注入）
+    pulid = param("pulid", "")
+    if pulid:
+        inputs["pulid"] = ref(pulid)
+        inputs["pulid_weight"] = param("pulid_weight", 1.0, float)
+    print(f"[flux-sampler] steps={steps} denoise={denoise} seed={seed}"
+          + (f" pulid_weight={inputs['pulid_weight']}" if pulid else ""),
           flush=True)
 
     t0 = time.time()

@@ -16,6 +16,7 @@ def main():
         "image": ref(param("image")),
         "include_hand": _bool(param("include_hand", "false")),
         "include_face": _bool(param("include_face", "false")),
+        "detector": param("detector", "openpose"),
     }, emit_keys=["image"])
 
 

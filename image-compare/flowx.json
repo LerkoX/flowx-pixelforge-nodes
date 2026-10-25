@@ -1,0 +1,109 @@
+{
+  "name": "image-compare",
+  "displayName": "前后对比",
+  "description": "原图 vs 结果图对比展示（纯展示节点，不做任何图像处理）：接收两个推理服务图像对象 ID（before/after），执行时把原图物化到 Studio 媒体缓存、结果图上报为最终预览帧，画布节点内嵌拖动分割线滑块对比（点击弹放大对比窗）。接线示例：局部重绘流水线中 before 接 MaskPaint.image（原图），after 接末端合成节点 image 输出。 v1.0.1：对比分割线支持触屏拖动（此前仅 mousedown，手机端只能点击定位）。",
+  "version": "1.0.1",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image",
+    "view"
+  ],
+  "icon": "🆚",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧/原图物化中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image_before",
+      "type": "string",
+      "description": "「原图」侧图像在推理服务的对象 ID（如接 MaskPaint.image 或 load-image.image）",
+      "required": true,
+      "source": {
+        "nodeRef": "mask-paint",
+        "output": "image",
+        "description": "手绘蒙版节点透传的原图对象 ID"
+      }
+    },
+    {
+      "name": "image_after",
+      "type": "string",
+      "description": "「结果」侧图像在推理服务的对象 ID（如接流水线末端 image-composite/vae-decode 的 image 输出）",
+      "required": true,
+      "source": {
+        "nodeRef": "image-composite",
+        "output": "image",
+        "description": "合成/末端节点的结果图对象 ID"
+      }
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE_BEFORE": "{{ Param.image_before }}",
+    "IMAGE_AFTER": "{{ Param.image_after }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "before",
+      "type": "string",
+      "description": "原图侧对象 ID（透传 image_before，供下游复用/排查）"
+    },
+    {
+      "name": "after",
+      "type": "string",
+      "description": "结果侧对象 ID（透传 image_after，供下游复用/排查）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 340,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 120,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local"
+  }
+}

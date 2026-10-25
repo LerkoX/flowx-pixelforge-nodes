@@ -6,6 +6,7 @@ const WIDGET_SPEC = {
     { key: 'image', label: 'image（人物图）', kind: 'text', mono: true },
     { key: 'include_hand', label: '手部骨架 include_hand', kind: 'check', default: false },
     { key: 'include_face', label: '面部特征 include_face', kind: 'check', default: false },
+    { key: 'detector', label: '检测器 detector（dwpose 治侧身回头）', kind: 'select', options: ['openpose','dwpose'], default: 'openpose' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
   note: '输出骨架图 → controlnet-apply 的 hint（配 openpose ControlNet）',

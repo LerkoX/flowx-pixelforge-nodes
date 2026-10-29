@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "c88de186eb70"
+OP_VERSION = "5e1cbc29bb3e"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -619,6 +619,21 @@ def register(registry):
             raise ValueError("flux.encode: clip 需为 flux.dual_clip_load 的输出")
         if not torch.cuda.is_available():
             raise ValueError("flux.encode 需要 CUDA（T5 bf16 编码上卡）")
+        # cond 磁盘缓存：提示词+max_seq 不变 ⇒ 编码结果是常量，缓存命中则
+        # 跳过 T5 装载/编码——T5-XXL bf16 装载峰值 ~9.4GB 是 16GB 内存机器上
+        # 容器被 OOM Kill 的头号原因（缓存后该相位整个消失，且省 4-7min）
+        import hashlib
+        from safetensors.torch import load_file as _st_load
+        from safetensors.torch import save_file as _st_save
+        _ck = hashlib.sha256(f"{text}|{int(max_seq)}".encode()).hexdigest()[:16]
+        _cpath = os.path.join(FLUX_DIR, "cond_cache", f"{_ck}.safetensors")
+        if os.path.isfile(_cpath):
+            _sd = _st_load(_cpath)
+            info = f"cond cache hit ({_ck}) pe={tuple(_sd['pe'].shape)}"
+            print(f"[flux.encode] {info}", flush=True)
+            return {"cond": {"prompt_embeds": _sd["pe"],
+                             "pooled": _sd["pooled"]},
+                    "info": info}
         t0 = time.time()
         # 相位切换：transformer 回 CPU 腾 VRAM，T5/CLIP-L 上卡
         _move_transformers("cpu")
@@ -696,8 +711,13 @@ def register(registry):
             clip.t5.to("cpu")
         info = f"{time.time()-t0:.1f}s pe={tuple(pe.shape)}"
         print(f"[flux.encode] {info}", flush=True)
-        return {"cond": {"prompt_embeds": pe.float().cpu(),
-                         "pooled": pooled.float().cpu()},
+        _cpe, _cpooled = pe.float().cpu(), pooled.float().cpu()
+        try:  # 落盘失败只损失下次加速，不影响本次结果
+            os.makedirs(os.path.dirname(_cpath), exist_ok=True)
+            _st_save({"pe": _cpe, "pooled": _cpooled}, _cpath)
+        except Exception as _ce:
+            print(f"[flux.encode] cond cache 写入失败（忽略）: {_ce}", flush=True)
+        return {"cond": {"prompt_embeds": _cpe, "pooled": _cpooled},
                 "info": info}
 
     @registry.register(

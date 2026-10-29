@@ -1,0 +1,136 @@
+{
+  "name": "pose-gate",
+  "displayName": "姿态检测+人工确认闸门",
+  "description": "DWPose 姿态检测（ONNX 后端，侧身/遮挡/交叉肢体比标准 OpenPose 准）+ 画布内嵌骨架编辑器：检测出骨架与关键点后节点暂停等待，widget 上可拖拽修正关键点（极端姿势如竖叉抱腿检测器会误判，人工改点后确认放行），服务端按修正关键点重渲染 ControlNet hint；超时未操作按 on_timeout 策略继续（默认 pass，无人值守时等价纯检测节点）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "preprocess",
+    "controlnet",
+    "human-in-the-loop"
+  ],
+  "icon": "🦴",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：预览帧/骨架编辑器拉图都由 Studio 发请求，用的是 Studio 的网络视角。docker 节点的 service_url 只能填容器内网地址时，把本参数绑成 Studio 可达地址（通常 {{ Param.service_url }}），否则画布看不到骨架、编辑器拉不到原图。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "人物图对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由 load-image 等节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "include_hand",
+      "type": "boolean",
+      "description": "骨架画手部关键点（默认 true；widget 确认时可临时改）",
+      "required": false,
+      "default": true
+    },
+    {
+      "name": "include_face",
+      "type": "boolean",
+      "description": "骨架画面部特征点（默认 false；widget 确认时可临时改）",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "timeout_sec",
+      "type": "integer",
+      "description": "人工确认等待时长（秒，默认 600）。画布上无人操作时超时后按 on_timeout 继续",
+      "required": false,
+      "default": 600
+    },
+    {
+      "name": "on_timeout",
+      "type": "string",
+      "required": false,
+      "default": "pass",
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "description": "超时策略：pass=用检测原骨架继续（无人值守等价旧行为）；fail=节点报错中止流水线"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMAGE": "{{ Param.image }}",
+    "INCLUDE_HAND": "{{ Param.include_hand }}",
+    "INCLUDE_FACE": "{{ Param.include_face }}",
+    "TIMEOUT_SEC": "{{ Param.timeout_sec }}",
+    "ON_TIMEOUT": "{{ Param.on_timeout }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "骨架图对象 ID（人工确认/修正后的版本，黑底彩线 RGB），供 controlnet-apply 的 image 输入"
+    },
+    {
+      "name": "gate_action",
+      "type": "string",
+      "description": "闸门决策：confirm（人工确认原骨架）/ render（人工修正后重渲染）/ timeout_pass（超时用原骨架）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 340,
+    "height": 640,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

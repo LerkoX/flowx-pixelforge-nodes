@@ -1,8 +1,8 @@
 {
   "name": "flux-unet-load",
   "displayName": "FLUX UNET 加载",
-  "description": "FLUX 扩散模型（transformer）加载（对标 ComfyUI UNETLoader）：GGUF Q4_K_S 单独装载（fp16 compute），输出 MODEL 组件引用供采样/局部重绘节点消费。1.2.0 起走异步 /jobs+轮询（冷加载数分钟，同步 /op 会被隧道空闲超时掐断）。自包含节点：server_op.py 运行时自注册（需服务端配置 INFERENCE_TOKEN）。v1.3.0：提交 job 后上报 job 标记（base+job_id）——Studio 取消时可**定向转发** /interrupt，不再依赖节点进程能否收到 SIGTERM（实测有竞态）。v1.4.0：job_timeout 1800→3600、timeout 2100→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）",
-  "version": "1.4.0",
+  "description": "FLUX 扩散模型（transformer）加载（对标 ComfyUI UNETLoader）：GGUF Q4_K_S 单独装载（fp16 compute），输出 MODEL 组件引用供采样/局部重绘节点消费。1.2.0 起走异步 /jobs+轮询（冷加载数分钟，同步 /op 会被隧道空闲超时掐断）。自包含节点：server_op.py 运行时自注册（需服务端配置 INFERENCE_TOKEN）。v1.3.0：提交 job 后上报 job 标记（base+job_id）——Studio 取消时可**定向转发** /interrupt，不再依赖节点进程能否收到 SIGTERM（实测有竞态）。v1.4.0：job_timeout 1800→3600、timeout 2100→3900（真机 exec 759：冷加载 31 分钟把排队中的 ClipLoad 拖爆 1800s 超时）（1.5.0：支持 FLUX.1 Fill 权重——自动检测 x_embedder 384 输入通道并切换配置）",
+  "version": "1.5.0",
   "author": "flowx-team",
   "tags": [
     "flux",

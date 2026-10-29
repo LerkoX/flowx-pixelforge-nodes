@@ -129,9 +129,15 @@ def main():
     # 无租约标识（命令行直跑/未注入 FLOWX_EXECUTION_ID）时跳过排队，保持旧行为
     if queue_wait > 0 and lease_id():
         qdeadline = t_start + queue_wait
+        # 连续不可达快速失败：地址错误/隧道断开时，每次请求挂到超时再重试，
+        # 会空转 queue_wait_seconds（默认 1h）才报错。区分「排队等待」与
+        # 「服务不可达」：后者连续超过 connect_fail_seconds 直接抛错。
+        connect_fail_limit = max(10, param("connect_fail_seconds", 90, int))
+        unreachable_since = None
         while True:
             try:
-                res = post_json(url, "/leases/acquire", {}, tok, timeout=30)
+                res = post_json(url, "/leases/acquire", {}, tok, timeout=10)
+                unreachable_since = None
             except RuntimeError as e:
                 # 旧版服务端无 /leases/acquire（404/405/501）⇒ 跳过排队，
                 # 保持 1.3.0 旧行为（不盲等 queue_wait_seconds 才失败）
@@ -139,9 +145,19 @@ def main():
                     print(f"[ensure] 服务端不支持排队闸门（{e}）——旧版服务？"
                           f"跳过排队（多流水线并发请升级服务端）", flush=True)
                     break
-                if time.time() >= qdeadline:
+                now = time.time()
+                if unreachable_since is None:
+                    unreachable_since = now
+                if now - unreachable_since >= connect_fail_limit:
+                    raise RuntimeError(
+                        f"[ensure] 推理服务连续 {connect_fail_limit}s 不可达：{e} "
+                        f"——检查 service_url（当前 {url}）与网络模式"
+                        f"（回家=LAN 直连 / 出门=cpolar 隧道）是否匹配") from e
+                if now >= qdeadline:
                     raise
-                print(f"[ensure] acquire 瞬态失败（重试）: {e}", flush=True)
+                print(f"[ensure] acquire 瞬态失败（重试，"
+                      f"{int(now - unreachable_since)}s/{connect_fail_limit}s 后报错）: {e}",
+                      flush=True)
                 time.sleep(queue_poll)
                 continue
             if res.get("acquired"):

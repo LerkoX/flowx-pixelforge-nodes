@@ -1,0 +1,151 @@
+{
+  "name": "mask-bbox-crop",
+  "displayName": "蒙版BBox裁剪",
+  "description": "按蒙版白色区域 bbox 自动裁剪原图与蒙版（外扩 padding、8 对齐），等比缩放到长边 target_long_side。输出缩放后 crop 图/蒙版与原图坐标系 bbox(x,y,width,height)，供局部重绘后贴回（image-upscale 缩到 width×height → image-composite 贴到 x,y）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "image",
+    "mask"
+  ],
+  "icon": "🎯",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "推理服务端的原图对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "mask-paint",
+        "output": "image",
+        "description": "推荐接手绘蒙版节点的原图输出"
+      }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "推理服务端的蒙版对象 ID（灰度图，白色=重绘区域）；建议接 mask-grow 外扩后的蒙版",
+      "required": true,
+      "source": {
+        "nodeRef": "mask-grow",
+        "output": "mask",
+        "description": "推荐接蒙版外扩节点输出"
+      }
+    },
+    {
+      "name": "padding",
+      "type": "integer",
+      "description": "bbox 四周外扩像素（原图坐标系），为重绘保留上下文；默认 64",
+      "required": false,
+      "default": 64
+    },
+    {
+      "name": "target_long_side",
+      "type": "integer",
+      "description": "crop 缩放后的长边像素（SD1.5 建议 1536 以内）；默认 1536",
+      "required": false,
+      "default": 1536
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMAGE": "{{ Param.image }}",
+    "MASK": "{{ Param.mask }}",
+    "PADDING": "{{ Param.padding }}",
+    "TARGET_LONG_SIDE": "{{ Param.target_long_side }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "缩放后 crop 图的对象 ID（长边=target_long_side）"
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "缩放后 crop 蒙版的对象 ID（与 crop 图同尺寸）"
+    },
+    {
+      "name": "x",
+      "type": "integer",
+      "description": "bbox 左上角 X（原图坐标系，8 对齐）"
+    },
+    {
+      "name": "y",
+      "type": "integer",
+      "description": "bbox 左上角 Y（原图坐标系，8 对齐）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "bbox 宽（原图坐标系，8 的倍数，贴回目标宽）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "bbox 高（原图坐标系，8 的倍数，贴回目标高）"
+    },
+    {
+      "name": "crop_width",
+      "type": "integer",
+      "description": "crop 图宽（缩放后）"
+    },
+    {
+      "name": "crop_height",
+      "type": "integer",
+      "description": "crop 图高（缩放后）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11"
+}

@@ -1,0 +1,120 @@
+{
+  "name": "flux-controlnet-load",
+  "displayName": "FLUX ControlNet 加载",
+  "description": "装载 FLUX ControlNet（Shakker-Labs Union-Pro 多模态合一：depth=2/canny=0/tile=1/pose=4 等，FluxControlNetModel 原生 safetensors），注册进 model_manager LRU（键 flux-cn:<path>），输出 CONTROLNET 引用。接 flux-mask-refine 的 controlnet 输入，在 Fill 局部重绘时注入深度/线稿结构约束（denoise=1.0 自由重绘时锁定体型轮廓，防止走形）。权重布局：/models/flux/<cn_path>/ 下放 config.json + diffusion_pytorch_model.safetensors（如 cn-union-pro/，6.6GB fp32 原盘，装载即转 fp16 ~3.3GB 常驻）。服务端算子 flux.controlnet_load 由 server_op.py 自注册。",
+  "version": "1.1.0",
+  "author": "flowx-team",
+  "tags": [
+    "flux",
+    "controlnet",
+    "inference"
+  ],
+  "icon": "🧭",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布/取消兜底）可达的服务地址；docker 节点跑在远端宿主时 service_url 是容器内地址，必须另绑本参数（留空则同 service_url）"
+    },
+    {
+      "name": "cn_path",
+      "type": "string",
+      "description": "ControlNet 目录名（/models/flux/ 下，内含 config.json + diffusion_pytorch_model.safetensors），如 cn-union-pro",
+      "required": false,
+      "default": "cn-union-pro"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "装载精度：fp16（默认，Pascal 兼容）/ bf16 / fp32",
+      "required": false,
+      "default": "fp16"
+    },
+    {
+      "name": "quantize",
+      "type": "string",
+      "description": "权重量化：int8（默认，常驻 3.3GB→1.7GB，16GB 内存机必选）/ off（不量化，质量最优，需大内存机器）",
+      "required": false,
+      "default": "int8"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务超时（秒）；排队+计算总预算（冷读盘 6.6GB 分钟级）",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "CN_PATH": "{{ Param.cn_path }}",
+    "DTYPE": "{{ Param.dtype }}",
+    "QUANTIZE": "{{ Param.quantize }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+  },
+  "outputs": [
+    {
+      "name": "controlnet",
+      "type": "string",
+      "description": "FLUX ControlNet 组件引用（接 flux-mask-refine 的 controlnet）"
+    },
+    {
+      "name": "info",
+      "type": "string",
+      "description": "装载信息（目录/精度/体积/耗时）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11"
+}

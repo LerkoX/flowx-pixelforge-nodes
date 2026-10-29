@@ -10,6 +10,13 @@ from flowx_client import (emit, emit_preview, ensure_plugin, get_job, host_base,
                           param, ref, submit_job, token, wait_job)
 
 
+def _bool_param(name, default=False):
+    raw = param(name, default)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 def main():
     url = param("service_url").rstrip("/")
     pbase = host_base(url)
@@ -30,7 +37,20 @@ def main():
         "seed": param("seed", -1, int),
         "guide_size": param("guide_size", 768, int),
         "feather": param("feather", 16, int),
+        "pipeline_mode": param("pipeline_mode", "img2img"),
+        "attention_slicing": param("attention_slicing", "off"),
+        "cpu_offload": param("cpu_offload", "off"),
+        "vae_slicing": _bool_param("vae_slicing", False),
+        "vae_tiling": _bool_param("vae_tiling", False),
     }
+    # ControlNet（可选）：留空不下发，服务端按纯 Fill/img2img 走
+    cn = param("controlnet", "")
+    cn_img = param("control_image", "")
+    if cn and cn_img:
+        inputs["controlnet"] = ref(cn)
+        inputs["control_image"] = ref(cn_img)
+        inputs["controlnet_scale"] = param("controlnet_scale", 0.7, float)
+        inputs["control_mode"] = param("control_mode", 2, int)
     print(f"[flux-mask-refine] denoise={inputs['denoise']} steps={inputs['steps']} "
           f"image={param('image')} mask={param('mask')}", flush=True)
 

@@ -2,7 +2,7 @@
   "name": "flux-mask-refine",
   "displayName": "FLUX 蒙版局部重绘",
   "description": "FLUX 蒙版局部重绘：根据输入的蒙版（如手绘衣服蒙版）自动外接框裁剪 → 局部放大 → FLUX img2img 重绘 → 组合蒙版与边缘羽化贴回原图。专用于多参考图换装、局部服装修改等场景，模特脸部与背景 100% 原样保留。v1.1.0：补声明 node timeout=15000s（> job_timeout=14400s）——此前缺省走 Studio 默认（~1h），真机 exec 753 实测把 82 分钟的 mask_refine 节点杀成 failed（job 本身已 done）。",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "author": "flowx-team",
   "tags": [
     "flux",
@@ -52,6 +52,44 @@
         "nodeRef": "load-image",
         "output": "image"
       }
+    },
+    {
+      "name": "controlnet",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "FLUX ControlNet 组件引用（flux-controlnet-load 输出；留空=纯 Fill 无结构约束）",
+      "source": {
+        "nodeRef": "flux-controlnet-load",
+        "output": "controlnet",
+        "description": "推荐由 FLUX ControlNet 加载节点输出提供"
+      }
+    },
+    {
+      "name": "control_image",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "结构控制图（全图深度/线稿图像对象 ID，自动按重绘裁剪框裁切对齐），如 preprocess-depth 的 image 输出",
+      "source": {
+        "nodeRef": "preprocess-depth",
+        "output": "image",
+        "description": "推荐由深度预处理节点输出提供"
+      }
+    },
+    {
+      "name": "controlnet_scale",
+      "type": "float",
+      "required": false,
+      "default": 0.7,
+      "description": "ControlNet 强度（残差缩放），0.6-0.8 常用；1.0 过强会僵硬"
+    },
+    {
+      "name": "control_mode",
+      "type": "integer",
+      "required": false,
+      "default": 2,
+      "description": "Union-Pro 控制模式：0=canny 1=tile 2=depth 3=blur 4=pose 5=gray 6=lowquality"
     },
     {
       "name": "mask",
@@ -134,6 +172,41 @@
       "description": "贴回原图时的边缘羽化像素，消除拼接硬边",
       "required": false,
       "default": 16
+    },
+    {
+      "name": "pipeline_mode",
+      "type": "string",
+      "description": "重绘管线：img2img=旧行为（整裁剪区重画）；inpaint=FluxInpaintPipeline（mask 真正参与扩散，仅重绘蒙版区）",
+      "required": false,
+      "default": "img2img"
+    },
+    {
+      "name": "attention_slicing",
+      "type": "string",
+      "description": "注意力切片：off=关闭，auto=自动（GTX1080 实测可能触发 PyTorch allocator internal assert，慎用）",
+      "required": false,
+      "default": "off"
+    },
+    {
+      "name": "cpu_offload",
+      "type": "string",
+      "description": "显存策略：auto=按物理显存自选（默认，≥13GB 全驻留零搬运，小卡 CN 场景自动走手工时刻表 dance）；dance=强制 CN⇄transformer 每步轮换（8GB 卡保底）；model=模型级 accelerate offload（非 CN 场景）；sequential=逐层 offload（最省显存但很慢）；off=全驻留（大显存卡）",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "vae_slicing",
+      "type": "boolean",
+      "description": "VAE 逐条切片解码（8GB 显存建议开启；降低 VAE decode 峰值显存）",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "vae_tiling",
+      "type": "boolean",
+      "description": "VAE 分块编解码（8GB 显存建议开启；降低大裁剪区 VAE 峰值显存）",
+      "required": false,
+      "default": false
     },
     {
       "name": "seed",

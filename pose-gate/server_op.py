@@ -394,7 +394,7 @@ def _render_kp(candidate, subset, width, height, include_hand, include_face):
     if include_hand:
         canvas = draw_handpose(canvas, [cand[92:113], cand[113:134]])
     if include_face:
-        canvas = draw_facepose(canvas, cand[24:92])
+        canvas = draw_facepose(canvas, cand[24:92][None])  # 需带 person 轴
     return Image.fromarray(canvas)
 
 
@@ -486,12 +486,18 @@ def register_routes(add_route):
     """
     from fastapi import Body, HTTPException
 
+    def list_gates():
+        _purge()
+        return {"gates": [{"key": k, "created": v["created"]}
+                          for k, v in _GATES.items()]}
+
     def create(key: str, payload: dict = Body(...)):
         _purge()
         _GATES[key] = {"created": time.time(),
                        "image_id": payload.get("image_id"),
                        "source_id": payload.get("source_id"),
                        "keypoints": payload.get("keypoints"),
+                       "result_png": None,
                        "decision": None}
         return {"ok": True}
 
@@ -500,7 +506,10 @@ def register_routes(add_route):
         s = _GATES.get(key)
         if s is None:
             raise HTTPException(status_code=404, detail="gate not found")
-        return s
+        # 不返回 result_png（bytes 无法 JSON 序列化，会 500）
+        return {"created": s["created"], "image_id": s["image_id"],
+                "source_id": s["source_id"], "keypoints": s["keypoints"],
+                "decision": s["decision"]}
 
     def decide(key: str, payload: dict = Body(...)):
         _purge()
@@ -521,21 +530,35 @@ def register_routes(add_route):
             img = pose_render(
                 kp,
                 include_hand=bool(payload.get("include_hand", True)),
-                include_face=bool(payload.get("include_face", False)))
-            from app.main import store  # 请求时 import（装配期防循环导入）
-            oid = store.put("IMAGE", img, meta={"source": "pose-gate"})
-            s["decision"] = {"action": "render", "image_id": oid}
+                include_face=bool(payload.get("include_face", False)))["image"]
+            # 结果图字节留在会话里（GET .../image 拉取），由节点侧经 POST /images
+            # 入对象库——路由上下文 import 的 store 与核心端点可能不是同一实例
+            # （插件命名空间隔离），直接 put 会导致 /images/{id} 取不到。
+            import io
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            s["result_png"] = buf.getvalue()
+            s["decision"] = {"action": "render", "image_id": None}
         else:
             s["decision"] = {"action": "confirm", "image_id": s["image_id"]}
         print(f"[pose-gate] {key} decision={s['decision']['action']}",
               flush=True)
         return {"ok": True, "decision": s["decision"]}
 
+    def result_image(key: str):
+        from fastapi.responses import Response
+        s = _GATES.get(key)
+        if s is None or not s.get("result_png"):
+            raise HTTPException(status_code=404, detail="no result image")
+        return Response(content=s["result_png"], media_type="image/png")
+
     def delete(key: str):
         _GATES.pop(key, None)
         return {"ok": True}
 
+    add_route("/ext/gates", list_gates)
     add_route("/ext/gate/{key}", create, methods=("POST",))
     add_route("/ext/gate/{key}", query)
     add_route("/ext/gate/{key}/decision", decide, methods=("POST",))
+    add_route("/ext/gate/{key}/image", result_image)
     add_route("/ext/gate/{key}", delete, methods=("DELETE",))

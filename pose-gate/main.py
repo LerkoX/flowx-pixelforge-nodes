@@ -12,8 +12,8 @@ import os
 import time
 
 from flowx_client import (call_op, delete_json, emit, emit_result_preview,
-                          ensure_plugin, flush_print, get_json, param,
-                          post_json, ref, token)
+                          ensure_plugin, flush_print, get_bytes, get_json,
+                          param, post_bytes, post_json, ref, token)
 
 POLL_INTERVAL = 3.0
 
@@ -84,6 +84,12 @@ def main():
                 f"on_timeout=fail，节点中止")
         flush_print(f"[pose-gate] 超时未确认，按 on_timeout=pass 用原骨架继续")
         action = "timeout_pass"
+    elif action == "render":
+        # 修正骨架在会话里是 PNG 字节：拉回来经 POST /images 入对象库
+        png = get_bytes(base, f"/ext/gate/{key}/image", tok, timeout=60)
+        final_id = post_bytes(base, "/images", png, tok, timeout=120,
+                              content_type="image/png")["id"]
+        flush_print(f"[pose-gate] 修正骨架已入库：{final_id}")
     else:
         flush_print(f"[pose-gate] 收到人工决策：{action} -> {final_id}")
 

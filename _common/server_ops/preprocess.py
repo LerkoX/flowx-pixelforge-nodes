@@ -23,7 +23,7 @@ numpy/cv2/controlnet_aux 一律函数内懒加载（本地无 GPU 契约测试�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "11836f1c603a"
+OP_VERSION = "11db1c7a57a0"
 OP_FAMILY = "preprocess"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -516,16 +516,33 @@ def _get_midas():
     return _midas_detector
 
 
-def preprocess_depth(image, detect_resolution=512):
+def _release_midas():
+    """释放 MiDaS 单例（~470MB RAM）。16GB 内存盒上 Flux 链路 RAM 峰值贴近
+    上限，深度图产出后检测器即完成使命，常驻只会顶 OOM（exec 1049/1052/1054
+    连环 exit 137 教训）；重载仅需从本地 .pt 读几秒。"""
+    global _midas_detector
+    if _midas_detector is not None:
+        _midas_detector = None
+        import gc
+        gc.collect()
+        print("[preprocess.depth] 检测器已释放（~470MB）", flush=True)
+
+
+def preprocess_depth(image, detect_resolution=512, keep_loaded=False):
     """MiDaS 深度估计：IMAGE → 灰度深度图 IMAGE（近亮远暗，ControlNet depth
     提示图惯例），输出尺寸恒等于输入尺寸。detect_resolution 为检测内部短边
     分辨率（默认 512，细节不足可调高）——MiDaS 模型自身输入固定 384，
-    该参数只影响前端预缩放。"""
+    该参数只影响前端预缩放。keep_loaded=True 时检测器保留常驻（批量连续
+    调用省时），默认 False 用完即释放以省内存。"""
     img = _as_image(image, "preprocess.depth")
     det = _get_midas()
     det_res = max(64, int(detect_resolution))
-    out = det(img.convert("RGB"), detect_resolution=det_res,
-              image_resolution=det_res)
+    try:
+        out = det(img.convert("RGB"), detect_resolution=det_res,
+                  image_resolution=det_res)
+    finally:
+        if not keep_loaded:
+            _release_midas()
     if not isinstance(out, Image.Image):
         import numpy as np
         out = Image.fromarray(np.asarray(out))
@@ -558,9 +575,11 @@ def register(registry):
                     "/models/preprocessors/dwpose）")(preprocess_openpose)
     registry.register(
         "preprocess.depth",
-        inputs={"image": "IMAGE", "detect_resolution": "INT"},
+        inputs={"image": "IMAGE", "detect_resolution": "INT",
+                "keep_loaded": "BOOL"},
         outputs={"image": "IMAGE"},
         description="MiDaS dpt_hybrid 深度估计：IMAGE → 灰度深度图（近亮远暗，"
                     "ControlNet depth 提示图），输出尺寸=输入尺寸；"
+                    "keep_loaded=True 保留检测器常驻（默认 False 用完即放）；"
                     "detect_resolution 默认 512，权重从 "
                     "/models/preprocessors/midas 本地加载")(preprocess_depth)

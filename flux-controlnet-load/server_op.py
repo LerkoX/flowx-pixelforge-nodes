@@ -5,7 +5,10 @@ FluxControlNetModel 原生 safetensors），注册进 model_manager LRU
 （键 flux-cn:<目录名>），与 flux.unet_load 的常驻/淘汰语义一致。
 
 权重布局：/models/flux/<path>/ 下需有 config.json + diffusion_pytorch_model.safetensors
-（如 cn-union-pro/）。fp32 原盘 6.6GB，装载即转 fp16（~3.3GB 常驻）。
+（如 cn-union-pro/）。Union-Pro-2.0 原盘为 BF16 6.6GB（~3.3B 参数），
+装载即转 fp16（逐张量，无全量双缓冲），int8 量化后 ~3.6GB 常驻。
+教训：不要按文件原生 bf16 装载再 int8 量化（exec 1061 蒙版区全黑）。
+装载峰值靠流水线排布解决：CNLoad 须排在 UnetLoad 之前。
 
 用途：配合 flux-mask-refine 的 controlnet 输入，在 Fill 局部重绘时注入
 深度/线稿结构约束（锁定体型轮廓，防止 denoise=1.0 自由重绘走形）。
@@ -21,6 +24,28 @@ import torch
 FLUX_DIR = os.environ.get("FLUX_DIR", "/models/flux")
 
 _DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+
+
+def _header_dtypes(st_path):
+    """读 safetensors header，返回 (dtype 集合, 参数量)；失败返回 (set(), 0)。"""
+    import json
+    import struct
+    dtypes, params = set(), 0
+    try:
+        with open(st_path, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            hdr = json.loads(f.read(min(n, 64 << 20)))
+        for k, v in hdr.items():
+            if k == "__metadata__":
+                continue
+            dtypes.add(v.get("dtype", ""))
+            p = 1
+            for dim in v.get("shape", []):
+                p *= int(dim)
+            params += p
+    except Exception:
+        pass
+    return dtypes, params
 
 
 def _models():
@@ -66,20 +91,25 @@ def register(registry):
                 f"flux.controlnet_load: {d}/ 下需有 config.json + "
                 f"diffusion_pytorch_model.safetensors（当前缺失）")
         t0 = time.time()
-        cn = FluxControlNetModel.from_pretrained(d, torch_dtype=_DTYPES[dt])
-        # int8 量化（默认开）：16GB 内存机的活命槽，fp16 3.3GB → int8
-        # ~1.7GB 常驻。采样期 RAM = Fill 6.8 + CN + 服务 1.5，fp16 时
-        # 11.6GB 顶格+页缓存即 OOM Kill 容器（exec 1036 实死）；
-        # int8 后 ~10GB 有喘息。quanto 不支持的层自动退回 fp16；
-        # Pascal 上走 dequant+fp16 mm 路径。
-        est = os.path.getsize(st) // 2  # fp32 原盘 → fp16 常驻估算
+        file_dts, params = _header_dtypes(st)
+        # 始终按请求 dtype（默认 fp16）装载：bf16 原盘会在装载时逐张量转
+        # fp16（无全量双缓冲）。不要为省峰值改走 bf16 原生装载再量化——
+        # exec 1061 实证该路径产出的 int8 CN 参与采样后蒙版区全黑（玩具
+        # Linear 实验测不出，真实 FluxControlNetModel 上炸）；装载峰值应由
+        # 流水线排布解决（CNLoad 排在 UnetLoad 前，6.6+1.5GB 足够安全）。
+        load_dt = _DTYPES[dt]
+        cn = FluxControlNetModel.from_pretrained(d, torch_dtype=load_dt)
+        # 常驻估算按参数量推导（原公式 est=size*0.27 误把 bf16 原盘当 fp32，
+        # 实估 1.7GB 而真实 int8 常驻 ~3.6GB——低估 2x 会让 LRU 超收，
+        # 16GB 盒上直接 OOM）。int8≈1B/参+scale 元数据，fp16=2B/参。
+        est = int(params * 2) if params else os.path.getsize(st)
         if qmode == "int8":
             try:
                 from optimum.quanto import freeze, qint8, quantize as _q
                 _q(cn, weights=qint8)
                 freeze(cn)
                 print("[flux.controlnet_load] int8 量化完成", flush=True)
-                est = int(os.path.getsize(st) * 0.27)  # int8≈fp16 的 52%+scale
+                est = int(params * 1.1) if params else int(est * 0.55)
             except Exception as e:
                 print(f"[flux.controlnet_load] int8 量化失败，退回 fp16: {e}",
                       flush=True)

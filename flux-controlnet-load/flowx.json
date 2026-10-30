@@ -2,7 +2,7 @@
   "name": "flux-controlnet-load",
   "displayName": "FLUX ControlNet 加载",
   "description": "装载 FLUX ControlNet（Shakker-Labs Union-Pro 多模态合一：depth=2/canny=0/tile=1/pose=4 等，FluxControlNetModel 原生 safetensors），注册进 model_manager LRU（键 flux-cn:<path>），输出 CONTROLNET 引用。接 flux-mask-refine 的 controlnet 输入，在 Fill 局部重绘时注入深度/线稿结构约束（denoise=1.0 自由重绘时锁定体型轮廓，防止走形）。权重布局：/models/flux/<cn_path>/ 下放 config.json + diffusion_pytorch_model.safetensors（如 cn-union-pro/，6.6GB fp32 原盘，装载即转 fp16 ~3.3GB 常驻）。服务端算子 flux.controlnet_load 由 server_op.py 自注册。",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "author": "flowx-team",
   "tags": [
     "flux",

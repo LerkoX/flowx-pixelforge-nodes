@@ -1,7 +1,7 @@
 {
   "name": "ksampler-inpaint",
   "displayName": "KSampler Inpaint",
-  "description": "SD1.x Inpainting KSampler：在 latent.set_noise_mask 的 mask 基础上，为 9 通道 inpaint UNet 逐步拼接 mask + vae-encode-inpaint-masked 预计算的 masked_image_latents，同时保留现有分段采样/ControlNet/LoRA/预览能力。",
+  "description": "⚠️ 本链路需要 inpaint 专用 checkpoint（9ch UNet + mask_processor），普通 checkpoint 会在服务端失败。SD1.x Inpainting KSampler：在 latent.set_noise_mask 的 mask 基础上，为 9 通道 inpaint UNet 逐步拼接 mask + vae-encode-inpaint-masked 预计算的 masked_image_latents，同时保留现有分段采样/ControlNet/LoRA/预览能力。",
   "version": "1.0.0",
   "author": "flowx-team",
   "tags": [
@@ -39,7 +39,7 @@
     {
       "name": "model_ref",
       "type": "string",
-      "description": "UNet 模型引用 ID",
+      "description": "UNet 模型引用 ID⚠️ 必须是 inpaint 专用 checkpoint（9 通道，带 mask_processor，如 *-inpaint 权重）；普通 checkpoint 会在服务端报「需要 inpaint 管道」",
       "required": true,
       "source": {
         "nodeRef": "checkpoint-loader-inpaint",

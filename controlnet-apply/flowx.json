@@ -1,8 +1,8 @@
 {
   "name": "controlnet-apply",
   "displayName": "ControlNet 应用",
-  "description": "ControlNetModel + hint 图（边缘/姿态等线稿，预处理器产出）捆绑为 CONTROL；strength=残差强度（默认 1.0，0 ≡ 关闭）；start/end_percent 为生效步窗口（默认全程）。暂不与 cond.set_area 组合。v1.2.0：新增可选输入 control——接上一个 controlnet-apply 的 control 输出即串成多 ControlNet 链（采样时每路各自前向、残差×各自 strength 求和注入，对标 ComfyUI 多 CN 串联）。 v1.3.0：新增可选输入 mask（灰度蒙版，白=重绘区）——非空时先把 hint 图蒙版区烧黑再捆绑（control_v11p_sd15_inpaint 的 hint 约定）；改走族版本化算子 sd.controlnet.apply_masked@<hash>，与旧版算子并存。",
-  "version": "1.3.0",
+  "description": "ControlNetModel + hint 图（边缘/姿态等线稿，预处理器产出）捆绑为 CONTROL；strength=残差强度（默认 1.0，0 ≡ 关闭）；start/end_percent 为生效步窗口（默认全程）。暂不与 cond.set_area 组合。v1.2.0：新增可选输入 control——接上一个 controlnet-apply 的 control 输出即串成多 ControlNet 链（采样时每路各自前向、残差×各自 strength 求和注入，对标 ComfyUI 多 CN 串联）。 v1.3.x：新增可选输入 mask（灰度蒙版，白=重绘区）——非空时 hint 蒙版区填 -1.0（官方 make_inpaint_condition 约定，inpaint CN 必需；v1.3.0 填 0 会被当成黑色内容，已修正）；族版本化算子 sd.controlnet.apply_masked@<hash>，与旧版算子并存。",
+  "version": "1.3.1",
   "author": "flowx-team",
   "tags": [
     "sd",

@@ -2,7 +2,7 @@
   "name": "detail-refine",
   "displayName": "局部重绘",
   "description": "ADetailer 式局部重绘（对应 ComfyUI 的 ADetailer 链路）：YOLO 检测脸部/手部 → 裁剪放大 → img2img 重绘 → 羽化贴回原图。修复五官扭曲/手指畸形。conditioning 复用主管线，负面 embedding 在重绘中同样生效。自包含节点：server_op.py 运行时自注册到推理服务（需服务端配置 INFERENCE_TOKEN）。v1.3.0：同步 /op 改任务式（submit_job+轮询+job 标记）；job_timeout=3600s 覆盖队列等待（exec 743 事故根治）。",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -183,6 +183,13 @@
       "required": false,
       "default": 5,
       "description": "任务轮询间隔（秒）"
+    },
+    {
+      "name": "bbox",
+      "type": "string",
+      "default": "",
+      "description": "手动指定精修区域（'x1,y1,x2,y2'，多个用 ';' 分隔，原图像素坐标）：非空时跳过检测器直接精修该框——检测器认不出已变形目标（修手场景的死穴：越坏的手越检不到）时的兜底手段",
+      "required": false
     }
   ],
   "env": {
@@ -204,7 +211,8 @@
     "MAX_TARGETS": "{{ Param.max_targets }}",
     "FEATHER": "{{ Param.feather }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}",
-    "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "BBOX": "{{ Param.bbox }}"
   },
   "outputs": [
     {

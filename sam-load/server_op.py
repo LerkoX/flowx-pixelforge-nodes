@@ -28,7 +28,7 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "f18314e7cf62"
+OP_VERSION = "a9dc504c2501"
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -638,12 +638,19 @@ def _norm_prompt(text):
 
 
 def grounding_detect(image, model="gd:tiny", prompt="person", box_threshold=0.35,
-                     text_threshold=0.25, max_boxes=10, sam_model="", overlay=0.5):
+                     text_threshold=0.25, max_boxes=10, sam_model="", overlay=0.5,
+                     negative_prompt="", negative_box_only=0):
     """GroundingDINO 文本提示检测 → 框/标签/分数；`sam_model` 非空则框再喂 SAM 出像素级蒙版。
 
     - prompt：多类用 ' . ' 分隔（如 'person . red dress'），内部统一小写
     - box_threshold/text_threshold：检测置信度门限
     - sam_model：如 'sam:vit_l'（先跑 sam_load）；给出后 mask = 各框的 SAM 蒙版并集
+    - negative_prompt（可选）：排除类提示（如 'head . face . hair'）——同样走
+      GD（+SAM）出蒙版，其并集从正向 mask 中**扣除**（防 SAM 框内溢出把
+      头/脸罩进重绘区）；负向框在叠加图上以青色绘制
+    - negative_box_only（可选，默认 0）：置 1 后负类**只用检测矩形框**扣除、
+      不喂 SAM——负类是大目标/易误检词（如肢体部位名）时，SAM 会把整片
+      相连区域圈走导致正向 mask 被过度侵蚀，矩形扣除范围可控得多
     """
     op_name = f"seg.grounding_detect@{OP_VERSION}"
     if not isinstance(image, Image.Image):
@@ -658,42 +665,74 @@ def grounding_detect(image, model="gd:tiny", prompt="person", box_threshold=0.35
     import torch
 
     src = image.convert("RGB")
-    inputs = proc(images=src, text=text, return_tensors="pt").to("cuda")
-    with torch.no_grad():
-        out = mdl(**inputs)
-    res = proc.post_process_grounded_object_detection(
-        out, inputs["input_ids"], box_threshold=float(box_threshold),
-        text_threshold=float(text_threshold),
-        target_sizes=[src.size[::-1]])[0]
-    scores = res["scores"].detach().cpu().tolist()
-    boxes = [[float(v) for v in b] for b in res["boxes"].detach().cpu().tolist()]
-    labels = res.get("labels")
-    if labels is None:
-        labels = res.get("text_labels")
-    labels = list(labels) if labels is not None else [""] * len(boxes)
-    order = sorted(range(len(scores)), key=lambda i: -scores[i])[:max(1, int(max_boxes))]
-    boxes = [boxes[i] for i in order]
-    labels = [labels[i] for i in order]
-    scores = [scores[i] for i in order]
+
+    def _detect(prompt_text, cap):
+        """一趟 GD 前向 → (boxes, labels, scores)，按分数降序截前 cap 个。"""
+        inputs = proc(images=src, text=prompt_text, return_tensors="pt").to("cuda")
+        with torch.no_grad():
+            out = mdl(**inputs)
+        res = proc.post_process_grounded_object_detection(
+            out, inputs["input_ids"], box_threshold=float(box_threshold),
+            text_threshold=float(text_threshold),
+            target_sizes=[src.size[::-1]])[0]
+        sc = res["scores"].detach().cpu().tolist()
+        bx = [[float(v) for v in b] for b in res["boxes"].detach().cpu().tolist()]
+        lab = res.get("labels")
+        if lab is None:
+            lab = res.get("text_labels")
+        lab = list(lab) if lab is not None else [""] * len(bx)
+        order = sorted(range(len(sc)), key=lambda i: -sc[i])[:max(1, int(cap))]
+        return ([bx[i] for i in order], [lab[i] for i in order],
+                [sc[i] for i in order])
+
+    boxes, labels, scores = _detect(text, max_boxes)
+
+    # 负向提示（可选）：排除类同样 GD 一趟，框留给蒙版扣除与叠加图绘制
+    neg_text = _norm_prompt(negative_prompt)
+    neg_boxes, neg_labels, neg_scores = [], [], []
+    if neg_text:
+        neg_boxes, neg_labels, neg_scores = _detect(neg_text, max_boxes)
 
     # mask：sam_model 非空 → 像素级；否则框矩形并集
     import numpy as np
     from PIL import ImageDraw as _ID
-    union = np.zeros((src.size[1], src.size[0]), dtype=bool)
-    used_sam = False
-    if str(sam_model or "").strip() and boxes:
-        for b in boxes:
-            m = sam(src, model=str(sam_model).strip(),
-                    box=",".join(str(round(v, 2)) for v in b), multimask=False,
-                    overlay=0.0)["mask"]
-            union = np.logical_or(union, np.asarray(m) > 0)
-        used_sam = True
-    else:
+
+    used_sam = bool(str(sam_model or "").strip())
+
+    def _mask_of(bx_list):
+        """框列表 → 蒙版 bool 数组（SAM 像素级并集 / 矩形并集）。"""
+        u = np.zeros((src.size[1], src.size[0]), dtype=bool)
+        if not bx_list:
+            return u
+        if used_sam:
+            for b in bx_list:
+                m = sam(src, model=str(sam_model).strip(),
+                        box=",".join(str(round(v, 2)) for v in b),
+                        multimask=False, overlay=0.0)["mask"]
+                u |= np.asarray(m) > 0
+        else:
+            tmp = Image.new("L", src.size, 0)
+            d = _ID.Draw(tmp)
+            for b in bx_list:
+                d.rectangle(b, fill=255)
+            u = np.asarray(tmp) > 0
+        return u
+
+    union = _mask_of(boxes)
+    if neg_boxes and int(negative_box_only or 0):
+        # 负类矩形扣除（不喂 SAM）：防大目标负类的 SAM 蒙版把整片相连区域圈走
         tmp = Image.new("L", src.size, 0)
-        d = _ID.Draw(tmp)
-        for b in boxes:
-            d.rectangle(b, fill=255)
-        union = np.asarray(tmp) > 0
+        d0 = _ID.Draw(tmp)
+        for b in neg_boxes:
+            d0.rectangle(b, fill=255)
+        neg = np.asarray(tmp) > 0
+    else:
+        neg = _mask_of(neg_boxes)
+    if neg.any():
+        before = int(union.sum())
+        union &= ~neg
+        print(f"[{op_name}] 负向扣除 {neg_labels}（box_only={int(negative_box_only or 0)}）："
+              f"mask {before} → {int(union.sum())} px", flush=True)
     mask_pil = Image.fromarray(union.astype("uint8") * 255, "L")
 
     ann = _annotated(src, None, None, None, mask_pil if used_sam else None, overlay)
@@ -701,14 +740,53 @@ def grounding_detect(image, model="gd:tiny", prompt="person", box_threshold=0.35
     for b, lab, sc in zip(boxes, labels, scores):
         d.rectangle(b, outline=(255, 160, 0), width=3)
         d.text((b[0] + 4, max(0, b[1] - 14)), f"{lab} {sc:.2f}", fill=(255, 230, 0))
+    for b, lab, sc in zip(neg_boxes, neg_labels, neg_scores):
+        d.rectangle(b, outline=(0, 200, 255), width=3)
+        d.text((b[0] + 4, max(0, b[1] - 14)), f"✕{lab} {sc:.2f}",
+               fill=(0, 220, 255))
     print(f"[{op_name}] {variant} {src.size} prompt={text!r} 命中={len(boxes)} "
           f"sam_refine={used_sam} labels={labels} "
-          f"scores={[round(s, 3) for s in scores]}", flush=True)
+          f"scores={[round(s, 3) for s in scores]} neg={neg_labels}", flush=True)
     return {"annotated": ann, "boxes": _dumps(boxes),
             "labels": _dumps(labels),
             "scores": _dumps([round(s, 4) for s in scores]),
             "count": len(boxes), "mask": mask_pil,
             "width": src.size[0], "height": src.size[1]}
+
+
+def mask_ops(mask_a, mask_b, op="subtract"):
+    """蒙版布尔运算：union / subtract(A-B) / intersect / xor → 灰度蒙版。
+
+    - mask_a/mask_b：灰度蒙版 IMAGE（非零=选中）；B 尺寸不同时先缩放到 A
+    - op：默认 subtract
+    """
+    op_name = f"seg.mask_ops@{OP_VERSION}"
+    import numpy as np
+    if not isinstance(mask_a, Image.Image) or not isinstance(mask_b, Image.Image):
+        raise ValueError(f"{op_name}: mask_a/mask_b 需为 IMAGE 对象")
+    a = mask_a.convert("L")
+    b = mask_b.convert("L")
+    if b.size != a.size:
+        b = b.resize(a.size, Image.BILINEAR)
+    ua = np.asarray(a) > 0
+    ub = np.asarray(b) > 0
+    op = str(op or "subtract").strip().lower()
+    if op == "union":
+        u = ua | ub
+    elif op == "subtract":
+        u = ua & ~ub
+    elif op == "intersect":
+        u = ua & ub
+    elif op == "xor":
+        u = ua ^ ub
+    else:
+        raise ValueError(f"{op_name}: 未知 op={op!r}（支持 union/subtract/intersect/xor）")
+    mask_pil = Image.fromarray(u.astype("uint8") * 255, "L")
+    cov = float(u.sum()) / float(u.size) if u.size else 0.0
+    print(f"[{op_name}] {op} a={int(ua.sum())} b={int(ub.sum())} → {int(u.sum())} px "
+          f"(coverage={cov:.4f})", flush=True)
+    return {"mask": mask_pil, "width": a.size[0], "height": a.size[1],
+            "coverage": round(cov, 6)}
 
 
 def register(registry):
@@ -760,11 +838,25 @@ def register(registry):
         "seg.grounding_detect",
         inputs={"image": "IMAGE", "model": "STRING", "prompt": "STRING",
                 "box_threshold": "FLOAT", "text_threshold": "FLOAT",
-                "max_boxes": "INT", "sam_model": "STRING", "overlay": "FLOAT"},
+                "max_boxes": "INT", "sam_model": "STRING", "overlay": "FLOAT",
+                "negative_prompt": "STRING", "negative_box_only": "INT"},
         outputs={"annotated": "IMAGE", "boxes": "STRING", "labels": "STRING",
                  "scores": "STRING", "count": "INT", "mask": "IMAGE",
                  "width": "INT", "height": "INT"},
         description="文本提示检测（GroundingDINO）：prompt='person . red dress' → "
                     "框/标签/分数 + 叠加图；sam_model 非空则把框再喂 SAM 得"
-                    "像素级蒙版（文本→精确蒙版一条链）"
+                    "像素级蒙版（文本→精确蒙版一条链）；negative_prompt 可选——"
+                    "排除类（如 'head . face . hair'）的 SAM 蒙版从正向 mask 扣除；"
+                    "negative_box_only=1 时负类只按矩形框扣除（不喂 SAM，防大目标"
+                    "负类的 SAM 蒙版过度侵蚀正向区域）"
     )(grounding_detect)
+    registry.register(
+        "seg.mask_ops",
+        inputs={"mask_a": "IMAGE", "mask_b": "IMAGE", "op": "STRING"},
+        outputs={"mask": "IMAGE", "width": "INT", "height": "INT",
+                 "coverage": "FLOAT"},
+        description="蒙版布尔运算：op=union（并集）/ subtract（A 减 B）/ "
+                    "intersect（交集）/ xor（对称差）。输入为灰度蒙版 IMAGE "
+                    "（非零=选中），尺寸不一致时 B 缩放到 A；输出灰度蒙版 + "
+                    "覆盖率。典型用法：从正向区域蒙版中扣除无需处理的部位"
+    )(mask_ops)

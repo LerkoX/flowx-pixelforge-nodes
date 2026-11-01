@@ -47,25 +47,42 @@ def register(registry):
                 "detector": "STRING", "conf": "FLOAT", "padding": "FLOAT",
                 "denoise": "FLOAT", "steps": "INT", "cfg": "FLOAT",
                 "sampler_name": "STRING", "scheduler": "STRING", "seed": "INT",
-                "guide_size": "INT", "max_targets": "INT", "feather": "INT"},
+                "guide_size": "INT", "max_targets": "INT", "feather": "INT",
+                "bbox": "STRING"},
         outputs={"image": "IMAGE", "count": "INT"},
         description="ADetailer 式局部重绘：YOLO 检测（detector=face/hand，模型在 "
                     "DETECTOR_DIR）→ 裁剪外扩 padding → 放大到 guide_size → "
                     "img2img 重绘(denoise) → 羽化贴回原图。修脸/修手专用；"
-                    "conditioning 复用主管线，负面 embedding 同样生效")
+                    "conditioning 复用主管线，负面 embedding 同样生效。"
+                    "bbox 可选（'x1,y1,x2,y2'，多个用 ';' 分隔）：非空时跳过检测、"
+                    "直接精修指定区域——检测器认不出已变形目标的兜底手段")
     def _op_detail_refine(model, pos, neg, image, detector="face", conf=0.3,
                           padding=0.4, denoise=0.4, steps=20, cfg=7.0,
                           sampler_name=ops.DEFAULT_SAMPLER, scheduler="normal",
-                          seed=-1, guide_size=512, max_targets=4, feather=16):
-        yolo = _detector(detector)
-        results = yolo.predict(image, conf=conf, verbose=False)
-        boxes = results[0].boxes
-        if boxes is None or len(boxes) == 0:
-            print(f"[detail.refine] {detector}: no target detected", flush=True)
-            return {"image": image, "count": 0}
-
-        xyxy = boxes.xyxy.tolist()
-        confs = boxes.conf.tolist()
+                          seed=-1, guide_size=512, max_targets=4, feather=16,
+                          bbox=""):
+        bbox = str(bbox or "").strip()
+        if bbox:
+            # 手动框：跳过检测（检测器认不出已变形目标时的兜底路径）
+            xyxy, confs = [], []
+            for seg in bbox.split(";"):
+                vals = [float(v) for v in seg.split(",") if v.strip()]
+                if len(vals) == 4:
+                    xyxy.append(vals)
+                    confs.append(1.0)
+            if not xyxy:
+                print(f"[detail.refine] bbox 解析失败: {bbox!r}", flush=True)
+                return {"image": image, "count": 0}
+            print(f"[detail.refine] 手动 bbox ×{len(xyxy)}（跳过检测）", flush=True)
+        else:
+            yolo = _detector(detector)
+            results = yolo.predict(image, conf=conf, verbose=False)
+            boxes = results[0].boxes
+            if boxes is None or len(boxes) == 0:
+                print(f"[detail.refine] {detector}: no target detected", flush=True)
+                return {"image": image, "count": 0}
+            xyxy = boxes.xyxy.tolist()
+            confs = boxes.conf.tolist()
         order = sorted(range(len(xyxy)), key=lambda i: -confs[i])[:max_targets]
 
         pipe, _ = ops.resolve_pipe(model)

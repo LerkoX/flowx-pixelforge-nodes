@@ -1,14 +1,21 @@
 {
   "name": "vae-encode-inpaint-masked",
   "displayName": "VAE 编码（Inpaint Masked）",
-  "description": "9 通道 SD1.x Inpaint 专用 masked_image_latents 编码：先在线图像素空间把白色 mask 区域置黑，再经 VAE 编码。必须与 vae-encode 的原图 latent 分开计算；禁止用完整图像 latent 直接乘 mask（二者不可交换，大面积 inpaint 会退化成平均色块）。",
+  "description": "⚠️ 本链路需要 inpaint 专用 checkpoint（9ch UNet + mask_processor），普通 checkpoint 会在服务端失败。9 通道 SD1.x Inpaint 专用 masked_image_latents 编码：先在线图像素空间把白色 mask 区域置黑，再经 VAE 编码。必须与 vae-encode 的原图 latent 分开计算；禁止用完整图像 latent 直接乘 mask（二者不可交换，大面积 inpaint 会退化成平均色块）。",
   "version": "1.0.0",
   "author": "flowx-team",
-  "tags": ["sd", "inference", "inpaint"],
+  "tags": [
+    "sd",
+    "inference",
+    "inpaint"
+  ],
   "icon": "🧊",
   "language": "python",
   "entry": "main.py",
-  "files": ["flowx_client.py", "server_op.py"],
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
   "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
   "parameters": [
     {
@@ -16,7 +23,11 @@
       "type": "string",
       "description": "推理服务地址，如 http://192.168.1.100:8100",
       "required": true,
-      "source": {"nodeRef": "inference-ensure", "output": "service_url", "description": "推荐由健康检查节点输出提供"}
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
     },
     {
       "name": "service_url_host",
@@ -30,21 +41,33 @@
       "type": "string",
       "description": "VAE 引用 ID",
       "required": true,
-      "source": {"nodeRef": "checkpoint-loader-inpaint", "output": "vae_ref", "description": "由 Checkpoint 加载 Inpaint 节点的 vae_ref 输出提供"}
+      "source": {
+        "nodeRef": "checkpoint-loader-inpaint",
+        "output": "vae_ref",
+        "description": "由 Checkpoint 加载 Inpaint 节点的 vae_ref 输出提供"
+      }
     },
     {
       "name": "image",
       "type": "string",
       "description": "与采样 latent 同分辨率的原始图像对象 ID",
       "required": true,
-      "source": {"nodeRef": "image-upscale", "output": "image", "description": "由 VAEEncode 输入相同的原图节点输出提供"}
+      "source": {
+        "nodeRef": "image-upscale",
+        "output": "image",
+        "description": "由 VAEEncode 输入相同的原图节点输出提供"
+      }
     },
     {
       "name": "mask",
       "type": "string",
       "description": "与 image 同分辨率的 inpaint 蒙版图像对象 ID，白色=重绘",
       "required": true,
-      "source": {"nodeRef": "image-upscale", "output": "image", "description": "由与 latent noise mask 对应的硬蒙版节点输出提供"}
+      "source": {
+        "nodeRef": "image-upscale",
+        "output": "image",
+        "description": "由与 latent noise mask 对应的硬蒙版节点输出提供"
+      }
     },
     {
       "name": "job_timeout",
@@ -77,11 +100,33 @@
     "SERVICE_URL_HOST": "{{ Param.service_url_host }}"
   },
   "outputs": [
-    {"name": "latent", "type": "string", "description": "masked_image_latents 在推理服务的对象 ID（接 ksampler-inpaint 的 masked_latent）"}
+    {
+      "name": "latent",
+      "type": "string",
+      "description": "masked_image_latents 在推理服务的对象 ID（接 ksampler-inpaint 的 masked_latent）"
+    }
   ],
-  "extract": {"type": "codec-block"},
-  "mock": {"enabled": true, "entry": "mock.py"},
-  "ui": {"entry": "ui/node-widget.js", "width": 260, "height": 140, "collapsed": false, "apiVersion": 1},
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 140,
+    "collapsed": false,
+    "apiVersion": 1
+  },
   "timeout": 2100,
-  "executor": {"supportedTypes": ["local", "docker"], "preferredType": "docker", "bundled": true}
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
 }

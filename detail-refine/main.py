@@ -37,7 +37,8 @@ def main():
                    "seed": param("seed", -1, cast=int),
                    "guide_size": param("guide_size", 512, cast=int),
                    "max_targets": param("max_targets", 4, cast=int),
-                   "feather": param("feather", 16, cast=int)},
+                   "feather": param("feather", 16, cast=int),
+                   "bbox": param("bbox", "")},
     }, tok)
     # job 标记：Studio 取消/超时据此**定向转发** /interrupt（信号一旦输给
     # 执行器杀进程，远程任务就变孤儿；实测概率约 1/3）

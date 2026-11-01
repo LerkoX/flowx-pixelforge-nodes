@@ -12,6 +12,8 @@ def main():
         "max_boxes": int(param("max_boxes", "10")),
         "sam_model": param("sam_model", ""),
         "overlay": float(param("overlay", "0.5")),
+        "negative_prompt": param("negative_prompt", ""),
+        "negative_box_only": int(param("negative_box_only", "0")),
     }, emit_keys=["annotated", "boxes", "labels", "scores", "count", "mask",
                   "width", "height"], input_media=("image",))
 

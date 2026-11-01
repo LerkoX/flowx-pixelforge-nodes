@@ -69,11 +69,13 @@ def resolve_strokes(ref, inline):
     return parse_strokes(inline)
 
 
-def rasterize(strokes, width, height, ref_w=None, ref_h=None):
+def rasterize(strokes, width, height, ref_w=None, ref_h=None, base=None):
     """矢量笔画 → 灰度蒙版（PIL L 模式，255=重绘/0=保留）。
 
     笔画坐标系 = (ref_w, ref_h) 参照分辨率，自动缩放到 (width, height)。
     brush/erase 为折线圆头笔刷（size=直径），rect 为实心矩形；erase 后画压先画。
+    base（可选）：既有蒙版（PIL L）——在其上作画（brush/rect 增、erase 减），
+    实现「编辑上游蒙版」；为空时从全黑新建（旧行为）。
     """
     from PIL import Image, ImageDraw
 
@@ -82,7 +84,12 @@ def rasterize(strokes, width, height, ref_w=None, ref_h=None):
     sx = width / ref_w
     sy = height / ref_h
     sm = (sx + sy) / 2  # 笔刷直径按两轴均值缩放
-    img = Image.new("L", (width, height), 0)
+    if base is not None:
+        img = base.copy()
+        if img.size != (width, height):
+            img = img.resize((width, height), Image.BILINEAR)
+    else:
+        img = Image.new("L", (width, height), 0)
     dr = ImageDraw.Draw(img)
     for st in strokes:
         kind = st.get("type")
@@ -155,7 +162,14 @@ def main():
         print(f"[mask-paint] uploaded {path} -> image={image_id} {width}x{height}",
               flush=True)
 
-    mask = rasterize(strokes, width, height, rw, rh)
+    # 可选：在既有蒙版上编辑（brush/rect 增、erase 减），如从上游蒙版中擦除指定区域
+    base_mask = None
+    base_id = param("mask", "").strip()
+    if base_id:
+        base_mask = get_pimg(url, base_id, tok).convert("L")
+        print(f"[mask-paint] edit base mask={base_id}", flush=True)
+
+    mask = rasterize(strokes, width, height, rw, rh, base=base_mask)
     cov = coverage(mask)
     oid = post_pimg(url, mask, tok)
     print(f"[mask-paint] image={image_id} strokes={len(strokes)} "

@@ -1,0 +1,110 @@
+{
+  "name": "mask-ops",
+  "displayName": "蒙版布尔运算",
+  "description": "两张灰度蒙版的布尔运算：union（并集）/ subtract（A 减 B）/ intersect（交集）/ xor（对称差）。典型用法：正向区域蒙版 ⊖ 无需处理部位的蒙版（subtract），或多来源蒙版合并（union）。算子由 seg.py 族提供（seg.mask_ops），随包自注册。v1.0.0 首版。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inference",
+    "mask"
+  ],
+  "icon": "🧮",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "MASK_A": "{{ Param.mask_a }}",
+    "MASK_B": "{{ Param.mask_b }}",
+    "OP": "{{ Param.op }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址，留空同 service_url",
+      "required": false
+    },
+    {
+      "name": "mask_a",
+      "type": "string",
+      "description": "蒙版 A 对象 ID（灰度图，非零=选中）；subtract 时作被减数",
+      "required": true,
+      "source": {
+        "nodeRef": "grounding-detect",
+        "output": "mask"
+      }
+    },
+    {
+      "name": "mask_b",
+      "type": "string",
+      "description": "蒙版 B 对象 ID（灰度图）；subtract 时作减数（要从 A 中扣除的区域）。尺寸不同时自动缩放到 A",
+      "required": true,
+      "source": {
+        "nodeRef": "grounding-detect",
+        "output": "mask"
+      }
+    },
+    {
+      "name": "op",
+      "type": "string",
+      "default": "subtract",
+      "description": "运算类型：union（并集）/ subtract（A 减 B，默认）/ intersect（交集）/ xor（对称差）",
+      "required": false
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "运算结果蒙版对象 ID（灰度图）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "宽度（同 A）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "高度（同 A）"
+    },
+    {
+      "name": "coverage",
+      "type": "number",
+      "description": "结果蒙版覆盖率（0~1）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local"
+  }
+}

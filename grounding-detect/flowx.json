@@ -1,8 +1,8 @@
 {
   "name": "grounding-detect",
   "displayName": "文本提示检测",
-  "description": "GroundingDINO 开放词汇检测：文本提示（多类用 ' . ' 分隔）→ 检测框/标签/置信度。可选把检测框再喂 SAM（sam_model 非空）得到**像素级蒙版** ⇒ 一条链完成「文本 → 精确蒙版」。服务端插件 seg.py 为唯一实现来源",
-  "version": "1.0.0",
+  "description": "GroundingDINO 开放词汇检测：文本提示（多类用 ' . ' 分隔）→ 检测框/标签/置信度。可选把检测框再喂 SAM（sam_model 非空）得到**像素级蒙版** ⇒ 一条链完成「文本 → 精确蒙版」。服务端插件 seg.py 为唯一实现来源 v1.1.0：新增可选 negative_prompt（排除类提示，如 'head . face . hair'）——排除类的检测框同样喂 SAM 出蒙版并从正向 mask 中扣除，防 SAM 框内溢出把头/脸罩进重绘区。",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -91,11 +91,25 @@
       "default": 0.5
     },
     {
+      "name": "negative_prompt",
+      "type": "string",
+      "description": "（可选）排除类文本提示（多类用 ' . ' 分隔，如 'head . face . hair'）：这些类的检测框同样喂 SAM 出蒙版，其并集从正向 mask 中扣除。留空=不排除注意：负类若用大目标/易误检词（如肢体部位名），SAM 蒙版可能把整片相连区域扣掉——此时改用 negative_box_only=1 只按矩形框扣除。",
+      "required": false,
+      "default": ""
+    },
+    {
       "name": "service_token",
       "type": "string",
       "required": false,
       "default": "",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    },
+    {
+      "name": "negative_box_only",
+      "type": "integer",
+      "default": 0,
+      "description": "负类扣除方式：0=负类检测框喂 SAM 出蒙版再扣除（默认，贴合轮廓）；1=只按矩形检测框扣除（不喂 SAM）——负类是大目标/易误检词时防 SAM 过度侵蚀正向蒙版",
+      "required": false
     }
   ],
   "env": {
@@ -109,7 +123,9 @@
     "MAX_BOXES": "{{ Param.max_boxes }}",
     "SAM_MODEL": "{{ Param.sam_model }}",
     "OVERLAY": "{{ Param.overlay }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "NEGATIVE_PROMPT": "{{ Param.negative_prompt }}",
+    "NEGATIVE_BOX_ONLY": "{{ Param.negative_box_only }}"
   },
   "outputs": [
     {

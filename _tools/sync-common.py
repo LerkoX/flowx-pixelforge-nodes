@@ -85,7 +85,7 @@ OP_FAMILIES = {
     "face_restore.py": ["face-restore"],
     # G2 分割族（B3，dev-plan §49）：SAM1 点/框/自动分割 + GroundingDINO 文本检测
     "seg.py": ["sam-load", "sam-segment", "sam-auto-segment",
-               "grounding-dino-load", "grounding-detect"],
+               "grounding-dino-load", "grounding-detect", "mask-ops"],
     # G4 分块重绘超分族（B3，dev-plan §49）：切片规划（纯计算）+ 逐块重绘与接缝融合
     "tiled.py": ["tiled-upscale-plan", "tiled-upscale-apply"],
     # G8 上色族（B4，dev-plan §50）：DDColor（装载预热 + 上色推理）

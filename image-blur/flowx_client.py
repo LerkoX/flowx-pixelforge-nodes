@@ -540,10 +540,13 @@ def _ws_connect(base, tok, job_id, timeout=10):
 
 def _wait_job_ws(base, job_id, tok, timeout, on_poll, log):
     """WS 事件驱动等待。done 返回 result dict；任务 failed/cancelled/超时抛
-    RuntimeError（与轮询路径同语义）；通道问题抛 _WsFallback（调用方回退轮询）。"""
+    RuntimeError（与轮询路径同语义）；通道问题抛 _WsFallback（调用方回退轮询）。
+    超时语义：timeout 是**无进展预算**——任何非 ping 事件（progress/stage/状态迁移）
+    都重置计时，避免慢速长任务（隧道抖动致 WS 中断回退、分步推进慢）被总时长误杀。"""
     t0 = time.time()
     last = ""
     last_beat = time.time()
+    stall_t0 = time.time()  # 最近一次"有进展"的时刻
     conn = _ws_connect(base, tok, job_id)
     view = {"status": "pending", "progress": {"current": 0, "total": 0}}
 
@@ -567,6 +570,9 @@ def _wait_job_ws(base, job_id, tok, timeout, on_poll, log):
             except Exception as e:  # socket.timeout / OSError / JSON 错
                 raise _WsFallback(str(e))
             et = ev.get("type")
+            if et != "ping":
+                # progress/stage/状态迁移都算进展，重置无进展计时
+                stall_t0 = time.time()
             if et == "ping":
                 if log and time.time() - last_beat >= HEARTBEAT_SECONDS:
                     # 加载阶段无 progress 事件，靠服务端 30s ping 驱动心跳输出
@@ -611,13 +617,14 @@ def _wait_job_ws(base, job_id, tok, timeout, on_poll, log):
                 log(line)
                 last = line
                 last_beat = time.time()
-            if time.time() - t0 > timeout:
+            if time.time() - stall_t0 > timeout:
                 try:
                     interrupt_job(base, job_id, tok)
                 except RuntimeError:
                     pass
                 raise RuntimeError(
-                    f"job {job_id} timeout after {timeout}s (interrupted)")
+                    f"job {job_id} stalled: no progress for {timeout:.0f}s "
+                    f"(client-side timeout, job interrupted)")
     finally:
         _unregister_inflight(job_id)
         try:
@@ -630,15 +637,17 @@ def wait_job(base, job_id, tok=None, timeout=7200, poll=5.0, log=flush_print,
              on_poll=None, max_poll_errors=12, error_window=300.0):
     """等待任务到终态：WS 事件优先（P1-16），WS 不可用自动回退轮询。
     done 返回 result dict；failed/cancelled/超时抛异常（超时先尽力 interrupt，
-    避免孤儿任务继续占 GPU）。FLOWX_WS=0 强制走轮询。"""
+    避免孤儿任务继续占 GPU）。FLOWX_WS=0 强制走轮询。
+    timeout 是**无进展预算**：status/progress 每推进一步即重置计时，
+    慢速但持续推进的长任务不会被总时长误杀。"""
     if not _WS_DISABLED:
-        t0 = time.time()
         try:
             return _wait_job_ws(base, job_id, tok, timeout, on_poll, log)
         except _WsFallback as e:
             if log:
                 log(f"[job {job_id[:8]}] ws 不可用（{e}），回退轮询")
-            timeout = max(60.0, timeout - (time.time() - t0))
+            # 超时是"无进展预算"而非总时长：回退轮询给足全额，
+            # 不再扣除 WS 阶段已耗时间（隧道抖动回退后误杀健康任务的教训）
     return _wait_job_poll(base, job_id, tok, timeout, poll, log, on_poll,
                           max_poll_errors, error_window)
 
@@ -657,6 +666,7 @@ def _wait_job_poll(base, job_id, tok=None, timeout=7200, poll=5.0, log=flush_pri
     t0 = time.time()
     last = ""
     last_beat = time.time()
+    stall_t0 = time.time()  # 最近一次 status/progress 变化的时刻
     errors = 0
     err_t0 = 0.0
     try:
@@ -691,6 +701,9 @@ def _wait_job_poll(base, job_id, tok=None, timeout=7200, poll=5.0, log=flush_pri
             st = v.get("status")
             p = v.get("progress") or {}
             line = f"[job {job_id[:8]}] {st} {p.get('current', 0)}/{p.get('total', 0)}"
+            if line != last:
+                # status 或 progress 有变化 = 任务在推进，重置无进展计时
+                stall_t0 = time.time()
             if log and line != last:
                 log(line)
                 last = line
@@ -707,12 +720,14 @@ def _wait_job_poll(base, job_id, tok=None, timeout=7200, poll=5.0, log=flush_pri
                 return v.get("result") or {}
             if st in ("failed", "cancelled"):
                 raise RuntimeError(f"job {job_id} {st}: {v.get('error')}")
-            if time.time() - t0 > timeout:
+            if time.time() - stall_t0 > timeout:
                 try:
                     interrupt_job(base, job_id, tok)
                 except RuntimeError:
                     pass
-                raise RuntimeError(f"job {job_id} timeout after {timeout}s (interrupted)")
+                raise RuntimeError(
+                    f"job {job_id} stalled: no progress for {timeout:.0f}s "
+                    f"(client-side timeout, job interrupted)")
             time.sleep(poll)
     finally:
         # 终态（或异常）：从进行中表注销，避免终止信号重复取消已结束的任务

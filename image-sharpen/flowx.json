@@ -1,8 +1,8 @@
 {
   "name": "image-sharpen",
   "displayName": "锐化",
-  "description": "锐化（对标 ComfyUI Image Sharpen / WAS USM）：usm（UnsharpMask，radius/percent/threshold）或 simple（ImageEnhance 强度倍率）。纯节点侧 PIL。",
-  "version": "1.0.0",
+  "description": "锐化（对标 ComfyUI Image Sharpen / WAS USM）：usm（UnsharpMask，radius/percent/threshold）或 simple（ImageEnhance 强度倍率）。v1.1.0 新增可选 mask 输入——只在蒙版白区应用锐化，蒙版外逐像素保留原图（局部重绘流水线里避免把蒙版外的原图细节锐化成扎眼边缘）。纯节点侧 PIL。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -68,6 +68,18 @@
       "description": "USM 阈值 0~255（仅 mode=usm；低于阈值的差异不锐化，防噪点放大）"
     },
     {
+      "name": "mask",
+      "type": "string",
+      "description": "可选：锐化范围蒙版对象 ID（灰度图，白=锐化）。留空=整图锐化。尺寸不符时自动缩放到输入图尺寸",
+      "required": false,
+      "default": "",
+      "source": {
+        "nodeRef": "mask-feather",
+        "output": "mask",
+        "description": "通常绑定采样用的同一个蒙版（如 Sampling Mask）"
+      }
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
@@ -83,7 +95,8 @@
     "SERVICE_TOKEN": "{{ Param.service_token }}",
     "SERVICE_URL": "{{ Param.service_url }}",
     "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
-    "THRESHOLD": "{{ Param.threshold }}"
+    "THRESHOLD": "{{ Param.threshold }}",
+    "MASK": "{{ Param.mask }}"
   },
   "outputs": [
     {

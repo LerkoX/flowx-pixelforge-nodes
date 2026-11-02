@@ -49,6 +49,16 @@ check("尺寸与模式保持", out.size == im.size and out.mode == "RGB")
 eff = m.process(im, mode="usm", radius=3.0, percent=300.0, threshold=0.0)
 check("USM 300% -> 标准差上升", sd(eff) > sd(im))
 
+# ---- v1.1.0: mask 限定 ----
+mask = Image.new("L", im.size, 0)
+mask.paste(255, (0, 0, 24, 32))  # 左半边锐化
+masked = m.process(im, mode="usm", radius=3.0, percent=300.0, threshold=0.0, mask=mask)
+check("mask 限定：蒙版外逐像素不变", px(masked.crop((24, 0, 48, 32))) == px(im.crop((24, 0, 48, 32))))
+check("mask 限定：蒙版内已锐化", px(masked.crop((0, 0, 24, 32))) != px(im.crop((0, 0, 24, 32))))
+check("mask 限定：尺寸不变", masked.size == im.size and masked.mode == "RGB")
+full = m.process(im, mode="usm", radius=3.0, percent=300.0, threshold=0.0, mask=Image.new("L", im.size, 255))
+check("mask 全白 == 无 mask", px(full) == px(eff))
+
 print()
 print("FAILED =", FAILED)
 sys.exit(1 if FAILED else 0)

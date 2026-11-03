@@ -443,7 +443,26 @@ python3 _tools/reimport-nodes.py --check # 5) Studio 快照巡检（版本/镜�
 ```
 
 漏掉最后一步 ⇒ docker 执行器按快照里的旧 tag 拉**旧镜像**（实测 exec 721/728 都栽在这，
-traceback 直接指出来）。另外三条本轮实测的坑：
+traceback 直接指出来）。
+### 构建镜像：两种等价方式
+
+| 方式 | 命令 | 适用 |
+| --- | --- | --- |
+| CLI（原路径） | `./build-image.sh`（`SKIP_PUSH=1` 只构建不推送） | 有 docker CLI 的机器 |
+| **Engine API**（无 CLI 环境） | `python3 _tools/build-remote.py --host tcp://<daemon>:2375` | Termux / 只能连通 daemon 的场合 |
+
+两者镜像内容一致（上下文同按 `.dockerignore` 裁剪）。`build-remote.py` 的要点：
+默认 **gzip 压缩上下文**（24MB → 14MB；cpolar 隧道对大 POST 不稳定，压缩后成功率高得多）
++ 失败重试 + 构建后自动校验 tag 落地。daemon 地址也可用环境变量
+`FLOWX_DOCKER_HOST` / `DOCKER_HOST` 指定；`--dry-run` 只看会传什么。
+
+⚠️ API 构建落在**远端 daemon 本地**，不推 Docker Hub —— 多机器要用时另跑 `docker push`。
+
+⚠️ **层数上限**：Docker 经典 builder 有 127 层硬上限。v1.20.0 之前按节点逐条
+`COPY <name>/*.py`（126 个节点）实测报 `max depth exceeded`，故 Dockerfile 已改为
+`COPY . /opt/flowx-nodes/`（1 层）+ 两条 RUN 清理；**新增节点无需再改 Dockerfile**
+（`check-bundle.py` 的清单门禁按「所有含 flowx.json 的目录」判定）。
+另外三条本轮实测的坑：
 - **对象仓库有 TTL**：临时工作流别硬编码历史对象 id（现取句柄或用 `load-image` 现传）；
 - **Studio 限流 100 req/min**：重导/翻页核对都要节流（`reimport-nodes.py` 已内置 1.25s，核对要退避）；
 - **模型租约**：失败/中断的执会留 30 分钟租约且其常驻条目不被驱逐 ⇒ 后续冷加载等 300s 后失败。
@@ -455,6 +474,7 @@ traceback 直接指出来）。另外三条本轮实测的坑：
 | --- | --- |
 | `_tools/stub-inference.py` | 推理服务**离线桩**（`/ops` 视为内置、`/jobs` 可配 pending、记账同步 `/op` 次数与 `/interrupt`）。"节点改协议"类改动的确定性门禁（先例 §51.3 / §58.3） |
 | `_tools/reimport-nodes.py [--check]` | 节流重导（48/分钟）/ 只巡检快照漂移 |
+| `_tools/build-remote.py [--dry-run]` | 经 Docker Engine API 构建镜像（无 docker CLI 时用；上下文按 .dockerignore 裁剪 + gzip + 重试） |
 | `_tools/gen-instantid-sweep.py` | 生成 InstantID 受控扫参工作流（weight × cn_strength 网格 + 逐点 face-similarity 打分） |
 | `vram-ops/` | 显存/租约/策略运维节点（status/leases/unload/interrupt/policy_get/policy_set） |
 | `vram-ops/test_main.py` | 节点自带 HTTP 桩测试（断言请求形状/头/输出，20 项） |

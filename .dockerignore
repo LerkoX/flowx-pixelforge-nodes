@@ -1,16 +1,32 @@
-# 构建上下文只保留节点代码（Dockerfile 只 COPY <dir>/*.py，这里顺手把无关内容挡在传输外）
+# 构建上下文只保留节点运行期代码（Dockerfile 已改为「全量 COPY + RUN 清理」：
+# 层数必须压到 127 以下，逐节点 COPY 会超 Docker 经典 builder 的层数上限）。
+# —— 这里排除的东西**根本不会进镜像**，比事后 RUN rm 更省传输与镜像层体积。
 __pycache__/
 **/__pycache__/
 *.pyc
-# 浏览器侧 widget 资产与本地 mock/测试：不进镜像
+
+# 浏览器侧 widget 资产与本地 mock/门禁：不进镜像
 */ui/
 */mock.py
 _tools/
 _widget-template/
-test-tier1-nodes.py
 check-bundle.py
 sync-flowx-json.py
 build-image.sh
+probe-image-nodes.py
+test-op-versioning.py
+test-tier1-nodes.py
+
+# 共享件单一事实源：只用于 sync-common 分发到各节点目录，运行期不进镜像
+_common/
+
+# 仓库元数据与文档
+.git/
+.github/
+.gitignore
+*.md
+LICENSE
+NOTICE
 
 # 保留 _wheels（离线安装 Pillow 用）；仅排除 wheel 之外的杂物
 _wheels/*.tar.gz

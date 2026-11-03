@@ -134,13 +134,32 @@ def check_flowx_json_schema(root: pathlib.Path):
     return errs, warns
 
 
+# 全量打包形态：`COPY . /opt/flowx-nodes/`（v1.20.0 起）——126 个节点逐条 COPY 会
+# 超 Docker 经典 builder 的 127 层上限（实测 max depth exceeded）。
+WHOLE_COPY_RE = re.compile(r"^COPY\s+(?:--\S+\s+)*\./?\s+\S+\s*$")
+
+
 def in_image_dirs(root: pathlib.Path) -> dict[str, str]:
-    """解析 Dockerfile 的 COPY <dir>/*.py → {节点目录: 目标目录}"""
+    """镜像内节点目录 → 目标路径。
+
+    两种 Dockerfile 形态都支持：
+      1. 逐节点 `COPY <dir>/*.py <target>`（v1.19.x 及更早）；
+      2. 全量 `COPY . <target>`（v1.20.0 起）⇒ 镜像内目录 = 所有含 flowx.json 的目录
+         （`ui/`、`mock.py` 被 .dockerignore 排除，不影响 main.py 存在）。
+    """
     out: dict[str, str] = {}
+    whole = False
     for line in (root / "Dockerfile").read_text().splitlines():
-        m = re.match(r"^COPY\s+([\w\-.]+)/\*\.py\s+(\S+)/?\s*$", line.strip())
+        s = line.strip()
+        m = re.match(r"^COPY\s+([\w\-.]+)/\*\.py\s+(\S+)/?\s*$", s)
         if m:
             out[m.group(1)] = m.group(2)
+        elif WHOLE_COPY_RE.match(s):
+            whole = True
+    if whole:
+        for d in sorted(root.iterdir()):
+            if d.is_dir() and (d / "flowx.json").is_file():
+                out.setdefault(d.name, f"/opt/flowx-nodes/{d.name}")
     return out
 
 

@@ -28,7 +28,7 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "a9dc504c2501"
+OP_VERSION = "c9a0ebe522f2"
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -121,6 +121,60 @@ def _est_bytes(path, dtype_name):
     return int(n or os.path.getsize(p))
 
 
+def _make_room(need_bytes, op_name):
+    """上卡**前**腾地方：先按显存预算淘汰，再把权重搬上卡。
+
+    为什么顺序不能反（exec 1186/1187 教训）：`_register` 里的 `_evict_if_needed`
+    发生在 `.to("cuda")` **之后**——模型已经把池子占满，驱逐来不及。8GB 卡
+    （GTX 1080）上常驻 5 个模型（SD1.5 + 4×ControlNet ≈ 5.1GB）时，并行两个
+    grounding_detect 直接 `CUDA driver error: out of memory`（1186）；连续硬塞
+    更会把 CUDA 缓存分配器撞成 `!handles_.at(i) INTERNAL ASSERT FAILED`
+    （1187，Python 侧不可捕获，只能靠提前腾出空间避免）。
+    """
+    try:
+        from app.main import models
+    except Exception:  # 无 model_manager（单测/离线）：_register 同样会容错
+        return
+    try:
+        with models._lock:
+            models._evict_if_needed(int(need_bytes or 0))
+    except Exception as e:
+        print(f"[{op_name}] WARNING: 上卡前腾地方失败（继续尝试上卡）: {e}",
+              flush=True)
+
+
+def _to_cuda(model, key, need_bytes, op_name):
+    """把模型搬上卡；OOM 时驱逐**空闲**常驻条目后重试（dev-plan §21.3 任务 3）。
+
+    `evict_idle` 只动非 pin、非其它租约持有的条目，绝不动执行中模型。
+    """
+    import torch
+    try:
+        return model.to("cuda").eval()
+    except torch.cuda.OutOfMemoryError as e:
+        print(f"[{op_name}] WARNING: '{key}' 上卡 OOM（{e}），"
+              f"驱逐空闲常驻模型后重试", flush=True)
+    for _ in range(4):
+        try:
+            from app.main import models
+        except Exception:
+            break
+        try:
+            if not models.evict_idle(limit=1):
+                break
+            torch.cuda.empty_cache()
+        except Exception as e:  # 淘汰/清缓存故障不阻断重试
+            print(f"[{op_name}] WARNING: OOM 自愈淘汰失败: {e}", flush=True)
+            break
+        try:
+            return model.to("cuda").eval()
+        except torch.cuda.OutOfMemoryError as e:
+            print(f"[{op_name}] WARNING: 自愈重试仍 OOM（{e}）", flush=True)
+    raise RuntimeError(
+        f"{op_name}: 无法把 '{key}' 装入显存（已驱逐空闲常驻模型仍然 OOM；"
+        f"请减少并行 GPU 节点或缩短流水线常驻模型清单）")
+
+
 def _register(key, obj, est_bytes, arch, op_name):
     """注册进 model_manager LRU（与整管同一淘汰/pin/unload 语义；flux.py 同款）。"""
     from app.main import models
@@ -202,15 +256,16 @@ def _load_sam(variant, dtype_name, op_name):
         return obj
     _check_cuda(op_name)
     path = _variant_dir(SAM_DIR, variant, SAM_VARIANTS, op_name)
-    import torch
     from transformers import SamModel, SamProcessor
     dt, dt_name = _dtype(dtype_name, op_name)
+    est = _est_bytes(path, dt_name)
+    _make_room(est, op_name)          # 先腾地方，再搬上卡（exec 1187 教训）
     model = SamModel.from_pretrained(path, torch_dtype=dt,
                                      local_files_only=True)
-    model.eval().to("cuda")
     _PROCS[key] = SamProcessor.from_pretrained(path, local_files_only=True)
     _DTYPES[key] = dt_name
-    return _register(key, model, _est_bytes(path, dt_name),
+    _to_cuda(model, key, est, op_name)  # 上卡 + OOM 自愈重试
+    return _register(key, model, est,
                      f"SamModel({variant}, {dt_name})", op_name)
 
 
@@ -222,16 +277,17 @@ def _load_grounding(variant, dtype_name, op_name):
         return obj
     _check_cuda(op_name)
     path = _variant_dir(GROUNDING_DIR, variant, GROUNDING_VARIANTS, op_name)
-    import torch
     from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
     dt, dt_name = _dtype(dtype_name, op_name)
+    est = _est_bytes(path, dt_name)
     proc = AutoProcessor.from_pretrained(path, local_files_only=True)
+    _make_room(est, op_name)          # 先腾地方，再搬上卡（exec 1186/1187 教训）
     model = AutoModelForZeroShotObjectDetection.from_pretrained(
         path, torch_dtype=dt, local_files_only=True)
-    model.eval().to("cuda")
     _PROCS[key] = proc
     _DTYPES[key] = dt_name
-    return _register(key, model, _est_bytes(path, dt_name),
+    _to_cuda(model, key, est, op_name)  # 上卡 + OOM 自愈重试
+    return _register(key, model, est,
                      f"GroundingDinoForObjectDetection({variant}, {dt_name})",
                      op_name)
 

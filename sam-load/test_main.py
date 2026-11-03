@@ -51,6 +51,7 @@ def main():
           sorted(reg.names) == sorted([
               "seg.sam_load@" + fam.OP_VERSION, "seg.sam@" + fam.OP_VERSION,
               "seg.sam_auto@" + fam.OP_VERSION,
+              "seg.mask_ops@" + fam.OP_VERSION,
               "seg.grounding_load@" + fam.OP_VERSION,
               "seg.grounding_detect@" + fam.OP_VERSION]),
           str(sorted(reg.names)))
@@ -109,6 +110,44 @@ def main():
         check("非法变体应报错", False)
     except ValueError as e:
         check("非法变体报错可选值", "vit_h" in str(e), str(e)[:70])
+
+    # 装载顺序纪律（exec 1186/1187）：腾地方必须发生在权重搬上卡之前
+    calls = []
+
+    class FakeLock:
+        def __enter__(self):
+            calls.append("lock-in")
+
+        def __exit__(self, *a):
+            calls.append("lock-out")
+            return False
+
+    class FakeModels:
+        _lock = FakeLock()
+
+        def _evict_if_needed(self, n):
+            calls.append(("evict", int(n)))
+
+    import types
+    fake_app = types.ModuleType("app")
+    fake_main = types.ModuleType("app.main")
+    fake_main.models = FakeModels()
+    fake_app.main = fake_main
+    saved = {k: sys.modules.get(k) for k in ("app", "app.main")}
+    sys.modules["app"] = fake_app
+    sys.modules["app.main"] = fake_main
+    try:
+        fam._make_room(1234, "t")
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    check("上卡前腾地方：持 models._lock 调 _evict_if_needed(est)",
+          calls == ["lock-in", ("evict", 1234), "lock-out"], str(calls))
+    check("OOM 自愈入口 _to_cuda 存在",
+          callable(getattr(fam, "_to_cuda", None)))
 
     print(f"\nFAILED = {FAILED}   PASSED = {PASSED}")
     return 1 if FAILED else 0

@@ -19,6 +19,8 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 > - 镜像 tag 保持 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSION>` 不变。
 > - 跨仓测试：服务端 `inference-server/tests/test_*_plugin.py` 需要本仓代码，
 >   用 `FLOWX_NODES_DIR` 或并列同级目录 `../flowx-pixelforge-nodes` 定位。
+> - 代码注释 / 运行时提示里出现的 `nodes/…` 前缀属拆分前写法（本仓根目录已去掉该层），
+>   为保持算子族内容 hash 不变故意未批量改写。
 
 
 ### B3（dev-plan §49）：SAM / GroundingDINO 分割 + 分块重绘超分

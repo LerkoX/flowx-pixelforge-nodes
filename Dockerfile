@@ -5,7 +5,7 @@
 # Studio 展开器按节点名 cd 到对应目录直接运行，不从 Studio 拉取任何文件。
 # ui/ 资产（浏览器加载）与 mock.py（本地沙箱用）不进镜像。
 #
-# 构建/推送：nodes/build-image.sh（bump BUNDLE_VERSION 后跑）
+# 构建/推送：build-image.sh（bump BUNDLE_VERSION 后跑）
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.title="flowx-pixelforge-nodes" \

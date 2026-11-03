@@ -71,27 +71,28 @@ def main():
             if dec:
                 action, final_id = dec["action"], dec["image_id"]
                 break
+
+        if action == "timeout":
+            if on_timeout == "fail":
+                raise SystemExit(
+                    f"pose-gate: 等待人工确认超时（{timeout_sec}s），"
+                    f"on_timeout=fail，节点中止")
+            flush_print(f"[pose-gate] 超时未确认，按 on_timeout=pass 用原骨架继续")
+            action = "timeout_pass"
+        elif action == "render":
+            # 修正骨架在本会话里是 PNG 字节：拉回来经 POST /images 入对象库。
+            # ⚠️ 必须在 DELETE 会话之前取（下面 finally 会清掉会话）
+            png = get_bytes(base, f"/ext/gate/{key}/image", tok, timeout=60)
+            final_id = post_bytes(base, "/images", png, tok, timeout=120,
+                                  content_type="image/png")["id"]
+            flush_print(f"[pose-gate] 修正骨架已入库：{final_id}")
+        else:
+            flush_print(f"[pose-gate] 收到人工决策：{action} -> {final_id}")
     finally:
         try:
             delete_json(base, f"/ext/gate/{key}", tok, timeout=10)
         except Exception:
             pass
-
-    if action == "timeout":
-        if on_timeout == "fail":
-            raise SystemExit(
-                f"pose-gate: 等待人工确认超时（{timeout_sec}s），"
-                f"on_timeout=fail，节点中止")
-        flush_print(f"[pose-gate] 超时未确认，按 on_timeout=pass 用原骨架继续")
-        action = "timeout_pass"
-    elif action == "render":
-        # 修正骨架在会话里是 PNG 字节：拉回来经 POST /images 入对象库
-        png = get_bytes(base, f"/ext/gate/{key}/image", tok, timeout=60)
-        final_id = post_bytes(base, "/images", png, tok, timeout=120,
-                              content_type="image/png")["id"]
-        flush_print(f"[pose-gate] 修正骨架已入库：{final_id}")
-    else:
-        flush_print(f"[pose-gate] 收到人工决策：{action} -> {final_id}")
 
     if final_id != skel_id:
         emit_result_preview(base, final_id, tok)  # 修正后的骨架上画布

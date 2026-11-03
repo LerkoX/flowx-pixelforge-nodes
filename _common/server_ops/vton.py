@@ -42,7 +42,7 @@ Pascal(sm_61) 硬约束（本族两条非默认实现，务必保留）：
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "34ddd651f970"
+OP_VERSION = "c36021415b63"
 OP_FAMILY = "vton"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -369,7 +369,15 @@ def _cached(key):
 def _load_vae(path, dtype):
     from diffusers import AutoencoderKL
     if os.path.isfile(path):
-        vae = AutoencoderKL.from_single_file(path)
+        # ⚠️ from_single_file 不传 config 时会去 HF Hub 取默认 VAE config
+        # （"Can't load config for 'stable-diffusion-v1-5/stable-diffusion-v1-5'"）
+        # ——推理容器离线/网络抖动时约 12s 就抛 OSError，整条流水线断在装载节点。
+        # 显式给同基座自带的 diffusers vae 目录做架构来源（只读 config.json，
+        # 权重仍全部来自单文件 safetensors），彻底去掉 Hub 依赖。
+        local_cfg = os.path.join(BASE_DIR, "vae")
+        if not os.path.isfile(os.path.join(local_cfg, "config.json")):
+            local_cfg = None
+        vae = AutoencoderKL.from_single_file(path, config=local_cfg)
     elif os.path.isfile(os.path.join(path, "config.json")):
         vae = AutoencoderKL.from_pretrained(path)
     else:
@@ -417,8 +425,17 @@ def _handle(variant, dtype_name, vae_dtype_name, chunk, op_name):
     print(f"[vton] vae loaded ({vae_dtype_name}) {time.time()-t0:.1f}s", flush=True)
     unet = UNet2DConditionModel.from_pretrained(BASE_DIR, subfolder="unet")
     unet = unet.to("cuda")
-    attn_modules = _init_adapter(unet, chunk)
-    load_checkpoint_in_model(attn_modules, attn_path)
+    _init_adapter(unet, chunk)   # 安装 self-attn（分块）+ cross-attn skip
+    # ⚠️ 权重必须灌进 **attn1 模块本身**：官方 CatVTON 的 fine-tune 参数就是 UNet 的
+    # self-attn 投影（checkpoint 键形如 `0.to_q.weight` / `120.to_out.0.bias`）。
+    # 之前这里误传了 _init_adapter() 的返回值（attn processor 列表，本版 processor
+    # 无参数）→ accelerate 打一行 "Some weights ... were not used" 把 80 个键全丢弃，
+    # UNet 于是在「无文本条件 + 无 CatVTON 权重」下采样，蒙版区只能糊出平均色（exec 1163）。
+    attn_modules = _trainable_attention(unet)
+    loaded = load_checkpoint_in_model(attn_modules, attn_path)
+    n_loaded = sum(1 for _ in attn_modules.state_dict().keys())
+    print(f"[vton] attention 权重已灌入 attn1 模块：{n_loaded} 个参数张量"
+          f"（{len(attn_modules)} 个 attn1 块）", flush=True)
     unet = unet.to(dtype)
     unet.eval()
     vae.eval()

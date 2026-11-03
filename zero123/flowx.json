@@ -1,0 +1,176 @@
+{
+  "name": "zero123",
+  "displayName": "单图新视角合成",
+  "description": "Stable Zero123 单图新视角合成（IMAGE → IMAGE）：输入一张（建议已去背的）图，用滑杆调 elevation（仰角）/ azimuth（方位角）等相机位姿，扩散模型直接生成该视角下的新图。0=正面、90=右、180=背、-90=左。基于 SD 2.1（stabilityai/stable-zero123，Objaverse 训练）。注意：单图信息缺失，背面/侧面是模型按先验生成的合理结果，非真实还原。算子 novelview.zero123 由本包 server_op.py 经插件契约自注册到推理服务。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "3d",
+    "novel-view",
+    "zero123",
+    "inference"
+  ],
+  "icon": "🎥",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "输入图像对象 ID（建议已去背，matting-birefnet 输出的 RGBA 最佳，算子会自动合成白底）",
+      "required": true,
+      "source": {
+        "nodeRef": "matting-birefnet",
+        "output": "image",
+        "description": "推荐由 matting-birefnet 去背节点输出提供"
+      }
+    },
+    {
+      "name": "ref_image_path",
+      "type": "string",
+      "description": "3D 视口参考图的本地路径（可选，仅用于拖拽相机时的贴片参考，不参与生成；支持 ~ 展开）。留空则执行后用输入去背图",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "azimuth",
+      "type": "float",
+      "description": "相机方位角（度，-180~180）：0=正面、90=右侧、180=背面、-90=左侧",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "elevation",
+      "type": "float",
+      "description": "相机仰角（度，-90~90）：0=水平、正=俯视、负=仰视",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "distance",
+      "type": "float",
+      "description": "相机距离（一般保持 0；正值拉远、负值拉近）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数 20~75（越多越精细越慢，默认 50）",
+      "required": false,
+      "default": 50
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "description": "引导强度 1~10（默认 3.0，官方推荐；越大越贴合输入但可能失真）",
+      "required": false,
+      "default": 3.0
+    },
+    {
+      "name": "vram",
+      "type": "string",
+      "description": "显存策略：after_op=用完即释放（8GB 卡建议，与 SD 等模型错峰）/ keep=模型常驻（连续出图快）",
+      "required": false,
+      "default": "after_op"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务等待超时秒数（排队+推理，首次含模型加载）",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "任务状态轮询间隔秒数",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "AZIMUTH": "{{ Param.azimuth }}",
+    "ELEVATION": "{{ Param.elevation }}",
+    "DISTANCE": "{{ Param.distance }}",
+    "STEPS": "{{ Param.steps }}",
+    "GUIDANCE_SCALE": "{{ Param.guidance_scale }}",
+    "VRAM": "{{ Param.vram }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "新视角图像在推理服务的对象 ID"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素，模型原生 256）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素，模型原生 256）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 500,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
+}

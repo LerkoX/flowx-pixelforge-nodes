@@ -21,8 +21,17 @@ LOCAL_ONLY = {"save-image", "save-video", "load-image", "load-video", "mask-pain
 
 root = pathlib.Path(__file__).parent
 tag = "lerkobba/flowx-pixelforge-nodes:v" + (root / "BUNDLE_VERSION").read_text().strip()
-copied = {m.group(1) for line in (root / "Dockerfile").read_text().splitlines()
+_dockerfile = (root / "Dockerfile").read_text()
+copied = {m.group(1) for line in _dockerfile.splitlines()
           if (m := re.match(r"^COPY\s+([\w\-.]+)/\*\.py\s+\S+/\s*$", line.strip()))}
+if not copied and re.search(r"^COPY\s+\.\s+\S+", _dockerfile, re.M):
+    # Dockerfile 已改为【全量单层 COPY】（71f1c2e：绕过经典 builder 127 层上限）：
+    # 镜像内目录 = 所有含 flowx.json 的目录（.dockerignore 已排除 ui/ mock.py 等）。
+    # 不识别这种写法时 copied 恒为空 ⇒ 所有节点都被误判成"不在镜像里"而清掉
+    # image/bundled（2026-11 实测踩中：sync 把 118 个 flowx.json 全清了，
+    # 与 check-bundle.py 的清单解析口径分裂）。两边的判定必须永远同源。
+    copied = {d.name for d in root.iterdir()
+              if d.is_dir() and (d / "flowx.json").is_file()}
 
 changed = 0
 for fj in sorted(root.glob("*/flowx.json")):

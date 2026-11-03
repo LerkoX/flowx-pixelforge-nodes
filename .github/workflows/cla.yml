@@ -1,0 +1,53 @@
+name: CLA Assistant
+
+# 在贡献者首次提交 PR 时提示签署 CLA，并把签署记录存到 cla-signatures 分支。
+#
+# 前置配置（仓库 Settings → Secrets and variables → Actions）：
+#  1. PERSONAL_ACCESS_TOKEN
+#     一个 classic PAT，至少含 repo 权限（用于写入 cla-signatures 分支）。
+#     自行提交 PR 时默认的 GITHUB_TOKEN 无法绕过分支保护，故需单独配置。
+#  2. 首次运行后会自动创建 cla-signatures 分支，无需手工创建。
+#
+# 需要修改的两处：
+#  - path-to-document：指向本仓库 CLA.md 的完整 URL（注意默认分支名）
+#  - allowlist：加入你自己的 GitHub 用户名，避免给自己发签署提示
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  CLAssistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "CLA Assistant"
+        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        with:
+          path-to-signatures: 'signatures/version1/cla.json'
+          path-to-document: 'https://github.com/LerkoX/flowx-pixelforge-nodes/blob/main/CLA.md'
+          # 签署记录存放的分支（与代码分支隔离，避免污染历史）
+          branch: 'cla-signatures'
+          # 无需签署的名单：仓库所有者、机器人
+          allowlist: 'LerkoX,dependabot[bot],renovate[bot],coderabbitai[bot],github-actions[bot]'
+          # 未签署时给 PR 打上的标签，便于一眼看出哪个 PR 还没签 CLA
+          custom-notsigned-prcomment: >
+            感谢你的贡献！在合并之前，请先签署[贡献者许可协议（CLA）](https://github.com/LerkoX/flowx-pixelforge-nodes/blob/main/CLA.md)。
+            本项目采用「开源 + 商业」双许可模式，因此需要你授予项目方再授权权利。
+            你**不会**转让著作权，仍然拥有你的代码。
+            请在下方评论框回复以下内容以完成电子签署：
+          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          custom-allsigned-prcomment: '所有贡献者均已签署 CLA ✅'
+          lock-pullrequest-aftermerge: false
+          signed-commit-message: 'chore(cla): $contributorName 签署了 CLA'

@@ -1,0 +1,33 @@
+FlowX PixelForge (flowx-pixelforge)
+
+Copyright (C) 2026 LerkoX
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+SPDX-License-Identifier: GPL-3.0-or-later
+
+---
+
+The complete and **unmodified** text of the GNU General Public License
+version 3 is provided in the `LICENSE` file.
+
+GPL-3.0 itself states: "Everyone is permitted to copy and distribute
+verbatim copies of this license document, but changing it is not allowed."
+Project-specific notices therefore live in this file rather than being
+prepended to `LICENSE` — this keeps `LICENSE` byte-for-byte identical to
+the official text, which is what license scanners and GitHub's license
+detection expect.
+
+Commercial licensing terms: see `COMMERCIAL.md`.
+Contributor licensing: see `CLA.md`.

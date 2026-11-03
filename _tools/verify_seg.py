@@ -6,6 +6,7 @@
 用法：python3 ~/workspace/github.com/LerkoX/.tmp/verify_seg.py
 """
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -121,9 +122,15 @@ def main():
     f = exec_outputs(654)
     ids = json.loads(f.get("mask_ids", "[]").lstrip("@")) if f.get("mask_ids") else []
     sizes = json.loads(f.get("sizes", "[]").lstrip("@")) if f.get("sizes") else []
-    # keep 是**参数**（不在 emit 输出里）⇒ 从流水线 YAML 取（与 e2e 同源）
-    _y = pathlib.Path.home() / "workspace/github.com/LerkoX/flowx-pixelforge/pipeline/seg-auto-e2e-local.yaml"
-    m_keep = re.search(r'^\s*keep:\s*"?([0-9,\s]*)"?\s*$', _y.read_text(), re.M)
+    # keep 是**参数**（不在 emit 输出里）⇒ 从流水线 YAML 取（与 e2e 同源）。
+    # 拆分后本仓不再携带 pipeline/：默认读 ~/flowx-input/seg-auto-e2e-local.yaml，
+    # 可用 SEG_YAML 指向任意副本；文件缺失则跳过 keep 相关比对（其余检查不受影响）。
+    _y = pathlib.Path(os.environ.get("SEG_YAML")
+                      or (pathlib.Path.home() / "flowx-input" / "seg-auto-e2e-local.yaml"))
+    m_keep = (re.search(r'^\s*keep:\s*"?([0-9,\s]*)"?\s*$', _y.read_text(), re.M)
+              if _y.is_file() else None)
+    if not _y.is_file():
+        info(f"未找到流水线 YAML（{_y}），跳过 keep 子集比对；可用 SEG_YAML 指定")
     keep = [int(x) for x in (m_keep.group(1) if m_keep else "").split(",") if x.strip().isdigit()]
     count = int(f.get("count", "0") or 0)
     cols = int(f.get("montage_cols", "1") or 1)

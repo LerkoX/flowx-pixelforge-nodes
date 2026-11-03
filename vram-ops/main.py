@@ -37,7 +37,8 @@ def _explain(e):
     if "HTTP 404" in msg or "HTTP 405" in msg:
         return RuntimeError(
             "vram-ops: 服务端未提供该端点（" + msg.split("->")[-1].strip() +
-            "）。/model/policy 的实现在 inference-server/app/policy.py + main.py 已就绪，"
+            "）。/model/policy 的实现在推理服务仓 flowx-pixelforge 的 "
+            "inference-server/app/policy.py + main.py 已就绪，"
             "但需**重新部署推理服务**后生效；status/leases/unload/interrupt 不受影响。")
     return e
 

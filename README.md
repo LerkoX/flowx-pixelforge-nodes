@@ -1,9 +1,24 @@
 # PixelForge 节点包与共享镜像
 
-本目录是节点包的**唯一仓库**：每个子目录一个节点包（`flowx.json` + `main.py` + `flowx_client.py`，
+本仓库是节点包的**唯一事实源**：每个子目录一个节点包（`flowx.json` + `main.py` + `flowx_client.py`，
 部分带 `server_op.py`/`ui/`/`mock.py`）。Studio 通过 `node import` 导入这些包；
 docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSION>` 的
 `/opt/flowx-nodes/<name>/` 直接运行，不再从 Studio 拉取代码。
+
+> **仓库边界（2026-11 拆分自 flowx-pixelforge）**
+> - **本仓**：127 个节点包、算子族单一事实源 `_common/server_ops/`、共享件
+>   `_common/`（`flowx_client.py` / `widget-base.js` 等）、共享镜像（`Dockerfile` /
+>   `BUNDLE_VERSION` / `build-image.sh`）、门禁（`check-bundle.py` + `_tools/`）。
+> - **推理服务仓 [`flowx-pixelforge`](../flowx-pixelforge)**：`inference-server/`
+>   （FastAPI 引擎 / 对象仓库 / 任务体系 / 模型管理 / 插件机制）。本仓的 `server_op.py`
+>   经 `POST /admin/plugins` 自注册到它的 `PLUGINS_DIR`，两边靠**内容 hash**天然对齐
+>   （族文件 `OP_VERSION` = 内容 hash12；上传时服务端按整文件 sha256 认出同一版本），
+>   因此拆仓不引入版本漂移。
+> - 原 `pipeline/` 历史 yaml 已废弃删除；流水线在 Studio 画布维护
+>   （`flowx-studio workflow list --json` 可导出）。
+> - 镜像 tag 保持 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSION>` 不变。
+> - 跨仓测试：服务端 `inference-server/tests/test_*_plugin.py` 需要本仓代码，
+>   用 `FLOWX_NODES_DIR` 或并列同级目录 `../flowx-pixelforge-nodes` 定位。
 
 
 ### B3（dev-plan §49）：SAM / GroundingDINO 分割 + 分块重绘超分
@@ -58,8 +73,8 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 - 新节点 **`image-watermark`**（纯节点侧 PIL，零 numpy）：文字/Logo 水印、九宫格定位、不透明度、描边、
   旋转、平铺（防盗图样张）、Logo 缩放；输出 `box(x,y,w,h)` 作为「非水印区逐字节不变」判据的锚点。
   ⚠️ 中文水印必须给 `font_path` 指向含 CJK 的 TTF（默认字体只有 ASCII）。
-- **3 条模板流水线**（`pipeline/`）：`ecom-white-bg`（白底主图 1:1）、`ecom-scene`（场景换底）、
-  `ecom-model-spec`（人脸修复 + RealESRGAN 4x + 水印）
+- **3 条模板流水线**（`pipeline/`，2026-11 已废弃删除）：`ecom-white-bg`（白底主图 1:1）、
+  `ecom-scene`（场景换底）、`ecom-model-spec`（人脸修复 + RealESRGAN 4x + 水印）
 - 复核脚本：`_tools/verify_ecom.py`（C1 白底纯度 / C2 尺寸规格 / C3 水印只改水印区 / C4 场景合成保主体）
 - 运维事实：`matting-composite` 的 `feather=8` ≈ **24px 过渡带**（`feather` 在节点内部生效，
   落盘的 mask 是未羽化的）；复核要按"腐蚀后的核心"或"远离轮廓的背景"判定
@@ -91,11 +106,11 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
 用 flowx.json 参数默认值真跑一遍 `main()`。**为什么需要**：`node mock` 跑的是 `mock.py`，
 跑不到 `main.py`（B4/S2 的 `NameError`、B4/S3 的可选参数问题都只在真机暴露）。
 已挂进 `check-bundle.py`；负例自检 `--selftest` 5/5。当前 99 节点 = PASS 98 / SKIP 1 / FAIL 0。
-改完 `main.py` 先跑：`python3 nodes/_tools/test-main-smoke.py <节点名>`。
+改完 `main.py` 先跑：`python3 _tools/test-main-smoke.py <节点名>`。
 
 
 
-### B5/51.3：InstantID 量化基线（`pipeline/instantid-ab-baseline.yaml`，wf 152）
+### B5/51.3：InstantID 量化基线（原 `pipeline/instantid-ab-baseline.yaml`，wf 152；该目录已废弃）
 
 受控 A/B（同底模/同参考脸/同 seed/同提示词，只改身份强度 0.8 → 0.0），用 `face.similarity`
 度量身份余弦：**开启 0.7457 / 关闭基线 0.0356（Δ=+0.7101）** ⇒ 现有 InstantID 身份保持很强。
@@ -111,7 +126,7 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
   （手工删插件文件后归属簿仍指向它 ⇒ 假 409 且 DELETE 反 404）② 陈旧算子泄漏（同文件重传后
   改名/删掉的算子永久留在注册表）③ 回滚不补 `sys.modules`。新增
   `plugins.stale_owners` / `plugins.reconcile` / `plugins.plugin_module_name`，测试
-  `inference-server/tests/test_plugin_registry.py`（15/15）。下次自然重启生效。
+  服务端仓 `flowx-pixelforge` 的 `inference-server/tests/test_plugin_registry.py`（15/15）。下次自然重启生效。
 - **新节点（local-only，不进镜像）**：`image-batch-load`(229) / `image-batch-save`(230) /
   `image-montage`(231)；共享件 `_common/image_batch.py`、`_common/image_montage.py`。
 - **流水线**：`batch-montage-preview`(wf 153) / `batch-roundtrip`(wf 154)。
@@ -153,8 +168,9 @@ docker 执行时从共享镜像 `lerkobba/flowx-pixelforge-nodes:v<BUNDLE_VERSIO
   拦住管道"按计算精度把 VAE 转 fp16"那一步）。
 - **流水线**：`video-v2v-repaint.yaml`（跳舞视频换人：源片 + IPAdapter 参考人物 → 逐帧重绘）、
   `video-v2v-animatediff.yaml`（整段 v2v）。Studio wf 173/174。
-- **验收**：`inference-server/tests/test_video_flow.py`（算子契约 + 抽帧/缩放纯逻辑 + VIDEO 直通，
-  **本机可跑、零依赖**）；真机实测见 `inference-server/ROADMAP.md` 阶段 9.5。
+- **验收**：算子契约由本仓 `_tools/check-op-signatures.py`（gate O，纯 AST）覆盖；集成测试在
+  服务端仓 `flowx-pixelforge` 的 `inference-server/tests/test_video_flow.py`（抽帧/缩放纯逻辑 +
+  VIDEO 直通，跨仓用 `FLOWX_NODES_DIR` 指向本仓）；真机实测见该仓 `ROADMAP.md` 阶段 9.5。
 - ⚠️ 逐帧重绘耗时 = 帧数 × 单帧耗时：先用 `max_frames=8` + `width=512` 小样验证效果再放开全片。
 - ⚠️ **有效去噪步数（真机事故 2026-10-14）**：v2v 管道的 `strength` 是**时间轴截断比例**，
   有效步数 = `int(steps × strength)` —— `steps=3, strength=0.6` 实际只跑 **1 步**（DDIM linspace
@@ -315,7 +331,7 @@ DOCKER_HOST=tcp://<daemon>:2375 SKIP_PUSH=1 ./build-image.sh
 # 5. 镜像内启动探针（可选但推荐）
 DOCKER_HOST=tcp://<daemon>:2375 python3 probe-image-nodes.py
 # 6. Studio 侧重导改动的节点包（同名同版本原地更新，流水线里的 name@version 引用无需改）
-flowx-studio node import --type folder --path nodes/<name> --overwrite
+flowx-studio node import --type folder --path <本仓路径>/<name> --overwrite
 ```
 
 ## 画布侧 widget（`ui/node-widget.js`）
@@ -390,9 +406,9 @@ def register(registry):
   与 Dockerfile 清单校验收在同一道关卡里。
 
 ```bash
-python3 nodes/_tools/sync-common.py          # 分发共享件
-python3 nodes/_tools/sync-common.py --check  # 只校验漂移
-python3 nodes/check-bundle.py                # 清单 + 共享件双重校验（发布门槛）
+python3 _tools/sync-common.py          # 分发共享件
+python3 _tools/sync-common.py --check  # 只校验漂移
+python3 check-bundle.py                # 清单 + 共享件双重校验（发布门槛）
 ```
 
 ## "改完必跑"清单（2026-10-13 起，dev-log §58~§60 教训固化）
@@ -400,17 +416,17 @@ python3 nodes/check-bundle.py                # 清单 + 共享件双重校验（
 改**任何**节点/共享件后，按顺序跑（全部退出码 0 才算完）：
 
 ```bash
-python3 nodes/_tools/sync-common.py            # 1) 分发共享件（改过 _common/ 才需要）
-python3 nodes/check-bundle.py                  # 2) 发布门槛：清单 A~D + 共享件 F + gate
+python3 _tools/sync-common.py            # 1) 分发共享件（改过 _common/ 才需要）
+python3 check-bundle.py                  # 2) 发布门槛：清单 A~D + 共享件 F + gate
                                                #    G/H/I/J/K/L/M/N/O/P（含 flowx.json 结构、
                                                #    算子契约、widget 交互、参数一致）
-python3 nodes/_tools/test-main-smoke.py        # 3) 每个节点真跑一遍 main()（桩）
-node nodes/_tools/test-widget-ui.mjs           # 4) 画布控件交互回归（DOM stub）
-python3 nodes/_tools/reimport-nodes.py --check # 5) Studio 快照巡检（版本/镜像 tag/执行器）
+python3 _tools/test-main-smoke.py        # 3) 每个节点真跑一遍 main()（桩）
+node _tools/test-widget-ui.mjs           # 4) 画布控件交互回归（DOM stub）
+python3 _tools/reimport-nodes.py --check # 5) Studio 快照巡检（版本/镜像 tag/执行器）
 ```
 
 **提交纪律（同仓库并行开发时）**：提交用**显式路径**（`git add <file> …`），不要 `git add -A`
-—— 仓库里可能同时有别人的在制品（本轮实测：并行开发的视频节点 + inference-server 改动）。
+—— 仓库里可能同时有别人的在制品（本轮实测：并行开发的视频节点 + 服务端改动）。
 
 **超时三层（本轮两次真机事故的总结）**：`节点 timeout ≥ job_timeout ≥ 排队+计算`。
 - 排队预算：任务超时必须盖住"排在数小时长任务之后"的等待（§58.5/§60.11）；
@@ -420,7 +436,7 @@ python3 nodes/_tools/reimport-nodes.py --check # 5) Studio 快照巡检（版本
 **顺序纪律（镜像 tag 写在每个 flowx.json 里，这条最容易踩）**：
 
 ```
-改节点 → bump nodes/BUNDLE_VERSION → sync-flowx-json.py → build-image.sh
+改节点 → bump BUNDLE_VERSION → sync-flowx-json.py → build-image.sh
        → reimport-nodes.py（全量！99 份 flowx.json 都变了）
 ```
 
@@ -438,9 +454,9 @@ traceback 直接指出来）。另外三条本轮实测的坑：
 | `_tools/stub-inference.py` | 推理服务**离线桩**（`/ops` 视为内置、`/jobs` 可配 pending、记账同步 `/op` 次数与 `/interrupt`）。"节点改协议"类改动的确定性门禁（先例 §51.3 / §58.3） |
 | `_tools/reimport-nodes.py [--check]` | 节流重导（48/分钟）/ 只巡检快照漂移 |
 | `_tools/gen-instantid-sweep.py` | 生成 InstantID 受控扫参工作流（weight × cn_strength 网格 + 逐点 face-similarity 打分） |
-| `nodes/vram-ops/` | 显存/租约/策略运维节点（status/leases/unload/interrupt/policy_get/policy_set） |
-| `nodes/vram-ops/test_main.py` | 节点自带 HTTP 桩测试（断言请求形状/头/输出，20 项） |
-| `inference-server/app/policy.py` + `tests/test_policy.py` | 显存策略旋钮（不 import torch，本机可单测；端点**需重新部署服务**才生效） |
+| `vram-ops/` | 显存/租约/策略运维节点（status/leases/unload/interrupt/policy_get/policy_set） |
+| `vram-ops/test_main.py` | 节点自带 HTTP 桩测试（断言请求形状/头/输出，20 项） |
+| 服务端仓 `inference-server/app/policy.py` + `tests/test_policy.py` | 显存策略旋钮（不 import torch，本机可单测；端点**需重新部署服务**才生效） |
 
 ## 取消语义（dev-log §60.2，两条路径 + 幂等）
 

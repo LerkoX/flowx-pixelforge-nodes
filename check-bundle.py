@@ -73,16 +73,20 @@ def check_flowx_json_schema(root: pathlib.Path):
             errs.append(f"{node}: flowx.json 不是合法 JSON（{e}）")
             continue
         # 硬要求字段（导入 API 会 400 或生态硬依赖；实测 `language` 缺 ⇒ 400）
+        # `ui` 不在其中：flowx-studio 的 NodePackage.ui 是**可选**（`if pkg.UI != nil`
+        # 才校验 entry），无自定义 widget 的纯参数节点（flux-pulid-face / mask-ops /
+        # flux-controlnet-load）不声明 ui 是正确形态，用默认参数面板渲染。
         for key in ("name", "displayName", "description", "version", "author", "icon",
-                    "tags", "language", "entry", "files", "ui", "executor",
+                    "tags", "language", "entry", "files", "executor",
                     "parameters", "outputs"):
             if key not in d:
                 errs.append(f"{node}: 缺字段 {key}（导入 API / 生态约定要求）")
         # 约定字段：缺省不报错（默认行为可用），但提示 —— 便于新节点与存量对齐
-        for key in ("extract", "timeout", "env", "mock"):
+        for key in ("extract", "timeout", "env", "mock", "ui"):
             if key not in d and (fj.parent / "mock.py").is_file() if key == "mock" else key not in d:
-                warns.append(f"{node}: 未声明 {key}（走默认；mask-paint/flux-mask-refine 等"
-                             f"历史节点同样缺省，属已知口径）")
+                warns.append(f"{node}: 未声明 {key}（走默认"
+                             + ("，用 Studio 默认参数面板渲染" if key == "ui" else "")
+                             + f"；mask-paint/flux-mask-refine 等历史节点同样缺省，属已知口径）")
         if not isinstance(d.get("executor"), dict) or not d["executor"].get("supportedTypes"):
             errs.append(f"{node}: executor.supportedTypes 缺失或为空")
         # entry / mock / ui 必须是结构体（不是字符串路径）

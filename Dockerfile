@@ -140,6 +140,20 @@ COPY catvton-load/*.py                      /opt/flowx-nodes/catvton-load/
 COPY catvton-tryon/*.py                     /opt/flowx-nodes/catvton-tryon/
 COPY image-montage/*.py                     /opt/flowx-nodes/image-montage/
 COPY image-pad/*.py                       /opt/flowx-nodes/image-pad/
+
+# B6/B7 局部重绘 + 交互闸门 + 3D（dev-plan §52/§71）：这些节点此前声明了 docker
+# 但漏进 COPY 清单 ⇒ 容器内 `cd: /opt/flowx-nodes/<name>: No such file`（check-bundle A/C 报）。
+COPY checkpoint-loader-inpaint/*.py       /opt/flowx-nodes/checkpoint-loader-inpaint/
+COPY vae-encode-inpaint-masked/*.py       /opt/flowx-nodes/vae-encode-inpaint-masked/
+COPY ksampler-inpaint/*.py                /opt/flowx-nodes/ksampler-inpaint/
+COPY flux-controlnet-load/*.py            /opt/flowx-nodes/flux-controlnet-load/
+COPY flux-pulid-face/*.py                 /opt/flowx-nodes/flux-pulid-face/
+COPY mask-ops/*.py                        /opt/flowx-nodes/mask-ops/
+COPY mask-bbox-crop/*.py                  /opt/flowx-nodes/mask-bbox-crop/
+COPY pose-gate/*.py                       /opt/flowx-nodes/pose-gate/
+COPY zero123/*.py                         /opt/flowx-nodes/zero123/
+COPY image-compare/*.py                   /opt/flowx-nodes/image-compare/
+COPY service-monitor/*.py                 /opt/flowx-nodes/service-monitor/
 # Pillow 供图像/蒙版/滤镜族节点使用（image-* / mask-* 等）。远端 docker 宿主无外网，
 # 故把 manylinux cp311 wheel 随上下文带进去离线安装（_wheels/，见 README）。
 COPY _wheels/*.whl /tmp/wheels/

@@ -4,11 +4,20 @@
   "description": "FLUX PuLID 人脸身份编码（PuLID-FLUX v0.9.1 移植）：insightface ArcFace + facexlib 对齐/抠脸 + EVA-CLIP → IDFormer 融合出 id_embedding，连同交叉注意力模块打包为 FACE 对象；接 flux-sampler 的 pulid 输入做身份注入——文本提示词仍主导画面，只有人脸锁定参考图。自包含节点：server_op.py 运行时自注册；服务端需预置 /models/pulid 下 PuLID 适配器、EVA-CLIP 权重、facexlib 权重与 lib 源码包（见插件 docstring）。注意 PuLID 权重官方声明仅限研究/非商用。",
   "version": "1.0.0",
   "author": "flowx-team",
-  "tags": ["flux", "pulid", "face", "identity"],
+  "tags": [
+    "flux",
+    "pulid",
+    "face",
+    "identity"
+  ],
   "icon": "🎭",
   "language": "python",
   "entry": "main.py",
-  "files": ["flowx_client.py", "executor_base.py", "server_op.py"],
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
   "parameters": [
     {
       "name": "service_url",
@@ -89,12 +98,17 @@
       "description": "编码统计（特征形状、耗时、检出方式）"
     }
   ],
-  "extract": {"type": "codec-block"},
+  "extract": {
+    "type": "codec-block"
+  },
   "timeout": 3900,
   "executor": {
-    "supportedTypes": ["local", "docker"],
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
     "preferredType": "local",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.0"
 }

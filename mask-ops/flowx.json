@@ -105,6 +105,8 @@
       "local",
       "docker"
     ],
-    "preferredType": "local"
-  }
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.0"
 }

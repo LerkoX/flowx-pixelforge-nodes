@@ -2,14 +2,11 @@ name: gates
 
 # 节点仓静态门禁（零 GPU、零 torch、零网络）。
 #
-# blocking 部分（必须全绿）：
+# 全部 blocking（必须全绿）：
 #   - 共享件漂移：_common/ 是唯一事实源，各节点目录副本必须一致
 #   - 服务端算子契约 gate O：声明 ↔ 函数签名 ↔ 节点实参（纯 AST，91 算子全覆盖）
-#
-# non-blocking 部分（visible-but-not-blocking）：
-#   - 完整发布门槛 check-bundle.py（清单 A~E / widget G~L / 参数 M / 桩冒烟 N）。
-#     当前存在拆分前遗留的历史债务（镜像 COPY 清单缺新节点、部分 flowx.json 缺 ui、
-#     2 个节点的桩冒烟失败），故 continue-on-error；债务清零后去掉该开关。
+#   - 完整发布门槛 check-bundle.py：镜像 COPY 清单 A~E / widget 产物 G~L /
+#     参数一致 M / main() 桩冒烟 N。历史债务已于 2026-11 清零（v1.20.0）。
 
 on:
   push:
@@ -34,8 +31,7 @@ jobs:
       - name: 服务端算子契约（gate O，纯 AST）
         run: python3 _tools/check-op-signatures.py
 
-      - name: 完整发布门槛（check-bundle，含历史债务）
-        continue-on-error: true
+      - name: 完整发布门槛（check-bundle）
         run: |
           python3 -m pip install --quiet pillow
           python3 check-bundle.py

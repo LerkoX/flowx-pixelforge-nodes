@@ -11,6 +11,9 @@
      必须在 `flowx.json` 的 `parameters[].name` 里（或等于已知保留名）。
   B. 反过来：`flowx.json` 里声明的参数若在 `main.py` 里从没被读取，给出**警告**
      （允许：仅由上游绑定/UI 使用的展示类参数——用 `--warn-only` 语义，不影响退出码）。
+     两类"实际已被使用但静态看不见"的情况单独处理，不算漏读：
+       - `for knob in ("a","b"): param(knob)` 这种**动态名批量透传**；
+       - 参数名出现在 `ui/` 下的 widget 产物里（3D 视口参考图等纯 UI 参数）。
   C. `env` 段引用的 `{{ Param.<name> }}` 必须存在于 parameters。
   D. `mock.py` 里的 `param("<name>")` 同样校验（mock 用于参数注入回归）。
 
@@ -29,6 +32,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 RESERVED = {"service_url", "service_url_host", "service_token"}
 
 PARAM_RE = re.compile(r'param\(\s*"([^"]+)"')
+# 动态参数名：`for knob in ("dtype", "offload", "use_t5"): param(knob, "auto")`
+# ——checkpoint-loader 这类"旋钮批量透传"就用这种写法，静态正则只认字面量会误报"未读取"
+FOR_LOOP_RE = re.compile(r'for\s+([A-Za-z_]\w*)\s+in\s*\(([^)]*)\)')
+STR_LIT_RE = re.compile(r'"([^"]+)"')
 # 真机事故：param(..., cast=bool) 对 env 注入的字符串 "false" 会得到 True
 # （bool("false") 为真）⇒ 布尔参数必须走 image_io.pbool()
 CAST_BOOL_RE = re.compile(r'param\(\s*"[^"]+"\s*,[^)]*cast\s*=\s*bool')
@@ -77,10 +84,28 @@ def main() -> int:
                     problems.append(
                         f"{node.name}/{fname}: param(\"{name}\") 未在 flowx.json "
                         f"parameters 里声明（改名后忘了同步 main.py？）")
+            # 动态名批量透传：`for knob in ("dtype","offload","use_t5"): param(knob)`
+            for m in FOR_LOOP_RE.finditer(body):
+                var, items = m.group(1), m.group(2)
+                if re.search(rf'\bparam\(\s*{re.escape(var)}\b', body):
+                    used.update(STR_LIT_RE.findall(items))
+        # UI 侧消费：widget 产物里出现的参数名（3D 视口参考图等纯展示参数）
+        ui_text = ""
+        ui_dir = node / "ui"
+        if ui_dir.is_dir():
+            for f in sorted(ui_dir.rglob("*")):
+                if not f.is_file() or f.stat().st_size > 4 * 1024 * 1024:
+                    continue
+                try:
+                    ui_text += f.read_text(errors="ignore")
+                except OSError:
+                    pass
         # B. 声明未使用（警告）
         for name in sorted(declared - used - RESERVED):
             if f"{{{{ Param.{name} }}}}" in json.dumps(env):
                 continue          # 由 env 直传也算被使用
+            if name in ui_text:
+                continue          # 仅由自定义 UI 组件消费
             warns.append(f"{node.name}: 参数 {name} 已声明但 main.py/mock.py 未读取")
         checked += 1
 

@@ -15,7 +15,7 @@
   "files": [
     "flowx_client.py"
   ],
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.19.11",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.0",
   "parameters": [
     {
       "name": "service_url",
@@ -63,6 +63,13 @@
       "description": "排队轮询间隔秒数",
       "required": false,
       "default": 5
+    },
+    {
+      "name": "connect_fail_seconds",
+      "type": "integer",
+      "description": "排队等待期间「服务连续不可达」的快速失败预算（秒，最小 10，默认 90）。地址写错/隧道断开时，若按 queue_wait_seconds（默认 1h）一直重试会空转很久；连续不可达超过本值即报错退出。仅排队闸门路径生效",
+      "required": false,
+      "default": 90
     },
     {
       "name": "evict_unused",

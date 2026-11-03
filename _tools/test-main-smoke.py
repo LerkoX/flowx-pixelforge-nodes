@@ -55,12 +55,30 @@ _OP_KEYS = ("model", "clip", "clip2", "vae", "cond", "uncond", "latent", "image"
             "model_ref", "clip_ref", "vae_ref", "t5", "text", "tokens", "score",
             "boxes", "candidates", "sizes", "plan", "meta", "report", "video",
             "frames", "motion", "audio", "list", "detail", "preview",
-            "mesh", "num_vertices", "num_faces", "format", "download_url")
+            "mesh", "num_vertices", "num_faces", "format", "download_url",
+            # 组件类对象输出（CONTROLNET / CONTROL / CLIP_VISION / IPADAPTER / FACE）
+            # ——漏了它们，`emit(controlnet=out["controlnet"])` 这类节点会假报 KeyError
+            "controlnet", "control_net", "control", "clip_vision", "ipadapter",
+            "face", "faces", "pulid", "vton", "upscale_model",
+            # 结构化输出（多为算子回传的 JSON 文本或计数）
+            "keypoints", "labels", "scores", "mask_ids", "masks", "union_area",
+            "annotated", "selected", "selected_overlay", "tiles", "grid",
+            "grid_image", "seam_map", "coverage", "kept", "crop_width",
+            "crop_height", "gate_action")
 
 
 # 数值型输出键（其余一律给字符串，模拟 Studio 的 string 端口）
 _NUM_KEYS = {"width", "height", "count", "params_mb", "vram_mb", "seed", "steps",
-             "current", "total", "size", "batch", "index", "id_num", "sha"}
+             "current", "total", "size", "batch", "index", "id_num", "sha",
+             "union_area", "crop_width", "crop_height", "kept"}
+
+# 以 **JSON 文本**形态跨端口传递的结构化输出：节点侧 json.loads(...) 解析，
+# 桩给合法 JSON 才不会在桩里假报 JSONDecodeError（真实服务就是这么传的）。
+_JSON_TEXT = {
+    "keypoints": '{"width": 640, "height": 480, "persons": []}',
+    "boxes": "[]", "labels": "[]", "scores": "[]", "sizes": "[]",
+    "mask_ids": "[]", "masks": "[]", "kept": "[]", "tiles": "[]",
+}
 
 
 def _tiny_png():
@@ -77,6 +95,8 @@ def _meta_val(key):
 
 
 def _flat_val(key):
+    if key in _JSON_TEXT:
+        return _JSON_TEXT[key]
     return 1 if key in _NUM_KEYS else f"stub-{key}"
 
 
@@ -86,12 +106,16 @@ class StubOut(dict):
     背景：`run_op`/`call_op`/`wait_job` 的返回值里，键名由节点 flowx.json 的
     outputs 决定；桩若返回空 dict，节点 `out['image']` 就 KeyError，
     会把"桩保真度不足"误报成"节点有 bug"（第一版门禁 41 个假 FAIL 的主因）。
+
+    keys：该节点 flowx.json 声明的输出键（由 make_stubs 注入）——`items()` 只遍历
+    真正存在的键，所以"按节点声明预置"是唯一能救活字典推导写法（`{k: m.get("id")
+    for k, m in outs.items()}`）的办法。
     """
 
     _self = None
 
-    def __init__(self):
-        super().__init__({k: _flat_val(k) for k in _OP_KEYS})
+    def __init__(self, keys=None):
+        super().__init__({k: _flat_val(k) for k in set(_OP_KEYS) | set(keys or ())})
         # ⚠️ 必须**预置** outputs：dict.get("outputs", {}) 不会触发 __missing__，
         # 只靠 __missing__ 时 .get 会返回默认空 dict ⇒ 字典推导得空、报假 KeyError
         self["outputs"] = self
@@ -107,9 +131,9 @@ class StubOut(dict):
         return _flat_val(key)
 
 
-def stub_out(**kw):
+def stub_out(keys=None, **kw):
     """executor_base.run_op 的返回形状：**已拍平**的 {key: 值}。"""
-    d = StubOut()
+    d = StubOut(keys)
     d.update(kw)
     d["outputs"] = d
     return d
@@ -123,8 +147,9 @@ class StubMeta(dict):
     新节点走 `executor_base.run_op` 读拍平后的值。桩必须两种都给对。
     """
 
-    def __init__(self):
-        super().__init__({k: _meta_val(k) for k in _OP_KEYS})
+    def __init__(self, keys=None):
+        super().__init__({k: _meta_val(k)
+                          for k in set(_OP_KEYS) | set(keys or ())})
 
     def __missing__(self, key):
         return _meta_val(key)
@@ -135,24 +160,29 @@ class StubRaw(dict):
 
     _LISTS = {"resident_models", "ops", "models", "items", "list", "details"}
 
-    def __init__(self):
+    def __init__(self, keys=None):
         super().__init__()
+        self._keys = keys
         # 同上：预置 outputs/status，保证 .get("outputs", {}) 拿到真对象
-        self["outputs"] = StubMeta()
+        self["outputs"] = StubMeta(keys)
         self["status"] = "success"
+        # 人工闸门（pose-gate → GET /ext/gate/<key>）轮询：docs 里 `s.get("decision")`
+        # 用 .get 读不到 __missing__，必须预置；给 "render" 以覆盖取图+入库那条分支。
+        # 不预置的话节点会一直 sleep 到 timeout_sec（默认 600s），把门禁拖成死等。
+        self["decision"] = {"action": "render", "image_id": "stub-obj"}
 
     def __missing__(self, key):
         if key == "outputs":
-            return StubMeta()
+            return StubMeta(self._keys)
         if key == "status":
             return "success"
         if key in self._LISTS:
             return []
-        return StubMeta()
+        return StubMeta(self._keys)
 
 
-def stub_raw(**kw):
-    d = StubRaw()
+def stub_raw(keys=None, **kw):
+    d = StubRaw(keys)
     d.update(kw)
     return d
 
@@ -199,6 +229,18 @@ def make_stubs(node_dir, params, rec, verbose):
                 return cast(0) if cast in (int, float) else v
         return v
 
+    # 该节点 flowx.json 声明的输出键：预置进桩，字典推导写法才不会得空 dict
+    declared_out: list[str] = []
+    try:
+        cfg = json.loads((pathlib.Path(node_dir) / "flowx.json").read_text())
+        declared_out = [o.get("name") for o in (cfg.get("outputs") or [])
+                        if o.get("name")]
+    except Exception:
+        pass
+
+    def _raw():
+        return stub_raw(keys=declared_out)
+
     fc = _types.ModuleType("flowx_client")
 
     def _fallback(name):
@@ -211,7 +253,7 @@ def make_stubs(node_dir, params, rec, verbose):
             if name.startswith("submit") or name.endswith("_job"):
                 return "0" * 16          # 节点会对 jid 做 jid[:8]
             if name.startswith(("get_", "post_", "put_", "wait_", "call_")):
-                return stub_raw()
+                return _raw()
             return None
         return _fn
 
@@ -220,11 +262,14 @@ def make_stubs(node_dir, params, rec, verbose):
         return _fallback(name)
 
     fc.__getattr__ = _fc_getattr
-    fc.call_op = lambda *a, **kw: stub_raw()
+    # call_op（POST /op）返回的是**展平**的 {端口: 值}（flowx_client.call_op 就是这么
+    # 拍的），不是 {"outputs": ...} 原样 —— 桩给 StubRaw 会让 `json.loads(res["kp"])`
+    # 拿到 StubMeta 假报 TypeError（pose-gate 真实踩到）
+    fc.call_op = lambda *a, **kw: stub_out(keys=declared_out)
     fc.submit_job = lambda *a, **kw: "0" * 16
-    fc.wait_job = lambda *a, **kw: stub_raw()
-    fc.get_json = lambda *a, **kw: stub_raw()
-    fc.post_json = lambda *a, **kw: stub_raw()
+    fc.wait_job = lambda *a, **kw: _raw()
+    fc.get_json = lambda *a, **kw: _raw()
+    fc.post_json = lambda *a, **kw: _raw()
     fc.get_bytes = lambda *a, **kw: _tiny_png()
     # 上传应答：/images 回 {"id"}，/videos 回 {"path"}（POST /videos 只做字节入站，
     # 再把服务端路径交给 video.load 算子）——两种键都给，桩才对得上真实服务
@@ -268,7 +313,8 @@ def make_stubs(node_dir, params, rec, verbose):
     eb = _types.ModuleType("executor_base")
     eb.run_op = lambda op, inputs, emit_keys=(), **kw: (rec.add("run_op", {
         "op": op, "inputs": inputs, "emit_keys": list(emit_keys)}),
-        stub_out(**{k: f"stub-{k}" for k in emit_keys}))[1]
+        stub_out(keys=declared_out,
+                 **{k: (_JSON_TEXT.get(k, f"stub-{k}")) for k in emit_keys}))[1]
     eb.ensure_op = lambda url, tok, op: op
     eb.host_base = lambda u: u
 

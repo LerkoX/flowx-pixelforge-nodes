@@ -509,12 +509,16 @@ function createNodeWidget(spec) {
         apply()
       }
       divider.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); e.stopPropagation() })
+      // 触屏拖分割线（此前只有 mousedown，手机端只能点不能拖）
+      divider.addEventListener('touchstart', (e) => { dragging = true; e.preventDefault(); e.stopPropagation() }, { passive: false })
       const onMove = (e) => { if (dragging) move(e) }
       const onUp = () => { dragging = false }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
+      window.addEventListener('touchmove', onMove, { passive: false })
+      window.addEventListener('touchend', onUp)
       box.addEventListener('click', move)
-      overlay.__cleanup = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+      overlay.__cleanup = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onUp) }
       overlay.append(box)
       overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLightbox() })
       setLightbox(overlay)
@@ -1214,8 +1218,12 @@ function createNodeWidget(spec) {
         applyRatio()
       }
       divider.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); e.stopPropagation() })
+      // 触屏拖分割线（同 lightbox 修复）
+      divider.addEventListener('touchstart', (e) => { dragging = true; e.preventDefault(); e.stopPropagation() }, { passive: false })
       window.addEventListener('mousemove', (e) => { if (dragging) move(e) })
       window.addEventListener('mouseup', () => { dragging = false })
+      window.addEventListener('touchmove', (e) => { if (dragging) move(e) }, { passive: false })
+      window.addEventListener('touchend', () => { dragging = false })
       // 单击（非拖分割线）→ 弹放大对比窗；拖分割线走 divider 自身
       // 原图加载失败时不把空 src 带进弹窗（退化为单图放大）
       box.addEventListener('click', () => {

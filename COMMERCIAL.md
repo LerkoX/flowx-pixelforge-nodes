@@ -51,7 +51,7 @@ FlowX 采用**双许可（Dual Licensing）**模式发布：
 
 | 项目 | 说明 |
 |---|---|
-| **商标权** | 商业许可不授予使用 `FlowX` 名称、Logo 的权利，需单独书面约定 |
+| **名称与标识** | 「FlowX」仅作为本项目名称使用，本项目**不主张**就该名称的商标权；如需在商业场景使用该名称，请自行完成商标检索与合规确认 |
 | **第三方组件** | 本项目依赖的第三方开源组件（如 Diffusers / Apache-2.0、Go 生态库）仍受其各自许可证约束 |
 | **ComfyUI 及其生态** | ComfyUI 由 Comfy Org 以 GPL-3.0 发布，**本项目无权对其再授权**。若需闭源使用 ComfyUI 本身，须向 [Comfy Org](https://www.comfy.org/) 取得授权。本项目仅通过**进程边界**（HTTP / 子进程）与其交互 |
 | **模型权重** | 各类预训练模型的权重（如 FLUX.1-dev 非商业许可、SDXL CreativeML OpenRAIL++-M 等）受其**自身许可证**约束，与本项目许可证无关。商业使用前请逐一核实权重许可证 |
@@ -107,8 +107,9 @@ for organizations that cannot comply with GPL's copyleft obligations — such as
 embedding FlowX in a proprietary product, on-premise delivery under NDA, OEM
 rebranding, or requiring patent grants and IP indemnification.
 
-A commercial license does **not** grant trademark rights, does **not** cover
-third-party components or model weights (each governed by its own license), and
+"FlowX" is used only as this project's name and **no trademark rights in it
+are claimed**. A commercial license therefore does **not** cover third-party
+components or model weights (each governed by its own license), and
 does **not** extend to ComfyUI itself, which is licensed by Comfy Org under
 GPL-3.0 and cannot be relicensed by this project.
 

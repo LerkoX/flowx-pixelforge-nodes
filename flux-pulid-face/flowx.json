@@ -110,5 +110,5 @@
     "preferredType": "local",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.1"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
 }

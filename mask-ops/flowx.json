@@ -63,7 +63,7 @@
       "name": "op",
       "type": "string",
       "default": "subtract",
-      "description": "运算类型：union（并集）/ subtract（A 减 B，默认）/ intersect（交集）/ xor（对称差）",
+      "description": "运算类型：union（并集）/ subtract（A 减 B，默认）/ intersect（交集）/ xor（对称差）/ convex_hull（A 的凸包——把碎片/窄带蒙版合成一整块语义区域）/fill_holes（填掉被蒙版完全包围的洞）。convex_hull 与 fill_holes 只用 mask_a，mask_b 仍需传（可传 A 自身）",
       "required": false
     },
     {

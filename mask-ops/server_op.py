@@ -28,7 +28,7 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "c9a0ebe522f2"
+OP_VERSION = "72958921ed3b"
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -811,10 +811,16 @@ def grounding_detect(image, model="gd:tiny", prompt="person", box_threshold=0.35
 
 
 def mask_ops(mask_a, mask_b, op="subtract"):
-    """蒙版布尔运算：union / subtract(A-B) / intersect / xor → 灰度蒙版。
+    """蒙版运算：union / subtract(A-B) / intersect / xor / convex_hull / fill_holes。
 
     - mask_a/mask_b：灰度蒙版 IMAGE（非零=选中）；B 尺寸不同时先缩放到 A
-    - op：默认 subtract
+    - op：默认 subtract；convex_hull / fill_holes 只用 mask_a（mask_b 仍必填，
+      原因：参数校验需要，传 mask_a 自身即可）
+    - convex_hull：把碎片蒙版取凸包 → **合成一整块语义区域**。用途（exec 1194/1195/1196
+      实测）：手绘蒙版沿衣物轮廓涂成两条窄带时，蒙版边界全被手臂包围，模型只能拿
+      邻域体积往内平推 ⇒ 躯干被画成宽方块；凸包把「两条窄带+中间的背」填成一整块，
+      形状本身即语义，模型不再需要"猜这块是什么"。
+    - fill_holes：填充完全被蒙版包围的洞（不改变外轮廓）。
     """
     op_name = f"seg.mask_ops@{OP_VERSION}"
     import numpy as np
@@ -835,8 +841,34 @@ def mask_ops(mask_a, mask_b, op="subtract"):
         u = ua & ub
     elif op == "xor":
         u = ua ^ ub
+    elif op == "convex_hull":
+        import cv2
+        m = (ua.astype("uint8") * 255)
+        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        canvas = np.zeros(ua.shape, dtype="uint8")
+        if cnts:
+            hull = cv2.convexHull(np.vstack(cnts))
+            cv2.fillPoly(canvas, [hull], 1)
+        u = canvas.astype(bool)
+    elif op == "fill_holes":
+        import cv2
+        m = (ua.astype("uint8") * 255)
+        h, w = m.shape
+        ff = m.copy()
+        flooded = np.zeros((h + 2, w + 2), dtype="uint8")
+        # 从背景点开始填充（左上角若已被蒙版占据，则在图内找一个非蒙版像素）
+        seed = (0, 0)
+        if m[0, 0] != 0:
+            ys, xs = np.where(m == 0)
+            if len(ys) == 0:
+                raise ValueError(f"{op_name}: fill_holes 需要图上至少一个非蒙版像素")
+            seed = (int(xs[0]), int(ys[0]))
+        cv2.floodFill(ff, flooded, seed, 255)
+        holes = cv2.bitwise_not(ff)          # 没被背景淹没的 = 洞
+        u = ((m | holes) > 0)
     else:
-        raise ValueError(f"{op_name}: 未知 op={op!r}（支持 union/subtract/intersect/xor）")
+        raise ValueError(f"{op_name}: 未知 op={op!r}（支持 union/subtract/intersect/xor/"
+                         f"convex_hull/fill_holes）")
     mask_pil = Image.fromarray(u.astype("uint8") * 255, "L")
     cov = float(u.sum()) / float(u.size) if u.size else 0.0
     print(f"[{op_name}] {op} a={int(ua.sum())} b={int(ub.sum())} → {int(u.sum())} px "

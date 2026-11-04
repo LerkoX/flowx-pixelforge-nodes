@@ -149,6 +149,46 @@ def main():
     check("OOM 自愈入口 _to_cuda 存在",
           callable(getattr(fam, "_to_cuda", None)))
 
+    # mask_ops 新增算子：convex_hull（窄带→整块）/ fill_holes（填洞）
+    # 事故背景（exec 1194~1196）：手绘蒙版沿衣物轮廓涂成两条窄带时，蒙版边界全被
+    # 手臂包围，模型只能拿邻域体积往内平推 ⇒ 躯干被画成宽方块/多出肉块。凸包把
+    # 「窄带 + 中间的背」合成一整块，形状本身即语义。
+    try:
+        from PIL import Image
+        import numpy as np
+        have_img = True
+    except Exception:
+        have_img = False
+    if have_img:
+        arr = np.zeros((40, 60), dtype="uint8")
+        arr[5:35, 8:16] = 255          # 左窄带
+        arr[5:35, 44:52] = 255         # 右窄带
+        m = Image.fromarray(arr, "L")
+        out = fam.mask_ops(m, m, "convex_hull")
+        got = np.asarray(out["mask"].convert("L")) > 0
+        check("mask_ops convex_hull：两条窄带被合成整块",
+              bool(got[20, 30]) and got.sum() > (arr > 0).sum(),
+              f"窄带 {int((arr > 0).sum())}px → 凸包 {int(got.sum())}px")
+
+        ring = np.zeros((40, 40), dtype="uint8")
+        ring[5:35, 5:35] = 255
+        ring[12:28, 12:28] = 0          # 中间挖洞
+        m2 = Image.fromarray(ring, "L")
+        out2 = fam.mask_ops(m2, m2, "fill_holes")
+        got2 = np.asarray(out2["mask"].convert("L")) > 0
+        check("mask_ops fill_holes：被包围的洞被填满",
+              bool(got2[20, 20]) and got2.sum() > (ring > 0).sum(),
+              f"{int((ring > 0).sum())}px → {int(got2.sum())}px")
+
+        try:
+            fam.mask_ops(m, m, "no_such_op")
+            check("mask_ops 未知 op 报错", False)
+        except ValueError as e:
+            check("mask_ops 未知 op 报错且列可选值",
+                  "convex_hull" in str(e), str(e)[:60])
+    else:
+        print("SKIP mask_ops 新算子（缺 PIL/numpy）")
+
     print(f"\nFAILED = {FAILED}   PASSED = {PASSED}")
     return 1 if FAILED else 0
 

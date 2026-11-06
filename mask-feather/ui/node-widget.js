@@ -31,8 +31,11 @@
  *       未配置时回退 service_url
  *     { label, kind:'stage', grid?, person?, xKey?, yKey?, scaleKey?, trimKey?, flipKey? }
  *                                              破框舞台（breakout-compose 用）：底图+人物图层
- *                                              合成预览，拖拽改 x/y、滚轮改身高比；需执行上下文
- *                                              拉取图层对象，无执行时占位提示；回放态只读。
+ *                                              合成预览，拖拽改 x/y、滚轮改身高比。
+ *                                              取图两链：执行/回放态走节点级代理；编辑态
+ *                                              （跑过一次后）用 paramSources.runtimeValue 的
+ *                                              上次对象 ID + 全局 service-proxy 拉图 ⇒ 未运行
+ *                                              也能按图编排；从未跑过显示占位提示；回放态只读。
  *     { key, label, kind:'files', accept? }     多文件上传（beautify-batch 用）：多选/拖入
  *                                              多个文件逐个上传，JSON 路径数组写回参数；
  *                                              可手填（每行一个路径）；缩略图点击放大。
@@ -1263,8 +1266,10 @@ function createNodeWidget(spec) {
 
     // ---- 破框舞台（kind:'stage'，breakout-compose 用）：底图+人物图层合成预览 ----
     // f = { grid, person, xKey?, yKey?, scaleKey?, trimKey?, flipKey? }：
-    //   底图/人物对象 ID 取参数运行时值（resolveParam），经节点级代理拉取，需执行
-    //   上下文（cur.execution）；无执行/未解析时显示占位提示，不阻塞其它控件。
+    //   取图两链：执行/回放态走节点级代理（需 cur.execution）；编辑态（未运行）
+    //   走全局 service-proxy——对象 ID 靠 paramSources.runtimeValue（编辑态回退最近
+    //   一次成功执行输出）解析，service_url/token 靠流水线参数解析 ⇒ 跑过一次后
+    //   无需再跑即可按图编排。从未跑过/对象过期显示占位提示。
     //   拖拽移动人物（写回 xKey/yKey，脚底锚定），滚轮改身高比（scaleKey，防抖写回）；
     //   虚线框=人物落位、黄线=脚底锚点；trim 开启时按 alpha 包围盒缩放（与节点对齐）。
     //   不画投影/透视——舞台是落位预览，最终效果以运行结果为准。回放态只读。
@@ -1355,27 +1360,55 @@ function createNodeWidget(spec) {
         hint.textContent = `拖拽移动 · 滚轮缩放｜身高比 ${st.ratio.toFixed(2)} X ${st.x.toFixed(1)}% 脚底Y ${st.y.toFixed(1)}%` +
           (g.y0 < 0 ? `（破框 ↑${Math.round(-g.y0)}px）` : '')
       }
+      // 图层对象 URL 解析：① 执行/回放态 → 节点级代理（GET，直挂 <img>）；
+      // ② 编辑态（未运行）→ 全局 service-proxy（POST 二进制 → objectURL）：
+      //    对象 ID 由 paramSources.runtimeValue（编辑态回退最近一次成功执行输出）
+      //    提供，service_url/token 由流水线参数解析 ⇒ 跑过一次后即可编排拖拽。
+      const editModeImageUrl = async (oid) => {
+        const base = String(resolveParam('service_url_host') || resolveParam('service_url') || '').replace(/\/+$/, '')
+        if (!base) return null
+        const tok = String(resolveParam('service_token') || '')
+        const r = await fetch('/api/v1/service-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ service_url: base, service_token: tok,
+                                 method: 'GET', path: '/images/' + oid, timeout_sec: 60 }),
+        })
+        if (!r.ok) return null
+        const blob = await r.blob()
+        if (!blob || !blob.size) return null
+        return URL.createObjectURL(blob)
+      }
       const ensureLoaded = () => {
         const gid = idOf(P.grid), pid = idOf(P.person)
-        if (!cur.execution || !gid || !pid) {
+        if (!gid || !pid) {
           gridImg = personImg = null; loadedKey = ''
           const H = Math.round(W * 0.55)
           if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H }
           ctx.clearRect(0, 0, W, H)
           hint.textContent = cur.execution
             ? '底图/人物对象未解析（上游跑过一遍后可预览拖拽）'
-            : '运行一次后可在此拖拽调整人物'
+            : '先运行一次：之后即可在此按图编排人物位置'
           return
         }
-        const key = cur.execution.id + '|' + gid + '|' + pid
+        const key = (cur.execution ? cur.execution.id : 'edit') + '|' + gid + '|' + pid
         if (key === loadedKey) { draw(); return }
         loadedKey = key
         const gi = new Image(), pi = new Image()
         gi.onload = () => { gridImg = gi; draw() }
         pi.onload = () => { personImg = pi; bbox = scanBBox(pi); draw() }
-        gi.onerror = pi.onerror = () => { hint.textContent = '图层加载失败（对象可能已过期，重跑后再试）' }
-        gi.src = nodeProxyUrl('/images/' + gid, 'GET')
-        pi.src = nodeProxyUrl('/images/' + pid, 'GET')
+        gi.onerror = pi.onerror = () => {
+          loadedKey = ''
+          hint.textContent = '图层加载失败（上次对象已过期，重跑一次即可编排）'
+        }
+        if (cur.execution) {
+          gi.src = nodeProxyUrl('/images/' + gid, 'GET')
+          pi.src = nodeProxyUrl('/images/' + pid, 'GET')
+        } else {
+          // 编辑态：经全局代理拉图（async；失败时 onerror 给提示）
+          editModeImageUrl(gid).then((u) => { if (u) gi.src = u; else gi.onerror() })
+          editModeImageUrl(pid).then((u) => { if (u) pi.src = u; else pi.onerror() })
+        }
       }
       const posOf = (e) => {
         const r = cv.getBoundingClientRect()

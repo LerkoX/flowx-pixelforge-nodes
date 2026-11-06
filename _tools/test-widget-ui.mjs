@@ -113,6 +113,11 @@ function findAllByTag(el, tag, out = []) {
   for (const c of (el && el.children) || []) findAllByTag(c, tag, out)
   return out
 }
+function findAllByData(el, key, val, out = []) {
+  if (el && el.dataset && el.dataset[key] === val) out.push(el)
+  for (const c of (el && el.children) || []) findAllByData(c, key, val, out)
+  return out
+}
 function findByText(el, txt) {
   if (!el) return null
   if (el._text === txt) return el
@@ -324,7 +329,8 @@ function bundleSpec(node) {
   return new Function(src + '\nreturn { createNodeWidget, WIDGET_SPEC };')()
 }
 const KIND_DOM = {
-  slider: (el) => findAllByTag(el, 'input').filter((i) => i.type === 'range').length,
+  // 自定义滑杆（防误触阈值版）无原生 range：以 data-kind="slider" 探针计数
+  slider: (el) => findAllByData(el, 'kind', 'slider').length,
   check: (el) => findAllByTag(el, 'input').filter((i) => i.type === 'checkbox').length,
   select: (el) => findAllByTag(el, 'select').length,
   curves: (el) => findAllByTag(el, 'canvas').length,
@@ -350,16 +356,30 @@ for (const node of fieldNodes) {
     const got = KIND_DOM[kind](el)
     check(`${node}: 声明 ${n} 个 kind:'${kind}' → 渲染 ${got}`, got >= n)
   }
-  // 参数写回：动第一个滑杆，必须触发 onParamsChange
+  // 参数写回：拖第一个滑杆（pointerdown→move 过阈值→up），必须触发 onParamsChange
   const firstSlider = fields.find((f) => f.kind === 'slider')
   if (firstSlider) {
     let written = null
     const el2 = mount(node, { params: {}, onParamsChange: (p) => { written = p } })
-    const ctl = findAllByTag(el2, 'input').filter((i) => i.type === 'range')[0]
+    const ctl = findAllByData(el2, 'kind', 'slider')[0]
     if (ctl) {
-      ctl.value = String(Number(firstSlider.default) + Number(firstSlider.step || 1))
-      fire(ctl, 'input'); fire(ctl, 'change')
-      check(`${node}: 滑杆改动写回参数（${firstSlider.key}）`, !!written && written[firstSlider.key] !== undefined)
+      const ev = (x) => ({ clientX: x, clientY: 0, pointerId: 1, pointerType: 'mouse',
+                           preventDefault() {}, stopPropagation() {} })
+      fire(ctl, 'pointerdown', ev(0))
+      fire(ctl, 'pointermove', ev(9))  // 超过鼠标 3px 阈值 ⇒ 接管
+      fire(ctl, 'pointerup', ev(9))
+      check(`${node}: 滑杆拖拽写回参数（${firstSlider.key}）`, !!written && written[firstSlider.key] !== undefined)
+    }
+    // 防误触契约：未达阈值的点按（触屏）不得改值
+    let written2 = null
+    const el3 = mount(node, { params: {}, onParamsChange: (p) => { written2 = p } })
+    const ctl3 = findAllByData(el3, 'kind', 'slider')[0]
+    if (ctl3) {
+      const tev = (x) => ({ clientX: x, clientY: 2, pointerId: 2, pointerType: 'touch',
+                            preventDefault() {}, stopPropagation() {} })
+      fire(ctl3, 'pointerdown', tev(0))
+      fire(ctl3, 'pointerup', tev(2))
+      check(`${node}: 滑杆触屏点按不跳值（防误触）`, written2 === null)
     }
   }
   // ▶预览重放（replay 声明）：按钮在 + 请求体原样带 __op_name + 走节点级代理 /op

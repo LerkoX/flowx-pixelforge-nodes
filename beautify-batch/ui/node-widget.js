@@ -864,23 +864,93 @@ function createNodeWidget(spec) {
       return v !== undefined && v !== '' ? v : dflt
     }
 
+    // 自定义滑杆：拖拽阈值防误触（原生 range 触屏点轨道就跳值、滚节点内容时
+    // 指尖误落滑块就改值——移动端画布重灾区）。语义：
+    //  · 横向拖过阈值（鼠标 3px / 触屏 10px）才接管改值；松手写回
+    //  · 触屏竖向意图（|dy|>|dx|）不接管，留给节点内容滚动
+    //  · 鼠标点按=跳值（桌面习惯）；触屏点按不动（防误触）
+    //  · 滚轮不改值；支持 ←/→ 键微调（键盘可达）
     const sliderControl = (f) => {
       const wrap = h('div', '')
       const val = h('span', 'color:rgba(255,255,255,0.7);font-family:ui-monospace,Menlo,monospace', String(readParam(f.key, f.default)))
       const lab = h('label', LABEL_CSS + ';display:flex;justify-content:space-between', '')
       lab.append(document.createTextNode(f.label), val)
-      const rng = h('input', 'width:100%;accent-color:#22d3ee')
-      rng.type = 'range'; rng.min = f.min; rng.max = f.max; rng.step = f.step
-      rng.value = readParam(f.key, f.default)
-      rng.disabled = !editable()
-      rng.addEventListener('input', () => { val.textContent = rng.value })
-      rng.addEventListener('change', () => setParam(f.key, rng.value))
-      refreshers.push(() => {
-        rng.disabled = !editable()
-        const nv = readParam(f.key, f.default)
-        if (document.activeElement !== rng) { rng.value = nv; val.textContent = String(nv) }
+      const min = parseFloat(f.min), max = parseFloat(f.max), step = parseFloat(f.step) || 1
+      const track = h('div', 'position:relative;height:18px;display:flex;align-items:center;cursor:pointer;touch-action:pan-y')
+      track.dataset.kind = 'slider'  // 回归测试探针（自定义控件无原生 range 可数）
+      const bar = h('div', 'position:relative;width:100%;height:4px;border-radius:2px;background:rgba(255,255,255,0.15)')
+      const fill = h('div', 'position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:#22d3ee;pointer-events:none')
+      const thumb = h('div', 'position:absolute;width:14px;height:14px;border-radius:50%;background:#22d3ee;top:50%;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,0.5)')
+      bar.append(fill, thumb)
+      track.append(bar)
+      const num = () => {
+        const v = parseFloat(readParam(f.key, f.default))
+        return Number.isFinite(v) ? v : (parseFloat(f.default) || 0)
+      }
+      const snap = (v) => {
+        v = Math.min(max, Math.max(min, v))
+        return +(Math.round((v - min) / step) * step + min).toFixed(6)
+      }
+      let curV = num()
+      let drag = null
+      const paint = () => {
+        const pct = Math.min(100, Math.max(0, (curV - min) / (max - min) * 100))
+        fill.style.width = pct + '%'
+        thumb.style.left = pct + '%'
+        val.textContent = String(curV)
+      }
+      track.addEventListener('pointerdown', (e) => {
+        if (!editable()) return
+        drag = { x0: e.clientX, y0: e.clientY, v0: curV, engaged: false, mouse: e.pointerType === 'mouse' }
+        try { track.setPointerCapture(e.pointerId) } catch (_) {}
+        e.preventDefault()
       })
-      wrap.append(lab, rng)
+      track.addEventListener('pointermove', (e) => {
+        if (!drag) return
+        const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0
+        if (!drag.engaged) {
+          const th = drag.mouse ? 3 : 10
+          if (Math.abs(dx) < th && Math.abs(dy) < th) return
+          if (!drag.mouse && Math.abs(dy) > Math.abs(dx)) { drag = null; return }
+          drag.engaged = true
+        }
+        const r = bar.getBoundingClientRect()
+        if (!(r.width > 0)) return
+        curV = snap(drag.v0 + dx / r.width * (max - min))
+        paint()
+      })
+      const endDrag = (e) => {
+        if (!drag) return
+        const wasEngaged = drag.engaged, wasMouse = drag.mouse
+        drag = null
+        if (wasEngaged) { setParam(f.key, String(curV)); return }
+        // 未达阈值：鼠标按点跳值；触屏点按不动
+        if (wasMouse) {
+          const r = bar.getBoundingClientRect()
+          if (r.width > 0) {
+            curV = snap(min + (e.clientX - r.left) / r.width * (max - min))
+            paint()
+            setParam(f.key, String(curV))
+          }
+        }
+      }
+      track.addEventListener('pointerup', endDrag)
+      track.addEventListener('pointercancel', () => { drag = null })
+      track.tabIndex = 0
+      track.addEventListener('keydown', (e) => {
+        if (!editable() || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return
+        e.preventDefault()
+        curV = snap(curV + (e.key === 'ArrowRight' ? step : -step))
+        paint()
+        setParam(f.key, String(curV))
+      })
+      refreshers.push(() => {
+        track.style.opacity = editable() ? '1' : '0.45'
+        track.style.pointerEvents = editable() ? 'auto' : 'none'
+        if (!drag) { curV = num(); paint() }
+      })
+      paint()
+      wrap.append(lab, track)
       return wrap
     }
 
@@ -1315,21 +1385,28 @@ function createNodeWidget(spec) {
         if (!editable() || !gridImg || !personImg) return
         syncFromParams()
         const [cx, cy] = posOf(e)
-        drag = { cx, cy, x0: st.x, y0: st.y, kw: W / gridImg.naturalWidth, kh: cv.height / gridImg.naturalHeight }
-        cv.setPointerCapture(e.pointerId)
+        // engaged=false：拖过 8px 阈值才开始移人物（点按/画布误触不改参数）
+        drag = { cx, cy, x0: st.x, y0: st.y, engaged: false,
+                 kw: W / gridImg.naturalWidth, kh: cv.height / gridImg.naturalHeight }
+        try { cv.setPointerCapture(e.pointerId) } catch (_) {}
         e.preventDefault()
       })
       cv.addEventListener('pointermove', (e) => {
         if (!drag) return
         const [cx, cy] = posOf(e)
+        if (!drag.engaged) {
+          if (Math.abs(cx - drag.cx) < 8 && Math.abs(cy - drag.cy) < 8) return
+          drag.engaged = true
+        }
         st.x = Math.min(150, Math.max(-50, drag.x0 + (cx - drag.cx) / drag.kw / gridImg.naturalWidth * 100))
         st.y = Math.min(200, Math.max(0, drag.y0 + (cy - drag.cy) / drag.kh / gridImg.naturalHeight * 100))
         draw()
       })
       const endDrag = () => {
         if (!drag) return
+        const engaged = drag.engaged
         drag = null
-        setParams({ [P.xKey]: st.x.toFixed(1), [P.yKey]: st.y.toFixed(1) })
+        if (engaged) setParams({ [P.xKey]: st.x.toFixed(1), [P.yKey]: st.y.toFixed(1) })
       }
       cv.addEventListener('pointerup', endDrag)
       cv.addEventListener('pointercancel', endDrag)

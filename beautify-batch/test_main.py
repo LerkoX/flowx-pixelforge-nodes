@@ -60,6 +60,8 @@ with tempfile.TemporaryDirectory() as td:
         return {"image": "out_" + inputs["image"]["$id"]}
     m.call_op = fake_call_op
     m.emit_result_preview = lambda *a, **k: None
+    m.montage = lambda *a, **k: (None, "[3, 1]")
+    m.upload_pil = lambda *a, **k: "mock_montage"
     emitted = {}
     m.emit = lambda **fields: emitted.update(fields)
 
@@ -70,6 +72,23 @@ check("逐张调算子", [c["image"]["$id"] for c in calls] == ["id_a.jpg", "id_
 check("算子入参带美化参数", calls[0]["crop"] == 640 and calls[0]["slim"] == 0.08)
 check("images 输出为 @JSON 信封", m.loads(emitted["images"]) == ["out_id_a.jpg", "out_id_b.jpg", "out_id_c.jpg"])
 check("count=3", emitted["count"] == 3)
+check("montage 输出", emitted.get("montage") == "mock_montage")
+
+# 3) files 参数优先于 dir（上传路径 JSON 数组）
+with tempfile.TemporaryDirectory() as td:
+    pa = pathlib.Path(td, "x.jpg"); pa.write_bytes(b"x")
+    pb = pathlib.Path(td, "y.jpg"); pb.write_bytes(b"x")
+    os.environ["FLOWX_PARAM_FILES"] = m.dumps([str(pa), str(pb), "/nonexistent/z.jpg"])
+    files, path = m.pick_files()
+    check("files 参数解析出 2 个有效路径", files == [str(pa), str(pb)])
+    check("不存在的路径被跳过", len(files) == 2)
+    os.environ["FLOWX_PARAM_FILES"] = ""
+    with tempfile.TemporaryDirectory() as td2:
+        for n in ("p.jpg", "q.jpg"):
+            pathlib.Path(td2, n).write_bytes(b"x")
+        os.environ["FLOWX_PARAM_DIR"] = td2
+        files2, _ = m.pick_files()
+        check("files 为空回退 dir 扫描", len(files2) == 2)
 
 print()
 if FAILED:

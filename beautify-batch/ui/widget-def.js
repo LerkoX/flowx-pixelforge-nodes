@@ -2,7 +2,8 @@ const WIDGET_SPEC = {
   icon: '💄',
   title: '批量人像美化',
   fields: [
-    { key: 'dir', label: '图片目录（local 执行器可见）', kind: 'text', mono: true },
+    { key: 'files', label: '直接上传图片（优先于目录）', kind: 'files', accept: 'image/*' },
+    { key: 'dir', label: '图片目录（files 为空时用）', kind: 'text', mono: true },
     { key: 'pattern', label: '文件匹配（; 分隔）', kind: 'text', mono: true, default: '*.png;*.jpg;*.jpeg' },
     { key: 'crop_size', label: '裁方边长（px，0=不裁）', kind: 'slider', min: 0, max: 1536, step: 32, default: 800 },
     { key: 'whiten', label: '美白强度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5 },

@@ -16,6 +16,7 @@
   "files": [
     "flowx_client.py",
     "image_batch.py",
+    "image_montage.py",
     "server_op.py"
   ],
   "parameters": [
@@ -38,10 +39,18 @@
       "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url"
     },
     {
+      "name": "files",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "直接上传的图片路径 JSON 数组（画布「选择多张」上传后自动填充；优先于 dir，留空走目录扫描）"
+    },
+    {
       "name": "dir",
       "type": "string",
-      "required": true,
-      "description": "本地图片目录（local 执行器可见路径）"
+      "required": false,
+      "default": "",
+      "description": "本地图片目录（local 执行器可见路径；files 参数非空时忽略）"
     },
     {
       "name": "pattern",
@@ -156,6 +165,11 @@
       "name": "names",
       "type": "string",
       "description": "文件名列表（JSON 数组）"
+    },
+    {
+      "name": "montage",
+      "type": "string",
+      "description": "全部美化结果的 3×N 联系表拼图对象 ID（节点上直接看全量效果）"
     },
     {
       "name": "dir",

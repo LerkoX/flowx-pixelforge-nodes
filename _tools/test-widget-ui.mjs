@@ -165,7 +165,7 @@ const mediaNodes = Object.keys(defs)
     return img ? [d, img, false] : vid ? [d, vid, true] : null
   })
   .filter(Boolean)
-const plainNode = Object.keys(defs).find((d) => !/kind:\s*'file'/.test(defs[d]))
+const plainNode = Object.keys(defs).find((d) => !/kind:\s*'files?'/.test(defs[d]))
 
 const all = [...fileNodes, ...mediaNodes.map(([d]) => d), plainNode].filter(Boolean)
 const targets = only.length ? all.filter((d) => only.includes(d)) : all

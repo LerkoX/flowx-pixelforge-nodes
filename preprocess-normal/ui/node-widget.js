@@ -33,6 +33,9 @@
  *                                              破框舞台（breakout-compose 用）：底图+人物图层
  *                                              合成预览，拖拽改 x/y、滚轮改身高比；需执行上下文
  *                                              拉取图层对象，无执行时占位提示；回放态只读。
+ *     { key, label, kind:'files', accept? }     多文件上传（beautify-batch 用）：多选/拖入
+ *                                              多个文件逐个上传，JSON 路径数组写回参数；
+ *                                              可手填（每行一个路径）；缩略图点击放大。
  *     任意 field 可加 advanced:true → 收进默认折叠的「⚙ 连接/高级」区
  *     kind:'file' 可加 noPreview:true → 不出图/视频预览（上传/拖入/路径说明都保留）。
  *       图上已有更合适的展示位时用，避免同一张图在节点上重复两遍（mask-paint 反馈：
@@ -757,6 +760,105 @@ function createNodeWidget(spec) {
       return wrap
     }
 
+    // ---- 多文件上传控件（kind:'files'）：多选/拖入多个 → 逐个上传 → JSON 路径数组写回 ----
+    // 与 kind:'file' 同端点（/api/v1/media/upload → ~/flowx-input/uploads/），
+    // 参数值是 JSON 数组字符串 '["/p/a.jpg","/p/b.jpg"]'（节点侧用 image_batch.loads 解析）。
+    // 手动编辑区按换行分隔路径；缩略图点击可放大。绑定上游时只读。
+    const filesControl = (f) => {
+      const raw = (cur.params || {})[f.key]
+      if (isWired(raw)) return wiredControl(f.key, raw)
+      const wrap = h('div', '')
+      const ta = h('textarea', INPUT_CSS + ';font-family:ui-monospace,Menlo,monospace;min-height:52px;resize:vertical')
+      ta.spellcheck = false
+      ta.placeholder = '可手填：每行一个本机路径，或用下方按钮批量上传'
+      const bar = h('div', 'display:flex;align-items:center;gap:5px;margin-top:3px')
+      const pick = h('button', BTN_CSS + ';color:#a5b4fc;border-color:rgba(165,180,252,0.4)', '📁 选择多张')
+      const clear = h('button', BTN_CSS, '✕ 清空')
+      const status = h('span', 'font-size:9px;color:rgba(255,255,255,0.45);flex:1;line-height:1.3;word-break:break-all')
+      const picker = h('input', 'display:none')
+      picker.type = 'file'
+      picker.multiple = true
+      if (f.accept) picker.accept = f.accept
+      bar.append(pick, clear, status)
+      const thumbs = h('div', 'display:flex;flex-wrap:wrap;gap:3px;margin-top:4px')
+
+      const pathsOf = () => {
+        try {
+          const v = JSON.parse((cur.params || {})[f.key] || '[]')
+          return Array.isArray(v) ? v.map(String) : []
+        } catch { return [] }
+      }
+      const render = () => {
+        const ps = pathsOf()
+        if (document.activeElement !== ta) ta.value = ps.join('\n')
+        status.textContent = status.textContent.startsWith('上传中') ? status.textContent
+          : (ps.length ? `${ps.length} 个文件` : '')
+        thumbs.textContent = ''
+        for (const p of ps.slice(0, 24)) {
+          const im = h('img', 'width:52px;height:52px;object-fit:cover;border-radius:4px;background:rgba(0,0,0,0.3);cursor:zoom-in')
+          im.title = p
+          im.src = mediaUrl(p)
+          im.onerror = () => im.remove()
+          im.addEventListener('click', () => setLightbox(buildImageLightbox(mediaUrl(p), p, closeLightbox)))
+          thumbs.append(im)
+        }
+        ta.disabled = !editable()
+        pick.disabled = !editable()
+        clear.disabled = !editable()
+        pick.style.opacity = clear.style.opacity = editable() ? '1' : '0.5'
+      }
+      ta.addEventListener('change', () => {
+        const ps = ta.value.split('\n').map((s) => s.trim()).filter(Boolean)
+        setParam(f.key, JSON.stringify(ps))
+      })
+      const uploadOne = (file) => new Promise((resolve) => {
+        const fd = new FormData()
+        fd.append('file', file)
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', '/api/v1/media/upload')
+        xhr.onload = () => {
+          let body = null
+          try { body = JSON.parse(xhr.responseText) } catch (_) { body = null }
+          const path = body && body.data && body.data.path
+          resolve(xhr.status >= 200 && xhr.status < 300 && path ? path : null)
+        }
+        xhr.onerror = () => resolve(null)
+        xhr.send(fd)
+      })
+      const uploadAll = async (list) => {
+        if (!list || !list.length) return
+        if (!editable()) { status.textContent = '回放态只读，无法写回参数'; return }
+        pick.disabled = true
+        const ps = pathsOf()
+        let done = 0
+        for (const file of list) {
+          status.textContent = `上传中 ${done + 1}/${list.length} ${file.name}…`
+          const path = await uploadOne(file)
+          done++
+          if (path) ps.push(path)
+        }
+        setParam(f.key, JSON.stringify(ps))
+        status.textContent = `✅ 共 ${ps.length} 个文件`
+        pick.disabled = false
+        render()
+      }
+      pick.addEventListener('click', () => { if (editable()) picker.click() })
+      picker.addEventListener('change', () => { uploadAll(Array.from(picker.files || [])); picker.value = '' })
+      clear.addEventListener('click', () => { if (editable()) { setParam(f.key, '[]'); status.textContent = '' } })
+      wrap.addEventListener('dragover', (e) => { e.preventDefault(); if (editable()) wrap.style.outline = '1px dashed rgba(165,180,252,0.7)' })
+      wrap.addEventListener('dragleave', () => { wrap.style.outline = '' })
+      wrap.addEventListener('drop', (e) => {
+        e.preventDefault()
+        wrap.style.outline = ''
+        const fl = e.dataTransfer && e.dataTransfer.files
+        if (fl && fl.length) uploadAll(Array.from(fl))
+      })
+      refreshers.push(render)
+      wrap.append(ta, bar, picker, thumbs)
+      render()
+      return wrap
+    }
+
     const readParam = (key, dflt) => {
       const v = (cur.params || {})[key]
       return v !== undefined && v !== '' ? v : dflt
@@ -1255,6 +1357,7 @@ function createNodeWidget(spec) {
       if (f.kind === 'textarea') return field(f.label, textareaControl(f))
       if (f.kind === 'curves') return field(f.label, curvesControl(f))
       if (f.kind === 'file') return field(f.label, fileControl(f))
+      if (f.kind === 'files') return field(f.label, filesControl(f))
       if (f.kind === 'stage') return field(f.label, stageControl(f))
       return field(f.label, textControl(f))
     }

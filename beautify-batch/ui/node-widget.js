@@ -39,6 +39,10 @@
  *     { key, label, kind:'files', accept? }     多文件上传（beautify-batch 用）：多选/拖入
  *                                              多个文件逐个上传，JSON 路径数组写回参数；
  *                                              可手填（每行一个路径）；缩略图点击放大。
+ *     { label, kind:'gridpicker', filesKey?, cropsKey? }   九宫格编排弹窗（grid-picker 用）：
+ *                                              节点内 3×3 缩略预览 + 全屏编辑器；批量上传、
+ *                                              点选两格互换、格内拖动调裁剪焦点；完成写回
+ *                                              files（路径 JSON）与 crops（焦点 JSON）。
  *     任意 field 可加 advanced:true → 收进默认折叠的「⚙ 连接/高级」区
  *     kind:'file' 可加 noPreview:true → 不出图/视频预览（上传/拖入/路径说明都保留）。
  *       图上已有更合适的展示位时用，避免同一张图在节点上重复两遍（mask-paint 反馈：
@@ -1458,6 +1462,175 @@ function createNodeWidget(spec) {
       return wrap
     }
 
+    // ---- 九宫格编排弹窗（kind:'gridpicker'，grid-picker 用）----
+    // f = { filesKey, cropsKey }：节点上显示 3×3 缩略预览 +「✏️ 编排」按钮；
+    // 点击弹全屏编辑器：批量/单格上传、点选两格互换位置、格内拖动调 cover
+    // 裁剪焦点（fx,fy 0~1）。「完成」把 files（路径 JSON，行优先格序）与
+    // crops（焦点 JSON）写回参数。图片预览走 Studio 媒体出口 mediaUrl。
+    const gridPickerControl = (f) => {
+      const filesKey = f.filesKey || 'files'
+      const cropsKey = f.cropsKey || 'crops'
+      const wrap = h('div', '')
+      const readFiles = () => { try { const a = JSON.parse(readParam(filesKey, '[]')); return Array.isArray(a) ? a.map(String) : [] } catch { return [] } }
+      const readCrops = () => { try { const a = JSON.parse(readParam(cropsKey, '[]')); return Array.isArray(a) ? a : [] } catch { return [] } }
+      const cropOf = (crops, i) => {
+        const c = crops[i] || {}
+        const fx = Number(c.fx), fy = Number(c.fy)
+        return { fx: isFinite(fx) ? Math.min(1, Math.max(0, fx)) : 0.5,
+                 fy: isFinite(fy) ? Math.min(1, Math.max(0, fy)) : 0.5 }
+      }
+      // ---- 节点内缩略预览 ----
+      const mini = h('div', 'display:grid;grid-template-columns:repeat(3,1fr);gap:2px;border-radius:5px;overflow:hidden;background:rgba(0,0,0,0.35)')
+      const capRow = h('div', 'display:flex;align-items:center;gap:6px;margin-top:4px')
+      const cap = h('span', 'font-size:10px;color:rgba(255,255,255,0.5);flex:1')
+      const openBtn = h('button', BTN_CSS, '✏️ 编排九宫格')
+      capRow.append(cap, openBtn)
+      wrap.append(mini, capRow)
+      const renderMini = () => {
+        mini.innerHTML = ''
+        const files = readFiles(), crops = readCrops()
+        for (let i = 0; i < 9; i++) {
+          const cell = h('div', 'aspect-ratio:1/1;background:rgba(255,255,255,0.06);position:relative;overflow:hidden')
+          const p = files[i]
+          if (p) {
+            const cr = cropOf(crops, i)
+            const im = h('img', 'width:100%;height:100%;object-fit:cover;display:block')
+            im.style.objectPosition = (cr.fx * 100).toFixed(0) + '% ' + (cr.fy * 100).toFixed(0) + '%'
+            im.src = mediaUrl(p)
+            cell.append(im)
+          } else {
+            cell.append(h('span', 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:rgba(255,255,255,0.25)', String(i + 1)))
+          }
+          mini.append(cell)
+        }
+        cap.textContent = files.filter(Boolean).length + '/9 张'
+        openBtn.disabled = !editable()
+        openBtn.style.opacity = editable() ? "1" : "0.4"
+      }
+      refreshers.push(renderMini)
+      renderMini()
+      // ---- 全屏编辑器 ----
+      let overlay = null
+      const closeEditor = () => { if (overlay) { overlay.remove(); overlay = null } }
+      const openEditor = () => {
+        if (overlay || !editable()) return
+        const files = readFiles()
+        const crops = readCrops()
+        while (files.length < 9) files.push('')
+        files.length = 9
+        let selected = -1
+        const CS = Math.max(72, Math.min(150, Math.floor((window.innerWidth - 56) / 3)))
+        overlay = h('div', 'position:fixed;inset:0;background:rgba(8,10,14,0.96);z-index:10000;display:flex;flex-direction:column;align-items:center;padding:10px;box-sizing:border-box;overflow:auto')
+        const head = h('div', 'display:flex;align-items:center;gap:8px;width:100%;max-width:520px')
+        head.append(h('span', 'font-size:13px;font-weight:600;color:#e5e7eb;flex:1', '🎯 九宫格编排'))
+        const done = h('button', BTN_CSS, '✓ 完成')
+        head.append(done)
+        const hint = h('div', 'font-size:10px;color:rgba(255,255,255,0.45);margin:6px 0 8px;max-width:520px;line-height:1.5',
+          '点选一格再点另一格 → 互换位置 · 格内按住拖动 → 调裁剪中心 · 点空格上传')
+        const grid = h('div', 'display:grid;grid-template-columns:repeat(3,' + CS + 'px);gap:6px')
+        const bar = h('div', 'display:flex;gap:6px;margin-top:10px;align-items:center;max-width:520px;width:100%')
+        const upBtn = h('button', BTN_CSS, '📁 批量上传')
+        const resetBtn = h('button', BTN_CSS, '↺ 重置裁剪')
+        const st = h('span', 'font-size:10px;color:rgba(255,255,255,0.5);flex:1;text-align:right')
+        bar.append(upBtn, resetBtn, st)
+        const fi = document.createElement('input')
+        fi.type = 'file'; fi.accept = 'image/*'; fi.multiple = true; fi.style.display = 'none'
+        overlay.append(head, hint, grid, bar, fi)
+        document.body.append(overlay)
+        const status = () => { st.textContent = files.filter(Boolean).length + '/9 张' }
+        const setFocus = (im, cr) => { im.style.objectPosition = (cr.fx * 100).toFixed(1) + '% ' + (cr.fy * 100).toFixed(1) + '%' }
+        const renderGrid = () => {
+          grid.innerHTML = ''
+          for (let i = 0; i < 9; i++) {
+            const idx = i
+            const cell = h('div', 'position:relative;width:' + CS + 'px;height:' + CS + 'px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,0.06);touch-action:none;' +
+              (selected === idx ? 'outline:2px solid #22d3ee;' : 'outline:1px solid rgba(255,255,255,0.12);'))
+            const cr = cropOf(crops, idx)
+            let im = null
+            if (files[idx]) {
+              im = h('img', 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;user-select:none')
+              setFocus(im, cr)
+              im.src = mediaUrl(files[idx])
+              cell.append(im)
+            } else {
+              cell.append(h('span', 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;color:rgba(255,255,255,0.25)', '＋'))
+            }
+            cell.append(h('span', 'position:absolute;left:3px;top:2px;font-size:9px;color:rgba(255,255,255,0.7);text-shadow:0 1px 2px #000;pointer-events:none', String(idx + 1)))
+            // 交互：拖动=调裁剪焦点；点按=选中/互换；空格点按=上传
+            let sx = 0, sy = 0, dragging = false
+            cell.addEventListener('pointerdown', (e) => {
+              e.preventDefault(); e.stopPropagation()
+              sx = e.clientX; sy = e.clientY; dragging = false
+              try { cell.setPointerCapture(e.pointerId) } catch (_) { /* stub */ }
+            })
+            cell.addEventListener('pointermove', (e) => {
+              if (!im || !(e.buttons & 1)) return
+              const dx = e.clientX - sx, dy = e.clientY - sy
+              if (!dragging && Math.sqrt(dx * dx + dy * dy) > 8) dragging = true
+              if (!dragging) return
+              sx = e.clientX; sy = e.clientY
+              const nw = im.naturalWidth || 1, nh = im.naturalHeight || 1
+              const cur = cropOf(crops, idx)
+              if (nh >= nw) {  // 竖图：上下溢出，纵向拖动调 fy
+                const over = CS * (nh / nw - 1)
+                if (over > 1) cur.fy = Math.min(1, Math.max(0, cur.fy - dy / over))
+              } else {         // 横图：左右溢出，横向拖动调 fx
+                const over = CS * (nw / nh - 1)
+                if (over > 1) cur.fx = Math.min(1, Math.max(0, cur.fx - dx / over))
+              }
+              crops[idx] = cur
+              setFocus(im, cur)
+            })
+            cell.addEventListener('pointerup', () => {
+              if (dragging) { dragging = false; return }
+              if (!files[idx]) { fi.click(); return }  // 空格：上传（多选首张入本格）
+              if (selected === -1) { selected = idx }
+              else if (selected === idx) { selected = -1 }
+              else {  // 互换两格（文件 + 焦点一起换）
+                const tf = files[selected]; files[selected] = files[idx]; files[idx] = tf
+                const tc = crops[selected]; crops[selected] = crops[idx]; crops[idx] = tc
+                selected = -1
+              }
+              renderGrid()
+            })
+            grid.append(cell)
+          }
+          status()
+        }
+        let fillAt = 0
+        fi.addEventListener('change', async () => {
+          const list = Array.from(fi.files || [])
+          if (!list.length) return
+          upBtn.disabled = true; upBtn.textContent = '上传中…'
+          for (const file of list) {
+            let slot = files.indexOf('')
+            if (slot === -1) { slot = fillAt % 9; fillAt++ }  // 满了就顺序覆盖
+            else fillAt = slot + 1
+            const p = await uploadFile(file, file.name || ('grid-' + slot + '.jpg'))
+            if (p) files[slot] = p
+            renderGrid()
+          }
+          upBtn.disabled = false; upBtn.textContent = '📁 批量上传'
+          fi.value = ''
+        })
+        upBtn.addEventListener('click', () => fi.click())
+        resetBtn.addEventListener('click', () => {
+          for (let i = 0; i < 9; i++) crops[i] = { fx: 0.5, fy: 0.5 }
+          renderGrid()
+        })
+        done.addEventListener('click', () => {
+          setParams({
+            [filesKey]: JSON.stringify(files.filter(Boolean)),
+            [cropsKey]: JSON.stringify(files.map((_, i) => cropOf(crops, i))),
+          })
+          closeEditor(); renderMini()
+        })
+        renderGrid()
+      }
+      openBtn.addEventListener('click', openEditor)
+      return wrap
+    }
+
     const controlOf = (f) => {
       // slider 的 label 内嵌在控件里（右侧带当前值），外层不再重复加 label
       if (f.kind === 'slider') return field('', sliderControl(f))
@@ -1469,6 +1642,7 @@ function createNodeWidget(spec) {
       if (f.kind === 'file') return field(f.label, fileControl(f))
       if (f.kind === 'files') return field(f.label, filesControl(f))
       if (f.kind === 'stage') return field(f.label, stageControl(f))
+      if (f.kind === 'gridpicker') return field(f.label, gridPickerControl(f))
       return field(f.label, textControl(f))
     }
 

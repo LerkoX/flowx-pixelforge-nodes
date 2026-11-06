@@ -1,0 +1,196 @@
+{
+  "name": "grid-picker",
+  "displayName": "九宫格选图编排",
+  "description": "上传 9 张底图 → 弹窗编排（点选两格互换位置、格内拖动调裁剪中心）→ 按焦点 cover 裁方 → 可选 beautify.auto 美化 → 合成 3×3 底图（格尺寸/间隙/边距/圆角/背景色/顶部白区可调），直喂 breakout-compose。编排结果存在 files/crops 参数里（弹窗自动写回）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "image",
+    "grid",
+    "picker",
+    "wechat"
+  ],
+  "icon": "🎯",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_batch.py",
+    "image_montage.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "files",
+      "type": "string",
+      "required": true,
+      "description": "9 张底图的本机路径 JSON 数组（格位顺序=行优先；由弹窗编排自动写回，也可手填）"
+    },
+    {
+      "name": "crops",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "每格 cover 裁切焦点 JSON 数组 [{\"fx\":0.5,\"fy\":0.5}×9]（0=顶/左 0.5=居中 1=底/右；弹窗格内拖动自动写回）"
+    },
+    {
+      "name": "cell_size",
+      "type": "integer",
+      "default": 640,
+      "description": "每格边长（px，正方形，按焦点 cover 裁切）"
+    },
+    {
+      "name": "gap",
+      "type": "integer",
+      "default": 10,
+      "description": "格子间隙（px，露出背景色）"
+    },
+    {
+      "name": "margin",
+      "type": "integer",
+      "default": 10,
+      "description": "外圈边距（px）"
+    },
+    {
+      "name": "top_banner",
+      "type": "integer",
+      "default": 0,
+      "description": "顶部空白区域高度（px，0=不加；破框海报建议=cell_size 一格高）"
+    },
+    {
+      "name": "radius",
+      "type": "integer",
+      "default": 0,
+      "description": "格子圆角半径（px，0=直角）"
+    },
+    {
+      "name": "bg",
+      "type": "string",
+      "default": "#FFFFFF",
+      "description": "背景色（#RRGGBB，朋友圈风格用 #FFFFFF）"
+    },
+    {
+      "name": "beautify",
+      "type": "boolean",
+      "default": false,
+      "description": "每格裁方后先过 beautify.auto 美化（美白磨皮+大眼瘦脸，服务端算子）再拼格"
+    },
+    {
+      "name": "whiten",
+      "type": "float",
+      "default": 0.5,
+      "description": "美白强度 0~1（beautify=on 时生效）"
+    },
+    {
+      "name": "smooth",
+      "type": "float",
+      "default": 0.4,
+      "description": "磨皮强度 0~1（beautify=on 时生效）"
+    },
+    {
+      "name": "eye",
+      "type": "float",
+      "default": 0.12,
+      "description": "大眼强度 0~0.4（beautify=on 时生效）"
+    },
+    {
+      "name": "slim",
+      "type": "float",
+      "default": 0.10,
+      "description": "瘦脸强度 0~0.4（beautify=on 时生效）"
+    },
+    {
+      "name": "det_thresh",
+      "type": "float",
+      "default": 0.3,
+      "description": "人脸检测阈值（beautify=on 时生效）"
+    },
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（local 执行器用手机可达地址，如隧道 https://xxx.r5.cpolar.top）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "FILES": "{{ Param.files }}",
+    "CROPS": "{{ Param.crops }}",
+    "CELL_SIZE": "{{ Param.cell_size }}",
+    "GAP": "{{ Param.gap }}",
+    "MARGIN": "{{ Param.margin }}",
+    "TOP_BANNER": "{{ Param.top_banner }}",
+    "RADIUS": "{{ Param.radius }}",
+    "BG": "{{ Param.bg }}",
+    "BEAUTIFY": "{{ Param.beautify }}",
+    "WHITEN": "{{ Param.whiten }}",
+    "SMOOTH": "{{ Param.smooth }}",
+    "EYE": "{{ Param.eye }}",
+    "SLIM": "{{ Param.slim }}",
+    "DET_THRESH": "{{ Param.det_thresh }}",
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "九宫格底图对象 ID（直喂 breakout-compose 的 grid）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    },
+    {
+      "name": "count",
+      "type": "integer",
+      "description": "合成张数（应为 9）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 268,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 1200,
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  }
+}

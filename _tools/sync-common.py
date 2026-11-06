@@ -96,7 +96,7 @@ OP_FAMILIES = {
     # 只能融合旧衣服与参考图，见 §52 实测）
     "vton.py": ["catvton-load", "catvton-tryon"],
     # 人像美化族（九宫格 v2）：裁方 + 美白磨皮 + 大眼瘦脸（68 关键点 + IDW 位移场）
-    "beautify.py": ["beautify-batch"],
+    "beautify.py": ["beautify-batch", "grid-picker"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
     # G12 视频流（P2 视频到视频）：视频 I/O（load/to_frames/encode）+ v2v
     # （repaint 逐帧重绘 / sample_v2v 原生 v2v）。五节点共享同族文件：

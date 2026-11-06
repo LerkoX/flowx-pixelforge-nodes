@@ -10,7 +10,7 @@ import os
 
 from flowx_client import (call_op, emit, emit_result_preview, ensure_plugin,
                           param, ref, token)
-from image_batch import get_pimg_bytes, loads
+from image_batch import dumps, get_pimg_bytes, loads
 from image_montage import upload_pil
 
 OP = "beautify.auto"
@@ -120,6 +120,7 @@ def main():
                    slim=param("slim", 0.10, cast=float),
                    det_thresh=param("det_thresh", 0.3, cast=float))
     cells = []
+    ids = []  # 每格裁方（+美化）后的对象 ID，作为列表输出供下游精修/风格化
     for i, path in enumerate(files):
         fx, fy = crops[i]
         im = cover_crop_focus(Image.open(path), cell, fx, fy)
@@ -128,11 +129,19 @@ def main():
             r = call_op(url, op, {"image": ref(oid), **bkw}, tok)
             import io
             im = Image.open(io.BytesIO(get_pimg_bytes(url, r["image"], tok))).convert("RGB")
+            ids.append(r["image"])
             print(f"[grid-picker] {i+1}/9 裁方+美化 {os.path.basename(path)}", flush=True)
         else:
+            ids.append(upload_pil(url, im, tok))
             print(f"[grid-picker] {i+1}/9 裁方 {os.path.basename(path)} "
                   f"focus=({fx:.2f},{fy:.2f})", flush=True)
         cells.append(im)
+    images_json = dumps(ids)
+    if str(param("compose", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+        # 不合成：只出 9 张图列表，由下游精修/风格化后再交 grid-compose 拼图
+        print(f"[grid-picker] 9 张 -> images 列表（compose=off，不合成底图）", flush=True)
+        emit(images=images_json, count=9, image="", width=0, height=0)
+        return
     out = compose(cells, cell=cell,
                   gap=param("gap", 10, cast=int),
                   margin=param("margin", 10, cast=int),
@@ -141,7 +150,7 @@ def main():
                   top_banner=param("top_banner", 0, cast=int))
     oid = upload_pil(url, out, tok)
     print(f"[grid-picker] 9 张 -> {out.width}x{out.height} image={oid}", flush=True)
-    emit(image=oid, width=out.width, height=out.height, count=9)
+    emit(image=oid, width=out.width, height=out.height, count=9, images=images_json)
     emit_result_preview(url, oid, tok)
 
 

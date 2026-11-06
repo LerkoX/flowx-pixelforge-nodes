@@ -2,7 +2,7 @@
   "name": "grid-picker",
   "displayName": "九宫格选图编排",
   "description": "上传 9 张底图 → 弹窗编排（点选两格互换位置、格内拖动调裁剪中心）→ 按焦点 cover 裁方 → 可选 beautify.auto 美化 → 合成 3×3 底图（格尺寸/间隙/边距/圆角/背景色/顶部白区可调），直喂 breakout-compose。编排结果存在 files/crops 参数里（弹窗自动写回）",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "image",
@@ -70,6 +70,12 @@
       "description": "背景色（#RRGGBB，朋友圈风格用 #FFFFFF）"
     },
     {
+      "name": "compose",
+      "type": "boolean",
+      "default": true,
+      "description": "合成 3×3 底图；关闭时只输出 images（9 张裁方图对象 ID 列表），供下游精修/AI 风格化后再交 grid-compose 拼图"
+    },
+    {
       "name": "beautify",
       "type": "boolean",
       "default": false,
@@ -135,6 +141,7 @@
     "FILES": "{{ Param.files }}",
     "CROPS": "{{ Param.crops }}",
     "CELL_SIZE": "{{ Param.cell_size }}",
+    "COMPOSE": "{{ Param.compose }}",
     "GAP": "{{ Param.gap }}",
     "MARGIN": "{{ Param.margin }}",
     "TOP_BANNER": "{{ Param.top_banner }}",
@@ -165,6 +172,11 @@
       "name": "height",
       "type": "integer",
       "description": "结果高度（像素）"
+    },
+    {
+      "name": "images",
+      "type": "string",
+      "description": "9 张裁方（+美化）图的对象 ID 列表（格序行优先；供下游精修/风格化后交 grid-compose 拼图）"
     },
     {
       "name": "count",

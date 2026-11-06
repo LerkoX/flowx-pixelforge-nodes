@@ -2817,6 +2817,7 @@ const WIDGET_SPEC = {
     { key: 'radius', label: '格子圆角（px）', kind: 'slider', min: 0, max: 80, step: 1, default: 0 },
     { key: 'bg', label: '背景色（#RRGGBB）', kind: 'text', mono: true, default: '#FFFFFF' },
     { key: 'beautify', label: '每格美化（美白/大眼/瘦脸）', kind: 'check', default: false },
+    { key: 'compose', label: '合成九宫格底图（关=只出 9 张图列表，供下游精修/风格化）', kind: 'check', default: true },
     { key: 'whiten', label: '美白强度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, advanced: true },
     { key: 'smooth', label: '磨皮强度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.4, advanced: true },
     { key: 'eye', label: '大眼强度', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0.12, advanced: true },

@@ -36,7 +36,8 @@
     var hoverIdx = -1
     var dragging = false
     var dragLast = null
-    var chainDrag = true   // 连带子关节（拖肘带腕、拖膝带踝，保持肢体比例）
+    var dragMode = 'bone'   // bone=骨骼约束(IK) / pan=整链平移 / free=自由拖拽
+    var boneLen = {}       // 关节 -> 到父关节的初始长度（像素），拖动时锁定
     var decided = false
     var decidedInfo = ''
     var showHand = true, showFace = false, showBg = true
@@ -102,6 +103,9 @@
             session = s
             kp = JSON.parse(JSON.stringify(s.keypoints))
             origSubset = kp.subset.slice()
+            oobSet = {}
+            ;(kp.out_of_bounds || []).forEach(function (i) { oobSet[i] = 1 })
+            buildBoneLen()
             renderState()
           }
         })
@@ -132,13 +136,60 @@
       return kp.subset[i] > 0.3 && kp.candidate[i][0] >= 0 && kp.candidate[i][1] >= 0
     }
 
-    // 连带拖动链：拖动父关节时子关节一起平移（保持骨骼长度比例）
-    var CHAIN = {
-      0: [14, 15, 16, 17],
-      2: [3, 4], 3: [4],
-      5: [6, 7], 6: [7],
-      8: [9, 10, 18, 19, 20], 9: [10, 18, 19, 20],
-      11: [12, 13, 21, 22, 23], 12: [13, 21, 22, 23]
+    // 关节名（不带「已选：」前缀，用于画布上跟随标签）
+    function nameOf(i) {
+      if (i < 18) return BODY_NAMES[i]
+      if (i < 24) return ['右大趾', '右小趾', '右脚跟', '左大趾', '左小趾', '左脚跟'][i - 18]
+      if (i < 92) return '脸' + (i - 24)
+      if (i < 113) return '左指' + (i - 92)
+      return '右指' + (i - 113)
+    }
+
+    // 连带说明：按当前拖动模式列出会一起动的关节（与所选点相邻的子节点开始）
+    function chainText(i) {
+      if (dragMode === 'free' || !kp) return ''
+      var ns = subtree(i).filter(function (j) { return j !== i && vis(j) }).map(nameOf)
+      if (!ns.length) return ''
+      return (dragMode === 'bone' ? ' → 绕父关节旋转 ' : ' → 平移 ') + ns.join('/')
+    }
+
+    // 检测时被外推到画布外、已钳制的点（服务端 out_of_bounds 标记）
+    var oobSet = {}
+    function isOOB(i) { return !!oobSet[i] }
+
+    // ---- 骨骼树（COCO-18 + DWPose 足部点）：长度约束拖动的依据 ----
+    var PARENT = {
+      0: 1, 14: 0, 15: 0, 16: 0, 17: 0,             // 头
+      2: 1, 3: 2, 4: 3,                             // 右臂
+      5: 1, 6: 5, 7: 6,                             // 左臂
+      8: 1, 9: 8, 10: 9, 18: 10, 19: 10, 20: 10,    // 右腿+脚
+      11: 1, 12: 11, 13: 12, 21: 13, 22: 13, 23: 13 // 左腿+脚
+    }
+
+    // 记录每段骨骼的初始长度（像素）：拖动时锁定，保证不会被拉长拉短
+    function buildBoneLen() {
+      boneLen = {}
+      if (!kp) return
+      for (var k in PARENT) {
+        var i = +k, p = PARENT[i]
+        if (i >= kp.candidate.length) continue
+        var dx = (kp.candidate[i][0] - kp.candidate[p][0]) * kp.width
+        var dy = (kp.candidate[i][1] - kp.candidate[p][1]) * kp.height
+        boneLen[i] = Math.hypot(dx, dy)
+      }
+    }
+
+    // 某关节的整棵子树（含自己）：拖动时一起旋转/平移
+    function subtree(i) {
+      var out = [i], stack = [i]
+      while (stack.length) {
+        var cur = stack.pop()
+        for (var k in PARENT) {
+          var j = +k
+          if (PARENT[j] === cur && kp.subset[j] > 0.3) { out.push(j); stack.push(j) }
+        }
+      }
+      return out
     }
 
     function draw() {
@@ -153,12 +204,44 @@
       }
       var px = function (i) { return [kp.candidate[i][0] * dw, kp.candidate[i][1] * dh] }
       var i, a, b, pa, pb, p
-      // 悬停高亮：先画提示圈，让用户知道会抓到哪个点
-      if (hoverIdx >= 0 && vis(hoverIdx) && hoverIdx !== selected) {
-        p = px(hoverIdx)
-        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2
-        ctx.beginPath(); ctx.arc(p[0], p[1], 13, 0, 7); ctx.stroke()
+      // 拖拽热区半径（与 hitTest 保持一致，做到「看到多大就能点多大」）
+      var R = Math.max(16, dw * 0.05)
+
+      // 连带预告：拖动/悬停某关节时，把它会一起动的点用青色虚线圈标出
+      var chainSet = {}
+      var chainSrc = selected >= 0 ? selected : (hoverIdx >= 0 ? hoverIdx : -1)
+      if (dragMode !== 'free' && chainSrc >= 0 && kp) {
+        subtree(chainSrc).forEach(function (j) { if (j !== chainSrc) chainSet[j] = 1 })
       }
+
+      // ---- 1. 拖拽热区可视化：每个可见关节一个半透明大圆 ----
+      for (var q = 0; q < 134; q++) {
+        if (!vis(q)) continue
+        if (q >= 24 && q < 92 && !showFace) continue
+        if (q >= 92 && !showHand) continue
+        p = px(q)
+        var isSel = q === selected, isHov = q === hoverIdx, isChain = chainSet[q]
+        var rr = q >= 92 ? R * 0.72 : (q < 18 || q < 24 ? R : R * 0.55)
+        ctx.beginPath(); ctx.arc(p[0], p[1], rr, 0, 7)
+        ctx.fillStyle = isSel ? 'rgba(125,255,170,0.22)'
+          : isChain ? 'rgba(90,220,255,0.16)'
+            : isHov ? 'rgba(255,255,255,0.16)'
+              : 'rgba(255,255,255,0.05)'
+        ctx.fill()
+        if (isSel) { ctx.setLineDash([]); ctx.strokeStyle = 'rgba(125,255,170,0.95)'; ctx.lineWidth = 2.5 }
+        else if (isHov) { ctx.setLineDash([]); ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 2 }
+        else if (isChain) { ctx.setLineDash([2, 3]); ctx.strokeStyle = 'rgba(90,220,255,0.9)'; ctx.lineWidth = 1.8 }
+        else if (isOOB(q)) { ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(255,170,60,0.9)'; ctx.lineWidth = 1.6 }
+        else { ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(255,255,255,0.20)'; ctx.lineWidth = 1 }
+        ctx.stroke(); ctx.setLineDash([])
+        // 越界点额外标一个 ⚠ 三角，提醒这个位置是猜的
+        if (isOOB(q) && !isSel) {
+          ctx.fillStyle = 'rgba(255,170,60,0.95)'
+          ctx.font = 'bold ' + Math.max(10, dw * 0.018) + 'px sans-serif'
+          ctx.fillText('⚠', p[0] + rr * 0.7, p[1] - rr * 0.7)
+        }
+      }
+
       ctx.lineWidth = 4
       for (var l = 0; l < BODY_LIMBS.length; l++) {
         a = BODY_LIMBS[l][0] - 1; b = BODY_LIMBS[l][1] - 1
@@ -208,20 +291,82 @@
           ctx.beginPath(); ctx.arc(p[0], p[1], 2.5, 0, 7); ctx.fill()
         }
       }
+
+      // ---- 2. 拖动中的状态特效：十字准线 + 发光选中点 + 跟随标签 ----
+      if (dragging && selected >= 0) {
+        p = px(selected)
+        ctx.save()
+        ctx.setLineDash([7, 7])
+        ctx.strokeStyle = 'rgba(125,255,170,0.5)'; ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(0, p[1]); ctx.lineTo(dw, p[1])
+        ctx.moveTo(p[0], 0); ctx.lineTo(p[0], dh)
+        ctx.stroke()
+        ctx.restore()
+
+        ctx.save()
+        ctx.shadowColor = 'rgba(125,255,170,0.95)'; ctx.shadowBlur = 20
+        ctx.fillStyle = 'rgba(125,255,170,0.85)'
+        ctx.beginPath(); ctx.arc(p[0], p[1], R * 0.6, 0, 7); ctx.fill()
+        ctx.restore()
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 3
+        ctx.beginPath(); ctx.arc(p[0], p[1], R * 0.6, 0, 7); ctx.stroke()
+
+        // 拖动中：青色虚线连到会被一起动的点，一眼看出连带关系
+        if (dragMode !== 'free') {
+          ctx.save()
+          ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(90,220,255,0.75)'; ctx.lineWidth = 2
+          var chs = subtree(selected).filter(function (j) { return j !== selected && vis(j) })
+          for (var ci = 0; ci < chs.length; ci++) {
+            var cp = px(chs[ci])
+            ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(cp[0], cp[1]); ctx.stroke()
+          }
+          ctx.restore()
+        }
+
+        var lab = nameOf(selected)
+        // 顺带标出该段骨骼长度，方便核对比例
+        if (PARENT[selected] != null) {
+          var parP = px(PARENT[selected])
+          lab += ' ' + Math.round(Math.hypot(p[0] - parP[0], p[1] - parP[1])) + 'px'
+        }
+        ctx.font = 'bold ' + Math.max(13, dw * 0.025) + 'px sans-serif'
+        var tw = ctx.measureText(lab).width
+        var lx = Math.min(Math.max(p[0] - tw / 2, 4), dw - tw - 6)
+        var ly = p[1] - R - 12
+        if (ly < 20) ly = p[1] + R + 24
+        ctx.fillStyle = 'rgba(0,0,0,0.78)'
+        ctx.fillRect(lx - 7, ly - 15, tw + 14, 22)
+        ctx.fillStyle = '#7dffaa'; ctx.fillText(lab, lx, ly)
+      } else if (hoverIdx >= 0 && vis(hoverIdx) && hoverIdx !== selected) {
+        // 悬停时在热区上方标出关节名，避免盲猜
+        p = px(hoverIdx)
+        var lab2 = nameOf(hoverIdx)
+        ctx.font = 'bold ' + Math.max(12, dw * 0.023) + 'px sans-serif'
+        var tw2 = ctx.measureText(lab2).width
+        var lx2 = Math.min(Math.max(p[0] - tw2 / 2, 4), dw - tw2 - 6)
+        var ly2 = p[1] - R - 12
+        if (ly2 < 20) ly2 = p[1] + R + 24
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'
+        ctx.fillRect(lx2 - 6, ly2 - 14, tw2 + 12, 20)
+        ctx.fillStyle = '#fff'; ctx.fillText(lab2, lx2, ly2)
+      }
     }
 
     function hitTest(x, y) {
       if (!kp) return -1
       var dw = canvas.width, dh = canvas.height
-      var best = -1, bestD = Math.max(28, dw * 0.06)  // 触屏友好的大命中半径
-      var check = function (i) {
+      // 与绘制热区半径一致（R = max(16, dw*0.05)），手部略小
+      var baseR = Math.max(16, dw * 0.05)
+      var best = -1, bestD = baseR
+      var check = function (i, r) {
         if (!vis(i)) return
         var d = Math.hypot(kp.candidate[i][0] * dw - x, kp.candidate[i][1] * dh - y)
-        if (d < bestD) { bestD = d; best = i }
+        if (d < Math.min(bestD, r)) { bestD = d; best = i }
       }
-      for (var i = 0; i < 24; i++) check(i)
-      if (showHand) for (i = 92; i < 134; i++) check(i)
-      if (showFace) for (i = 24; i < 92; i++) check(i)
+      for (var i = 0; i < 24; i++) check(i, baseR)
+      if (showHand) for (i = 92; i < 134; i++) check(i, baseR * 0.72)
+      if (showFace) for (i = 24; i < 92; i++) check(i, baseR * 0.55)
       return best
     }
 
@@ -308,20 +453,53 @@
       bar.appendChild(mkChk('手', showHand, function (v) { showHand = v; draw() }))
       bar.appendChild(mkChk('脸', showFace, function (v) { showFace = v; draw() }))
       bar.appendChild(mkChk('底图', showBg, function (v) { showBg = v; draw() }))
-      bar.appendChild(mkChk('链动', chainDrag, function (v) { chainDrag = v }))
+      var modeSel = document.createElement('select')
+      modeSel.style.cssText = 'padding:7px 8px;border-radius:8px;border:1px solid #3a4152;' +
+        'background:#1b1f2a;color:#dbe3ef;font-size:13px;cursor:pointer'
+      ;[['bone', '🦴 骨骼约束（长度不变）'], ['pan', '↔ 整链平移'], ['free', '✋ 自由拖拽']]
+        .forEach(function (o) {
+          var op = document.createElement('option')
+          op.value = o[0]; op.textContent = o[1]; op.selected = (dragMode === o[0])
+          modeSel.appendChild(op)
+        })
+      modeSel.onchange = function () {
+        dragMode = modeSel.value
+        hintEl.textContent = dragMode === 'bone'
+          ? '骨骼约束：拖任意关节都绕父关节旋转，所有骨骼长度恒定'
+          : dragMode === 'pan'
+            ? '整链平移：子树刚性跟随，长度不变但整条链会滑动'
+            : '自由拖拽：只动选中的点（骨骼长度会变）'
+        draw()
+      }
+      bar.appendChild(modeSel)
+      bar.appendChild(btnClose)
       bar.appendChild(btnClose)
       overlay.appendChild(bar)
 
       canvas.addEventListener('pointerdown', function (e) {
         if (decided || !kp) return
+        e.preventDefault()
         var r = canvas.getBoundingClientRect()
         var i = hitTest(e.clientX - r.left, e.clientY - r.top)
         if (i >= 0) {
-          selected = i; dragging = true
+          selected = i; dragging = true; hoverIdx = i
           dragLast = [e.clientX - r.left, e.clientY - r.top]
           try { canvas.setPointerCapture(e.pointerId) } catch (_) {}
-          hintEl.textContent = labelOf(i) + '（拖到正确位置；误检点可「隐藏选中点」）'
+          // 拖动状态外观：光标 + 高亮边框
+          canvas.style.cursor = 'grabbing'
+          canvas.style.boxShadow = '0 0 0 2px #7dffaa, 0 0 24px rgba(125,255,170,0.55)'
+          document.body.style.overflow = 'hidden'
+          hintEl.textContent = nameOf(i) + ' 拖动中…' + chainText(i)
           draw()
+        } else {
+          hintEl.textContent = '没抓到点：请按住虚线圆圈内部再拖动'
+          // 短暂闪烁所有热区，提示可点范围
+          var flash = 0
+          var iv = setInterval(function () {
+            flash++
+            if (flash > 3 || dragging || !ctx) { clearInterval(iv); return }
+            draw()
+          }, 140)
         }
       })
       canvas.addEventListener('pointermove', function (e) {
@@ -330,30 +508,94 @@
         var x = Math.min(Math.max(e.clientX - r.left, 0), r.width)
         var y = Math.min(Math.max(e.clientY - r.top, 0), r.height)
         if (dragging && selected >= 0) {
-          // 位移量应用到目标点（连带模式下子关节一起平移，保持骨骼长度）
-          var dx = (x - dragLast[0]) / r.width, dy = (y - dragLast[1]) / r.height
-          dragLast = [x, y]
-          var moves = [selected]
-          if (chainDrag && CHAIN[selected]) moves = moves.concat(CHAIN[selected])
-          for (var m = 0; m < moves.length; m++) {
-            var j = moves[m]
-            if (kp.subset[j] > 0 || j === selected) {
-              kp.candidate[j] = [kp.candidate[j][0] + dx, kp.candidate[j][1] + dy]
+          if (dragMode === 'free') {
+            // 自由：只挪选中的点（长度会变，仅供极端姿势摆位）
+            kp.candidate[selected] = [x / r.width, y / r.height]
+          } else if (dragMode === 'pan') {
+            // 平移：整棵子树刚性平移（长度不变，但整条链会滑走）
+            var pdx = (x - dragLast[0]) / r.width, pdy = (y - dragLast[1]) / r.height
+            subtree(selected).forEach(function (j) {
+              kp.candidate[j] = [kp.candidate[j][0] + pdx, kp.candidate[j][1] + pdy]
+            })
+          } else {
+            // 骨骼约束（IK）：父关节不动，选中点绕父旋转到手指方向，
+            // 距离锁定为初始骨骼长度；整棵子树绕父刚体旋转 → 所有段长度恒定
+            var tgt = [x / r.width * kp.width, y / r.height * kp.height]
+            var par = PARENT[selected]
+            var curPx = [kp.candidate[selected][0] * kp.width,
+                         kp.candidate[selected][1] * kp.height]
+            if (par == null || !vis(par)) {
+              // 根关节（颈）：整树平移
+              var rdx = (tgt[0] - curPx[0]) / kp.width, rdy = (tgt[1] - curPx[1]) / kp.height
+              subtree(selected).forEach(function (j) {
+                kp.candidate[j] = [kp.candidate[j][0] + rdx, kp.candidate[j][1] + rdy]
+              })
+            } else {
+              var Ppx = [kp.candidate[par][0] * kp.width, kp.candidate[par][1] * kp.height]
+              var L = boneLen[selected] || Math.hypot(curPx[0] - Ppx[0], curPx[1] - Ppx[1])
+              if (!(L > 0.5)) L = Math.hypot(curPx[0] - Ppx[0], curPx[1] - Ppx[1]) || 1
+              var vx = tgt[0] - Ppx[0], vy = tgt[1] - Ppx[1]
+              var vlen = Math.hypot(vx, vy)
+              if (vlen > 0.5) {
+                var nx = Ppx[0] + vx / vlen * L, ny = Ppx[1] + vy / vlen * L
+                var th = Math.atan2(ny - Ppx[1], nx - Ppx[0]) -
+                         Math.atan2(curPx[1] - Ppx[1], curPx[0] - Ppx[0])
+                var cs = Math.cos(th), sn = Math.sin(th)
+                subtree(selected).forEach(function (j) {
+                  var jx = kp.candidate[j][0] * kp.width - Ppx[0]
+                  var jy = kp.candidate[j][1] * kp.height - Ppx[1]
+                  kp.candidate[j] = [
+                    (Ppx[0] + jx * cs - jy * sn) / kp.width,
+                    (Ppx[1] + jx * sn + jy * cs) / kp.height
+                  ]
+                })
+              }
             }
           }
+          dragLast = [x, y]
+          // 全部点限制在画布内，避免拖出边界后消失
+          for (var z = 0; z < 24; z++) {
+            kp.candidate[z] = [
+              Math.min(Math.max(kp.candidate[z][0], 0), 1),
+              Math.min(Math.max(kp.candidate[z][1], 0), 1)
+            ]
+          }
+          hintEl.textContent = '拖动中：' + nameOf(selected) +
+            (PARENT[selected] != null ?
+              '  ' + Math.round(boneLen[selected] || 0) + 'px' : '') +
+            chainText(selected)
           draw()
         } else if (!decided) {
           // 悬停高亮：提示当前会抓到哪个点
           var h = hitTest(x, y)
           if (h !== hoverIdx) {
             hoverIdx = h
-            if (h >= 0) hintEl.textContent = labelOf(h)
+            // 鼠标时用光标形状也提示可拖动
+            canvas.style.cursor = h >= 0 ? 'grab' : 'default'
+            if (h >= 0) hintEl.textContent = nameOf(h) +
+              (isOOB(h) ? ' ⚠检测越界·位置不可靠，建议手改' : '：按住拖动可修正') + chainText(h)
             draw()
           }
         }
       })
-      canvas.addEventListener('pointerup', function () { dragging = false })
-      canvas.addEventListener('pointercancel', function () { dragging = false })
+      canvas.addEventListener('pointerup', function () {
+        if (dragging) {
+          hintEl.textContent = (selected >= 0 ? nameOf(selected) + ' 已调整' : '') +
+            ' · 可继续拖其它点，或点「✅ 修正完成·放行」'
+        }
+        dragging = false
+        canvas.style.cursor = 'default'
+        canvas.style.boxShadow = 'none'
+        document.body.style.overflow = ''
+        draw()
+      })
+      canvas.addEventListener('pointercancel', function () {
+        dragging = false
+        canvas.style.cursor = 'default'
+        canvas.style.boxShadow = 'none'
+        document.body.style.overflow = ''
+        draw()
+      })
 
       document.body.appendChild(overlay)
       draw()
@@ -362,6 +604,8 @@
     function closeEditor() {
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay)
       overlay = null; canvas = null; ctx = null; hintEl = null
+      dragging = false; hoverIdx = -1
+      document.body.style.overflow = ''
     }
 
     function renderState() {

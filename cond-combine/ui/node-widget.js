@@ -29,6 +29,10 @@
  *       API 路径语义由本节点生态自持）。基地址优先取同节点的 service_url_host
  *       （Studio 宿主机可达，docker 节点的 service_url 是容器内网地址取不到），
  *       未配置时回退 service_url
+ *     { label, kind:'stage', grid?, person?, xKey?, yKey?, scaleKey?, trimKey?, flipKey? }
+ *                                              破框舞台（breakout-compose 用）：底图+人物图层
+ *                                              合成预览，拖拽改 x/y、滚轮改身高比；需执行上下文
+ *                                              拉取图层对象，无执行时占位提示；回放态只读。
  *     任意 field 可加 advanced:true → 收进默认折叠的「⚙ 连接/高级」区
  *     kind:'file' 可加 noPreview:true → 不出图/视频预览（上传/拖入/路径说明都保留）。
  *       图上已有更合适的展示位时用，避免同一张图在节点上重复两遍（mask-paint 反馈：
@@ -1085,6 +1089,163 @@ function createNodeWidget(spec) {
       return wrap
     }
 
+    // ---- 破框舞台（kind:'stage'，breakout-compose 用）：底图+人物图层合成预览 ----
+    // f = { grid, person, xKey?, yKey?, scaleKey?, trimKey?, flipKey? }：
+    //   底图/人物对象 ID 取参数运行时值（resolveParam），经节点级代理拉取，需执行
+    //   上下文（cur.execution）；无执行/未解析时显示占位提示，不阻塞其它控件。
+    //   拖拽移动人物（写回 xKey/yKey，脚底锚定），滚轮改身高比（scaleKey，防抖写回）；
+    //   虚线框=人物落位、黄线=脚底锚点；trim 开启时按 alpha 包围盒缩放（与节点对齐）。
+    //   不画投影/透视——舞台是落位预览，最终效果以运行结果为准。回放态只读。
+    const stageControl = (f) => {
+      const P = { grid: 'grid', person: 'person', xKey: 'center_x', yKey: 'feet_y',
+                  scaleKey: 'height_ratio', trimKey: 'trim', flipKey: 'flip', ...f }
+      const wrap = h('div', 'margin-bottom:6px')
+      const cv = h('canvas', 'width:100%;border-radius:8px;display:block;background:rgba(0,0,0,0.25);touch-action:none;cursor:grab')
+      const hint = h('div', 'font-size:9px;color:rgba(255,255,255,0.4);margin-top:2px;line-height:1.4')
+      wrap.append(cv, hint)
+      const ctx = cv.getContext('2d')
+      const W = 244
+      let gridImg = null, personImg = null, bbox = null
+      let loadedKey = ''
+      let drag = null
+      let st = { x: 50, y: 95, ratio: 0.9, trim: true, flip: false }
+
+      const idOf = (key) => {
+        let v = resolveParam(key)
+        if (v && typeof v === 'object') v = v.$id || v.id || ''
+        v = String(v || '').trim()
+        return /^[0-9a-f]{16,}$/i.test(v) ? v : ''
+      }
+      const numOf = (key, dft) => {
+        const v = parseFloat(resolveParam(key))
+        return Number.isFinite(v) ? v : dft
+      }
+      const boolOf = (key, dft) => {
+        const v = resolveParam(key)
+        if (v === undefined || v === '') return dft
+        return ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase())
+      }
+      const syncFromParams = () => {
+        st = { x: numOf(P.xKey, 50), y: numOf(P.yKey, 95), ratio: numOf(P.scaleKey, 0.9),
+               trim: boolOf(P.trimKey, true), flip: boolOf(P.flipKey, false) }
+      }
+      const scanBBox = (img) => {
+        // 降采样扫 alpha 包围盒（与节点 trim_alpha 对齐）
+        const k = Math.min(1, 512 / (img.naturalWidth || 1))
+        const w = Math.max(1, Math.round(img.naturalWidth * k))
+        const hh = Math.max(1, Math.round(img.naturalHeight * k))
+        const oc = document.createElement('canvas'); oc.width = w; oc.height = hh
+        const octx = oc.getContext('2d', { willReadFrequently: true })
+        octx.drawImage(img, 0, 0, w, hh)
+        let d
+        try { d = octx.getImageData(0, 0, w, hh).data } catch { return null }
+        let l = w, t = hh, r = -1, b = -1
+        for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
+          if (d[(y * w + x) * 4 + 3] > 8) { if (x < l) l = x; if (x > r) r = x; if (y < t) t = y; if (y > b) b = y }
+        }
+        if (r < 0) return null
+        return { x: l / k, y: t / k, w: (r - l + 1) / k, h: (b - t + 1) / k }
+      }
+      const geom = () => {
+        // 与节点 person_box 同公式（网格坐标系）
+        const gw = gridImg.naturalWidth, gh = gridImg.naturalHeight
+        const src = (st.trim && bbox) ? bbox : { x: 0, y: 0, w: personImg.naturalWidth, h: personImg.naturalHeight }
+        if (!src.w || !src.h) return null
+        const th = gh * st.ratio
+        const tw = th * src.w / src.h
+        return { gw, gh, src, tw, th, x0: st.x / 100 * gw - tw / 2, y0: st.y / 100 * gh - th }
+      }
+      const draw = () => {
+        if (!gridImg || !personImg) return
+        const g = geom(); if (!g) return
+        const k = W / g.gw
+        const H = Math.round(g.gh * k)
+        if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H }
+        ctx.clearRect(0, 0, W, H)
+        ctx.drawImage(gridImg, 0, 0, W, H)
+        ctx.save()
+        if (st.flip) {
+          ctx.translate(g.x0 * k + g.tw * k, g.y0 * k); ctx.scale(-1, 1)
+          ctx.drawImage(personImg, g.src.x, g.src.y, g.src.w, g.src.h, 0, 0, g.tw * k, g.th * k)
+        } else {
+          ctx.drawImage(personImg, g.src.x, g.src.y, g.src.w, g.src.h, g.x0 * k, g.y0 * k, g.tw * k, g.th * k)
+        }
+        ctx.restore()
+        ctx.save()
+        ctx.strokeStyle = 'rgba(34,211,238,0.9)'; ctx.setLineDash([4, 3]); ctx.lineWidth = 1
+        ctx.strokeRect(g.x0 * k, g.y0 * k, g.tw * k, g.th * k)
+        ctx.strokeStyle = 'rgba(251,191,36,0.9)'; ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.moveTo(Math.max(0, g.x0 * k), (g.y0 + g.th) * k)
+        ctx.lineTo(Math.min(W, (g.x0 + g.tw) * k), (g.y0 + g.th) * k)
+        ctx.stroke()
+        ctx.restore()
+        hint.textContent = `拖拽移动 · 滚轮缩放｜身高比 ${st.ratio.toFixed(2)} X ${st.x.toFixed(1)}% 脚底Y ${st.y.toFixed(1)}%` +
+          (g.y0 < 0 ? `（破框 ↑${Math.round(-g.y0)}px）` : '')
+      }
+      const ensureLoaded = () => {
+        const gid = idOf(P.grid), pid = idOf(P.person)
+        if (!cur.execution || !gid || !pid) {
+          gridImg = personImg = null; loadedKey = ''
+          const H = Math.round(W * 0.55)
+          if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H }
+          ctx.clearRect(0, 0, W, H)
+          hint.textContent = cur.execution
+            ? '底图/人物对象未解析（上游跑过一遍后可预览拖拽）'
+            : '运行一次后可在此拖拽调整人物'
+          return
+        }
+        const key = cur.execution.id + '|' + gid + '|' + pid
+        if (key === loadedKey) { draw(); return }
+        loadedKey = key
+        const gi = new Image(), pi = new Image()
+        gi.onload = () => { gridImg = gi; draw() }
+        pi.onload = () => { personImg = pi; bbox = scanBBox(pi); draw() }
+        gi.onerror = pi.onerror = () => { hint.textContent = '图层加载失败（对象可能已过期，重跑后再试）' }
+        gi.src = nodeProxyUrl('/images/' + gid, 'GET')
+        pi.src = nodeProxyUrl('/images/' + pid, 'GET')
+      }
+      const posOf = (e) => {
+        const r = cv.getBoundingClientRect()
+        return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]
+      }
+      cv.addEventListener('pointerdown', (e) => {
+        if (!editable() || !gridImg || !personImg) return
+        syncFromParams()
+        const [cx, cy] = posOf(e)
+        drag = { cx, cy, x0: st.x, y0: st.y, kw: W / gridImg.naturalWidth, kh: cv.height / gridImg.naturalHeight }
+        cv.setPointerCapture(e.pointerId)
+        e.preventDefault()
+      })
+      cv.addEventListener('pointermove', (e) => {
+        if (!drag) return
+        const [cx, cy] = posOf(e)
+        st.x = Math.min(150, Math.max(-50, drag.x0 + (cx - drag.cx) / drag.kw / gridImg.naturalWidth * 100))
+        st.y = Math.min(200, Math.max(0, drag.y0 + (cy - drag.cy) / drag.kh / gridImg.naturalHeight * 100))
+        draw()
+      })
+      const endDrag = () => {
+        if (!drag) return
+        drag = null
+        setParams({ [P.xKey]: st.x.toFixed(1), [P.yKey]: st.y.toFixed(1) })
+      }
+      cv.addEventListener('pointerup', endDrag)
+      cv.addEventListener('pointercancel', endDrag)
+      let wheelTimer = null
+      cv.addEventListener('wheel', (e) => {
+        if (!editable() || !gridImg || !personImg) return
+        e.preventDefault(); e.stopPropagation()
+        st.ratio = Math.min(1.6, Math.max(0.2, st.ratio * (e.deltaY < 0 ? 1.03 : 0.97)))
+        draw()
+        clearTimeout(wheelTimer)
+        wheelTimer = setTimeout(() => setParam(P.scaleKey, st.ratio.toFixed(3)), 350)
+      }, { passive: false })
+      refreshers.push(() => { if (!drag) syncFromParams(); ensureLoaded() })
+      syncFromParams()
+      ensureLoaded()
+      return wrap
+    }
+
     const controlOf = (f) => {
       // slider 的 label 内嵌在控件里（右侧带当前值），外层不再重复加 label
       if (f.kind === 'slider') return field('', sliderControl(f))
@@ -1094,6 +1255,7 @@ function createNodeWidget(spec) {
       if (f.kind === 'textarea') return field(f.label, textareaControl(f))
       if (f.kind === 'curves') return field(f.label, curvesControl(f))
       if (f.kind === 'file') return field(f.label, fileControl(f))
+      if (f.kind === 'stage') return field(f.label, stageControl(f))
       return field(f.label, textControl(f))
     }
 

@@ -1,0 +1,214 @@
+{
+  "name": "breakout-compose",
+  "displayName": "破框九宫格合成",
+  "description": "人物 RGBA 图层叠加到九宫格底图上：按「身高比例 + 中心 x + 脚底 y」锚定，头肩越出网格顶边形成破框出屏感；可选软投影强化 3D 纵深。纯节点侧 PIL，不占显存。上游：grid-compose（底图）+ matting-birefnet（人物 RGBA）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "image",
+    "grid",
+    "compose",
+    "breakout",
+    "wechat"
+  ],
+  "icon": "🖼️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "image_io.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址（docker 执行器用容器内网 http://172.17.0.1:8100；local 执行器用手机可达地址，如隧道 http://xxx.r5.cpolar.top）",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧（画布）可达的服务地址（预览帧中转用），留空同 service_url"
+    },
+    {
+      "name": "grid",
+      "type": "string",
+      "required": true,
+      "description": "九宫格底图对象 ID",
+      "source": {
+        "nodeRef": "grid-compose",
+        "output": "image",
+        "description": "由 grid-compose 的 image 输出提供"
+      }
+    },
+    {
+      "name": "person",
+      "type": "string",
+      "required": true,
+      "description": "人物图层对象 ID（RGBA 去背图，自带 alpha）",
+      "source": {
+        "nodeRef": "matting-birefnet",
+        "output": "image",
+        "description": "由 matting-birefnet（variant=portrait 发丝级）的 image 输出提供"
+      }
+    },
+    {
+      "name": "height_ratio",
+      "type": "float",
+      "default": 0.9,
+      "description": "人物身高 / 底图高度（0.2~1.6）；配合 feet_y 控制破框量：身高越大、脚底越靠下，头顶越出顶边越多"
+    },
+    {
+      "name": "center_x",
+      "type": "float",
+      "default": 50.0,
+      "description": "人物水平中心位置（% 底图宽度，0~100；50=居中）"
+    },
+    {
+      "name": "feet_y",
+      "type": "float",
+      "default": 95.0,
+      "description": "人物脚底位置（% 底图高度，0~150；>100=脚踩到画布外）"
+    },
+    {
+      "name": "trim",
+      "type": "boolean",
+      "default": true,
+      "description": "先把人物裁到 alpha 包围盒（去透明留白），height_ratio 才是真实身高占比；关闭则按整个图层画布缩放"
+    },
+    {
+      "name": "flip",
+      "type": "boolean",
+      "default": false,
+      "description": "水平翻转人物（调整朝向以配合构图）"
+    },
+    {
+      "name": "tilt",
+      "type": "float",
+      "default": 0.0,
+      "description": "底图俯视透视强度：顶边两侧各内收的宽度百分比（0=关，5~12 最自然，上限 40）；网格向远处倾斜、人物保持正直 ⇒ 纵深差强化出框感"
+    },
+    {
+      "name": "tilt_bg",
+      "type": "string",
+      "default": "#FFFFFF",
+      "description": "透视后顶角空区的填充色（#RRGGBB，一般与 grid-compose 的 bg 一致）"
+    },
+    {
+      "name": "shadow",
+      "type": "boolean",
+      "default": true,
+      "description": "是否绘制人物软投影（出框立体感的关键）"
+    },
+    {
+      "name": "shadow_distance",
+      "type": "integer",
+      "default": 30,
+      "description": "投影位移距离（px）"
+    },
+    {
+      "name": "shadow_angle",
+      "type": "float",
+      "default": 90.0,
+      "description": "投影方向（度，顺时针；0=向右 90=正下方 180=向左 270=正上方）"
+    },
+    {
+      "name": "shadow_blur",
+      "type": "float",
+      "default": 30.0,
+      "description": "投影高斯模糊半径（px；0=硬边阴影）"
+    },
+    {
+      "name": "shadow_opacity",
+      "type": "float",
+      "default": 0.4,
+      "description": "投影不透明度 0~1"
+    },
+    {
+      "name": "shadow_color",
+      "type": "string",
+      "default": "#000000",
+      "description": "投影颜色（#RRGGBB）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空"
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "GRID": "{{ Param.grid }}",
+    "PERSON": "{{ Param.person }}",
+    "HEIGHT_RATIO": "{{ Param.height_ratio }}",
+    "CENTER_X": "{{ Param.center_x }}",
+    "FEET_Y": "{{ Param.feet_y }}",
+    "FLIP": "{{ Param.flip }}",
+    "TRIM": "{{ Param.trim }}",
+    "TILT": "{{ Param.tilt }}",
+    "TILT_BG": "{{ Param.tilt_bg }}",
+    "SHADOW": "{{ Param.shadow }}",
+    "SHADOW_DISTANCE": "{{ Param.shadow_distance }}",
+    "SHADOW_ANGLE": "{{ Param.shadow_angle }}",
+    "SHADOW_BLUR": "{{ Param.shadow_blur }}",
+    "SHADOW_OPACITY": "{{ Param.shadow_opacity }}",
+    "SHADOW_COLOR": "{{ Param.shadow_color }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "破框九宫格海报对象 ID（RGB，与底图同尺寸）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "结果宽度（像素）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "结果高度（像素）"
+    },
+    {
+      "name": "person_box",
+      "type": "string",
+      "description": "人物落位框 JSON {x,y,width,height}（y<0 即破框越出顶边）"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 268,
+    "height": 520,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 300,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
+}

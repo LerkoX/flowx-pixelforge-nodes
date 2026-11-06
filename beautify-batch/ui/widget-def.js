@@ -1,0 +1,21 @@
+const WIDGET_SPEC = {
+  icon: '💄',
+  title: '批量人像美化',
+  fields: [
+    { key: 'dir', label: '图片目录（local 执行器可见）', kind: 'text', mono: true },
+    { key: 'pattern', label: '文件匹配（; 分隔）', kind: 'text', mono: true, default: '*.png;*.jpg;*.jpeg' },
+    { key: 'crop_size', label: '裁方边长（px，0=不裁）', kind: 'slider', min: 0, max: 1536, step: 32, default: 800 },
+    { key: 'whiten', label: '美白强度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5 },
+    { key: 'smooth', label: '磨皮强度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.4 },
+    { key: 'eye', label: '大眼强度（0.08~0.15 自然）', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0.12 },
+    { key: 'slim', label: '瘦脸强度（0.05~0.15 自然）', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0.10 },
+    { key: 'det_thresh', label: '人脸检测阈值', kind: 'slider', min: 0.1, max: 0.9, step: 0.05, default: 0.3 },
+    { key: 'limit', label: '最多取几张（0=全部）', kind: 'text', mono: true, default: '0', advanced: true },
+    { key: 'offset', label: '跳过前 N 张', kind: 'text', mono: true, default: '0', advanced: true },
+    { key: 'recursive', label: '递归子目录', kind: 'check', default: false, advanced: true },
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'service_url_host', label: 'service_url_host（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+  ],
+  note: '九宫格 v2：本节点 → grid-compose（top_banner=一格高）→ breakout-compose（人物占 2/3/5/6 格）',
+};

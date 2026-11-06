@@ -43,21 +43,24 @@ def _rounded(im, radius):
     return im
 
 
-def compose(cells, cell=640, gap=10, margin=10, radius=0, bg="#FFFFFF"):
+def compose(cells, cell=640, gap=10, margin=10, radius=0, bg="#FFFFFF",
+            top_banner=0):
     """cells: 9 张 PIL 图（行优先）→ 九宫格 PIL 图（RGB）。
 
-    画布 = margin*2 + cell*3 + gap*2 的正方形。
+    画布 = margin*2 + cell*3 + gap*2 的正方形；top_banner>0 时顶部再加
+    一块等宽背景色空区（人物破框超出的「画外空间」），画布变为矩形。
     """
     from PIL import Image
     if len(cells) != 9:
         raise ValueError(f"grid-compose 需要恰好 9 张图（3×3），收到 {len(cells)} 张")
-    cell, gap, margin = int(cell), int(gap), int(margin)
-    size = margin * 2 + cell * 3 + gap * 2
-    canvas = Image.new("RGBA", (size, size), _parse_color(bg) + (255,))
+    cell, gap, margin, top_banner = int(cell), int(gap), int(margin), int(top_banner)
+    w = margin * 2 + cell * 3 + gap * 2
+    h = w + max(0, top_banner)
+    canvas = Image.new("RGBA", (w, h), _parse_color(bg) + (255,))
     for i, im in enumerate(cells):
         r, c = divmod(i, 3)
         x = margin + c * (cell + gap)
-        y = margin + r * (cell + gap)
+        y = top_banner + margin + r * (cell + gap)
         tile = _rounded(_cover_square(im, cell), radius)
         canvas.alpha_composite(tile, (x, y))
     return canvas.convert("RGB")
@@ -74,7 +77,8 @@ def main():
                   gap=param("gap", 10, cast=int),
                   margin=param("margin", 10, cast=int),
                   radius=param("radius", 0, cast=int),
-                  bg=param("bg", "#FFFFFF"))
+                  bg=param("bg", "#FFFFFF"),
+                  top_banner=param("top_banner", 0, cast=int))
     oid = post_pimg(url, out, tok)
     print(f"[grid-compose] {len(cells)} 张 -> {out.width}x{out.height} image={oid}", flush=True)
     emit(image=oid, width=out.width, height=out.height, count=len(cells))

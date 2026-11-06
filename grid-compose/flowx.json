@@ -1,8 +1,8 @@
 {
   "name": "grid-compose",
   "displayName": "朋友圈九宫格",
-  "description": "9 张图 → 3×3 朋友圈九宫格底图：每格 cover 裁方形，可调格尺寸/间隙/外边距/圆角/背景色，输出正方形画布。纯节点侧 PIL，不占显存。是「破框九宫格」效果的底层画布（配 breakout-compose 使用）；9 张对象 ID 可由 image-batch-load 批量产出",
-  "version": "1.0.0",
+  "description": "9 张图 → 3×3 朋友圈九宫格底图：每格 cover 裁方形，可调格尺寸/间隙/外边距/圆角/背景色；top_banner 可加顶部白色空区（人物破框的「画外空间」）。纯节点侧 PIL，不占显存。配 breakout-compose 使用；9 张对象 ID 可由 image-batch-load / beautify-batch 批量产出",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "image",
@@ -67,6 +67,12 @@
       "description": "最外圈边距（px）；人物破框越出的是「画布顶边」，margin 越大人物头顶留白越多"
     },
     {
+      "name": "top_banner",
+      "type": "integer",
+      "default": 0,
+      "description": "顶部空白区域高度（px，0=不加）；破框海报建议 = cell_size（一格高），人物头顶从 2/3 格伸进这块区域形成出框感；加了之后画布变为矩形"
+    },
+    {
       "name": "radius",
       "type": "integer",
       "default": 0,
@@ -94,6 +100,7 @@
     "GAP": "{{ Param.gap }}",
     "MARGIN": "{{ Param.margin }}",
     "RADIUS": "{{ Param.radius }}",
+    "TOP_BANNER": "{{ Param.top_banner }}",
     "BG": "{{ Param.bg }}",
     "SERVICE_TOKEN": "{{ Param.service_token }}"
   },

@@ -70,6 +70,12 @@ try:
 except ValueError:
     check("非法色值报 ValueError", True)
 
+# 7) top_banner：顶部加白区，格子整体下移，画布变矩形
+out4 = m.compose(cells, cell=100, gap=10, margin=10, top_banner=100)
+check("banner 画布 340x440", out4.size == (340, 440))
+check("banner 区是背景色", out4.getpixel((170, 30)) == (255, 255, 255))
+check("第一格下移到 banner 之下", out4.getpixel((60, 100 + 10 + 50)) == (0, 0, 0))
+
 print()
 if FAILED:
     print(f"{FAILED} 项失败")

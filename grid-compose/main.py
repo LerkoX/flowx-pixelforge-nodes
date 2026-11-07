@@ -69,7 +69,16 @@ def compose(cells, cell=640, gap=10, margin=10, radius=0, bg="#FFFFFF",
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
-    ids = load_ids(param("images"))
+    # 优先 img1~img9 独立入参（每格可绑不同上游：如可见格走风格化、遮挡格直连）；
+    # 一个都没绑时回退 images 列表（老接法）
+    singles = [param(f"img{i}", "").strip() for i in range(1, 10)]
+    if any(singles):
+        missing = [str(i + 1) for i, s in enumerate(singles) if not s]
+        if missing:
+            raise RuntimeError(f"grid-compose: img1~img9 需全部接齐，缺 img{'/img'.join(missing)}")
+        ids = singles
+    else:
+        ids = load_ids(param("images"))
     # 输入原图物化：画布对比控件的「原图」侧（取第一张）
     emit_input_media(url, ids[0] if ids else "", tok)
     cells = [get_pimg(url, oid, tok, mode="RGB") for oid in ids]

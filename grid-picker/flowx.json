@@ -1,8 +1,8 @@
 {
   "name": "grid-picker",
   "displayName": "九宫格选图编排",
-  "description": "上传 9 张底图 → 弹窗编排（点选两格互换位置、格内拖动调裁剪中心）→ 按焦点 cover 裁方 → 可选 beautify.auto 美化 → 合成 3×3 底图（格尺寸/间隙/边距/圆角/背景色/顶部白区可调），直喂 breakout-compose。编排结果存在 files/crops 参数里（弹窗自动写回）",
-  "version": "1.1.0",
+  "description": "上传 9 张底图 → 弹窗编排（点选两格互换位置、格内拖动调裁剪中心）→ 按焦点 cover 裁方 → 可选 beautify.auto 美化 → 以 img1~img9 独立输出（+ images 列表）供下游逐格精修/AI 风格化；拼接交 grid-compose（接收 9 张独立图）",
+  "version": "2.0.0",
   "author": "flowx-team",
   "tags": [
     "image",
@@ -40,42 +40,6 @@
       "description": "每格边长（px，正方形，按焦点 cover 裁切）"
     },
     {
-      "name": "gap",
-      "type": "integer",
-      "default": 10,
-      "description": "格子间隙（px，露出背景色）"
-    },
-    {
-      "name": "margin",
-      "type": "integer",
-      "default": 10,
-      "description": "外圈边距（px）"
-    },
-    {
-      "name": "top_banner",
-      "type": "integer",
-      "default": 0,
-      "description": "顶部空白区域高度（px，0=不加；破框海报建议=cell_size 一格高）"
-    },
-    {
-      "name": "radius",
-      "type": "integer",
-      "default": 0,
-      "description": "格子圆角半径（px，0=直角）"
-    },
-    {
-      "name": "bg",
-      "type": "string",
-      "default": "#FFFFFF",
-      "description": "背景色（#RRGGBB，朋友圈风格用 #FFFFFF）"
-    },
-    {
-      "name": "compose",
-      "type": "boolean",
-      "default": true,
-      "description": "合成 3×3 底图；关闭时只输出 images（9 张裁方图对象 ID 列表），供下游精修/AI 风格化后再交 grid-compose 拼图"
-    },
-    {
       "name": "beautify",
       "type": "boolean",
       "default": false,
@@ -102,7 +66,7 @@
     {
       "name": "slim",
       "type": "float",
-      "default": 0.10,
+      "default": 0.1,
       "description": "瘦脸强度 0~0.4（beautify=on 时生效）"
     },
     {
@@ -141,12 +105,6 @@
     "FILES": "{{ Param.files }}",
     "CROPS": "{{ Param.crops }}",
     "CELL_SIZE": "{{ Param.cell_size }}",
-    "COMPOSE": "{{ Param.compose }}",
-    "GAP": "{{ Param.gap }}",
-    "MARGIN": "{{ Param.margin }}",
-    "TOP_BANNER": "{{ Param.top_banner }}",
-    "RADIUS": "{{ Param.radius }}",
-    "BG": "{{ Param.bg }}",
     "BEAUTIFY": "{{ Param.beautify }}",
     "WHITEN": "{{ Param.whiten }}",
     "SMOOTH": "{{ Param.smooth }}",
@@ -159,29 +117,59 @@
   },
   "outputs": [
     {
-      "name": "image",
+      "name": "img1",
       "type": "string",
-      "description": "九宫格底图对象 ID（直喂 breakout-compose 的 grid）"
+      "description": "第 1 格（行优先）裁方图对象 ID"
     },
     {
-      "name": "width",
-      "type": "integer",
-      "description": "结果宽度（像素）"
+      "name": "img2",
+      "type": "string",
+      "description": "第 2 格（行优先）裁方图对象 ID"
     },
     {
-      "name": "height",
-      "type": "integer",
-      "description": "结果高度（像素）"
+      "name": "img3",
+      "type": "string",
+      "description": "第 3 格（行优先）裁方图对象 ID"
+    },
+    {
+      "name": "img4",
+      "type": "string",
+      "description": "第 4 格（行优先）裁方图对象 ID"
+    },
+    {
+      "name": "img5",
+      "type": "string",
+      "description": "第 5 格（行优先）裁方图对象 ID"
+    },
+    {
+      "name": "img6",
+      "type": "string",
+      "description": "第 6 格（行优先）裁方图对象 ID"
+    },
+    {
+      "name": "img7",
+      "type": "string",
+      "description": "第 7 格（行优先）裁方图对象 ID"
+    },
+    {
+      "name": "img8",
+      "type": "string",
+      "description": "第 8 格（行优先）裁方图对象 ID"
+    },
+    {
+      "name": "img9",
+      "type": "string",
+      "description": "第 9 格（行优先）裁方图对象 ID"
     },
     {
       "name": "images",
       "type": "string",
-      "description": "9 张裁方（+美化）图的对象 ID 列表（格序行优先；供下游精修/风格化后交 grid-compose 拼图）"
+      "description": "9 张裁方图对象 ID 列表（格序行优先）"
     },
     {
       "name": "count",
       "type": "integer",
-      "description": "合成张数（应为 9）"
+      "description": "输出张数（应为 9）"
     }
   ],
   "extract": {

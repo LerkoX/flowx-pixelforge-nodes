@@ -2,7 +2,7 @@
   "name": "grid-compose",
   "displayName": "朋友圈九宫格",
   "description": "9 张图 → 3×3 朋友圈九宫格底图：每格 cover 裁方形，可调格尺寸/间隙/外边距/圆角/背景色；top_banner 可加顶部白色空区（人物破框的「画外空间」）。纯节点侧 PIL，不占显存。配 breakout-compose 使用；9 张对象 ID 可由 image-batch-load / beautify-batch 批量产出",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "image",
@@ -40,13 +40,76 @@
     {
       "name": "images",
       "type": "string",
-      "required": true,
-      "description": "恰好 9 张图像对象 ID（行优先：左上→右下），JSON 数组或逗号分隔",
+      "required": false,
+      "description": "恰好 9 张图像对象 ID（行优先：左上→右下），JSON 数组或逗号分隔（未接 img1~img9 时使用）",
       "source": {
         "nodeRef": "image-batch-load",
         "output": "images",
         "description": "由 image-batch-load 批量上传目录后接入"
       }
+    },
+    {
+      "name": "img1",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 1 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img2",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 2 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img3",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 3 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img4",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 4 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img5",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 5 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img6",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 6 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img7",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 7 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img8",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 8 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
+    },
+    {
+      "name": "img9",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "第 9 格图（行优先；9 个全部接齐时优先于 images 列表，便于逐格挂不同上游）"
     },
     {
       "name": "cell_size",
@@ -102,7 +165,16 @@
     "RADIUS": "{{ Param.radius }}",
     "TOP_BANNER": "{{ Param.top_banner }}",
     "BG": "{{ Param.bg }}",
-    "SERVICE_TOKEN": "{{ Param.service_token }}"
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "IMG1": "{{ Param.img1 }}",
+    "IMG2": "{{ Param.img2 }}",
+    "IMG3": "{{ Param.img3 }}",
+    "IMG4": "{{ Param.img4 }}",
+    "IMG5": "{{ Param.img5 }}",
+    "IMG6": "{{ Param.img6 }}",
+    "IMG7": "{{ Param.img7 }}",
+    "IMG8": "{{ Param.img8 }}",
+    "IMG9": "{{ Param.img9 }}"
   },
   "outputs": [
     {

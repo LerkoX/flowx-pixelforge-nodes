@@ -69,17 +69,7 @@ with tempfile.TemporaryDirectory() as td:
     check("files 过滤不存在", fs == [str(p)])
     check("files 空给 []", m.parse_files("") == [])
 
-# 6) compose 版式（与 grid-compose 一致：top_banner 撑起白区）
-cells = [Image.new("RGB", (100, 100), (i * 20, 0, 0)) for i in range(9)]
-out = m.compose(cells, cell=100, gap=10, margin=10, top_banner=100)
-check("compose 尺寸 340x440", out.size == (340, 440))
-check("banner 区背景色", out.getpixel((170, 30)) == (255, 255, 255))
-try:
-    m.compose(cells[:8])
-    check("8 张应报错", False)
-except ValueError:
-    check("8 张报 ValueError", True)
-
+# 6) compose 已移交 grid-compose（本节点只裁方出 9 图）
 print()
 if FAILED:
     print(f"{FAILED} 项失败")

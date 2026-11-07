@@ -2,7 +2,6 @@ const WIDGET_SPEC = {
   icon: '🖼️',
   title: '破框九宫格合成',
   fields: [
-    { label: '拖拽舞台', kind: 'stage' },
     { key: 'grid', label: '九宫格底图对象 ID', kind: 'text', mono: true },
     { key: 'person', label: '人物图层（RGBA）对象 ID', kind: 'text', mono: true },
     { key: 'height_ratio', label: '人物身高 / 底图高度', kind: 'slider', min: 0.2, max: 1.6, step: 0.01, default: 0.9 },

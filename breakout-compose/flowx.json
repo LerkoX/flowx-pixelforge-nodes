@@ -2,7 +2,7 @@
   "name": "breakout-compose",
   "displayName": "破框九宫格合成",
   "description": "人物 RGBA 图层叠加到九宫格底图上：按「身高比例 + 中心 x + 脚底 y」锚定，头肩越出网格顶边形成破框出屏感；可选软投影强化 3D 纵深。纯节点侧 PIL，不占显存。上游：grid-compose（底图）+ matting-birefnet（人物 RGBA）",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "flowx-team",
   "tags": [
     "image",

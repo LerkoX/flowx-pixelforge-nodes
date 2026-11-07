@@ -4,13 +4,7 @@ const WIDGET_SPEC = {
   fields: [
     { label: '底图编排', kind: 'gridpicker', filesKey: 'files', cropsKey: 'crops' },
     { key: 'cell_size', label: '每格边长（px）', kind: 'slider', min: 256, max: 1024, step: 32, default: 640 },
-    { key: 'top_banner', label: '顶部白区（px，破框用=一格高）', kind: 'slider', min: 0, max: 1024, step: 32, default: 0 },
-    { key: 'gap', label: '格子间隙（px）', kind: 'slider', min: 0, max: 64, step: 1, default: 10 },
-    { key: 'margin', label: '外圈边距（px）', kind: 'slider', min: 0, max: 128, step: 1, default: 10 },
-    { key: 'radius', label: '格子圆角（px）', kind: 'slider', min: 0, max: 80, step: 1, default: 0 },
-    { key: 'bg', label: '背景色（#RRGGBB）', kind: 'text', mono: true, default: '#FFFFFF' },
     { key: 'beautify', label: '每格美化（美白/大眼/瘦脸）', kind: 'check', default: false },
-    { key: 'compose', label: '合成九宫格底图（关=只出 9 张图列表，供下游精修/风格化）', kind: 'check', default: true },
     { key: 'whiten', label: '美白强度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, advanced: true },
     { key: 'smooth', label: '磨皮强度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.4, advanced: true },
     { key: 'eye', label: '大眼强度', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0.12, advanced: true },
@@ -20,5 +14,5 @@ const WIDGET_SPEC = {
     { key: 'service_url_host', label: 'service_url_host（可空）', kind: 'text', mono: true, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  note: '点「✏️ 编排九宫格」弹窗：批量上传 → 点选两格互换 · 格内拖动调裁剪中心 → 完成写回后运行',
+  note: '点「✏️ 编排九宫格」弹窗：批量上传 → 点选两格互换 · 格内拖动调裁剪中心 → 完成写回后运行；输出 img1~img9 独立图，拼接交 grid-compose',
 };

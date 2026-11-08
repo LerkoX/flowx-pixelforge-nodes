@@ -128,23 +128,56 @@ def main():
                     wrote += 1
     # 算子族分发：_common/server_ops/<族>.py → 成员节点 server_op.py
     # 分发前先按内容打版本戳（F1：算子名 = <基名>@<族内容 hash12>）
+    #
+    # 依赖内联（2026-11-08 起）：族文件可写
+    #   # --- sync-common 内联点：<dep> 通用件（分发时拼接，勿手动复制）---
+    #   from <dep> import (...)
+    #   # --- 内联点结束 ---
+    # <dep>.py 须存在于 _common/server_ops/（如 comfy_quant.py——ComfyUI 量化
+    # 格式通用适配层，非算子族不进 OP_FAMILIES）。分发时把 <dep> 全文内联到
+    # 标记处（插件上传是单文件机制），版本戳按**拼接后**文本计算；源文件保留
+    # import 标记保持可编辑，只同步 OP_VERSION 行。
     fam_dir = ROOT / "_common" / "server_ops"
+    inline_re = re.compile(
+        r"# --- sync-common 内联点：[^\n]*\n"
+        r"from (\w+) import \([^)]*\)\n"
+        r"# --- 内联点结束 ---")
+
+    def inline_deps(text):
+        m = inline_re.search(text)
+        if not m:
+            return text
+        dep_name = m.group(1)
+        dep_file = fam_dir / f"{dep_name}.py"
+        if not dep_file.exists():
+            raise SystemExit(
+                f"✗ 内联依赖 {dep_name}.py 不存在于 _common/server_ops/")
+        dep = dep_file.read_text()
+        return (text[:m.start()]
+                + f"# --- 以下为 {dep_name}.py 内联（sync-common 自动生成，勿改）---\n"
+                + dep
+                + "\n# --- 内联结束 ---\n"
+                + text[m.end():])
+
     versions = {}
     for fam in sorted(OP_FAMILIES):
         src = fam_dir / fam
         text = src.read_text()
-        stamped, ver = stamp_family(text, fam)
+        inlined = inline_deps(text)
+        stamped, ver = stamp_family(inlined, fam)
         versions[fam] = ver
-        if stamped != text:
+        # 源文件只同步版本戳行（保留 import 标记）
+        stamped_src = STAMP_RE.sub(f'OP_VERSION = "{ver}"', text, count=1)
+        if stamped_src != text:
             if check:
                 drift.append(f"_common/server_ops/{fam}（版本戳过期"
                              f"：应为 {ver}）")
             else:
-                src.write_text(stamped)
+                src.write_text(stamped_src)
                 wrote += 1
     for fam, members in sorted(OP_FAMILIES.items()):
         src = fam_dir / fam
-        want = src.read_text()
+        want = inline_deps(src.read_text())
         for member in members:
             dst = ROOT / member / "server_op.py"
             if not dst.exists() or dst.read_text() != want:

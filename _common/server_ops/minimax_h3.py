@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "83df99f96831"
+OP_VERSION = "7a86fac114af"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -527,6 +527,65 @@ def _build_schedulers(shift_video=None, shift_audio=None):
     return sched, audio_sched
 
 
+def _decode_video_reference(path):
+    """mp4 落盘文件 → VideoReference 素材（frames/fps/audio/sample_rate）。
+
+    与服务端 /audios 同风格：ffmpeg/ffprobe 子进程（无 PyAV 依赖）。
+    frames 解码为 PIL 列表（官方 VideoReference 接受 list[PIL]）；音频
+    可选（无音轨返回 None）。
+    """
+    import subprocess
+
+    from PIL import Image
+
+    # ① 几何与帧率
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height,r_frame_rate",
+         "-of", "csv=p=0", path],
+        capture_output=True, text=True, timeout=60)
+    if probe.returncode != 0 or not probe.stdout.strip():
+        raise ValueError(f"ffprobe 无法解析视频: {path}: {probe.stderr[:200]}")
+    w_s, h_s, rate_s = probe.stdout.strip().split(",")
+    width, height = int(w_s), int(h_s)
+    num, _, den = rate_s.partition("/")
+    fps = float(num) / float(den) if den and float(den) else float(num)
+
+    # ② 逐帧 rgb24 裸流
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path,
+         "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, timeout=600)
+    if raw.returncode != 0:
+        raise ValueError(f"ffmpeg 视频解码失败: {raw.stderr[:200]}")
+    frame_bytes = width * height * 3
+    n_frames = len(raw.stdout) // frame_bytes
+    if n_frames == 0:
+        raise ValueError(f"视频无有效帧: {path}")
+    frames = [
+        Image.frombytes("RGB", (width, height),
+                        raw.stdout[i * frame_bytes:(i + 1) * frame_bytes])
+        for i in range(n_frames)]
+
+    # ③ 音轨（可选）：f32le 双声道 32kHz
+    audio, sample_rate = None, None
+    snd = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path,
+         "-vn", "-f", "f32le", "-acodec", "pcm_f32le",
+         "-ac", "2", "-ar", "32000", "-"],
+        capture_output=True, timeout=300)
+    if snd.returncode == 0 and len(snd.stdout) >= 8:
+        import numpy as np
+        import torch
+        pcm = np.frombuffer(snd.stdout, dtype=np.float32)
+        if pcm.size >= 2:
+            audio = torch.from_numpy(
+                pcm.reshape(-1, 2).T.copy())  # (2, N)
+            sample_rate = 32000
+    return {"frames": frames, "fps": fps,
+            "audio": audio, "sample_rate": sample_rate}
+
+
 def _build_references(references_json):
     """references JSON → 官方 Reference 对象列表（ref2va 的输入构造）。
 
@@ -561,8 +620,16 @@ def _build_references(references_json):
                 pil = data if not isinstance(data, list) else data[0]
                 refs.append(MiniMaxH3ImageReference(image=pil))
             elif rtype == "video":
-                v = store.get(rid, "VIDEO")["data"]
-                # gen 产物的内存形态：frames(PIL 列表)/fps/audio/sample_rate
+                path = item.get("path")
+                if path:
+                    # 落盘文件路径（POST /videos 返回的服务端路径）
+                    if not os.path.isfile(path):
+                        raise ValueError(
+                            f"references[{i}] 视频文件不存在: {path}")
+                    v = _decode_video_reference(path)
+                else:
+                    v = store.get(rid, "VIDEO")["data"]
+                    # gen 产物的内存形态：frames/fps/audio/sample_rate
                 refs.append(MiniMaxH3VideoReference(
                     frames=v["frames"], fps=float(v.get("fps") or 24.0),
                     audio=v.get("audio"),

@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "b8c2061cd573"
+OP_VERSION = "2e8d8444afba"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -919,6 +919,64 @@ def _build_schedulers():
     return sched, audio_sched
 
 
+def _build_references(references_json):
+    """references JSON → 官方 Reference 对象列表（ref2va 的输入构造）。
+
+    格式：[{"type": "image"|"video"|"audio", "id": "<对象仓库 id>"}]
+    顺序即语义（prompt 里的 <Picture i>/<Video k>/<Audio j> 标注按此编号）。
+    上限：9 图 + 3 视频 + 3 音频 = 12（官方 checkpoint 文档值，setup step
+    会再校验一遍）。音频参考不能单独出现。
+    """
+    import json as _json
+
+    from diffusers.modular_pipelines.minimax_h3.references import (
+        MiniMaxH3AudioReference, MiniMaxH3ImageReference,
+        MiniMaxH3VideoReference)
+
+    try:
+        spec = _json.loads(references_json)
+    except ValueError as e:
+        raise ValueError(f"minimax.h3.gen: references JSON 解析失败: {e}")
+    if not isinstance(spec, list) or not spec:
+        raise ValueError("minimax.h3.gen: references 须为非空 JSON 数组")
+
+    from app.main import store  # 延迟导入：插件注册时 main 未必就绪
+
+    refs = []
+    for i, item in enumerate(spec):
+        if not isinstance(item, dict):
+            raise ValueError(f"references[{i}] 须为对象 {{'type','id'}}")
+        rtype, rid = item.get("type"), item.get("id")
+        try:
+            if rtype == "image":
+                data = store.get(rid, "IMAGE")["data"]
+                pil = data if not isinstance(data, list) else data[0]
+                refs.append(MiniMaxH3ImageReference(image=pil))
+            elif rtype == "video":
+                v = store.get(rid, "VIDEO")["data"]
+                # gen 产物的内存形态：frames(PIL 列表)/fps/audio/sample_rate
+                refs.append(MiniMaxH3VideoReference(
+                    frames=v["frames"], fps=float(v.get("fps") or 24.0),
+                    audio=v.get("audio"),
+                    sample_rate=v.get("sample_rate")))
+            elif rtype == "audio":
+                a = store.get(rid, "AUDIO")["data"]
+                refs.append(MiniMaxH3AudioReference(
+                    audio=a["audio"], sample_rate=a.get("sample_rate")))
+            else:
+                raise ValueError(
+                    f"references[{i}].type 须为 image/video/audio，"
+                    f"收到 {rtype!r}")
+        except (KeyError, TypeError) as e:
+            raise ValueError(f"references[{i}] 对象不存在或类型不对: {e}")
+    n_img = sum(1 for r in refs if r.kind == "image")
+    n_vid = sum(1 for r in refs if r.kind == "video")
+    n_aud = sum(1 for r in refs if r.kind == "audio")
+    print(f"[minimax-h3] references: {n_img} 图 + {n_vid} 视频 + "
+          f"{n_aud} 音频（上限 9/3/3）", flush=True)
+    return refs
+
+
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
 
@@ -986,9 +1044,11 @@ def register(registry):
 
         # ④ 管道装配（ModularPipeline API 是 register_components——
         # DiffusionPipeline 的 register_modules 它没有，真机实测 AttributeError）
+        # ref2va 权重挂 transformer_ref 组件位（与 transformer config 同构，
+        # 官方一个仓库两个 checkpoint 分区，workflow 各载各的）
+        is_ref = "ref2va" in transformer
         pipe = MiniMaxH3ModularPipeline()
         pipe.register_components(
-            transformer=transformer_m,
             text_encoder=text_encoder_m,
             vae=video_vae_m,
             audio_vae=audio_vae_m,
@@ -996,12 +1056,18 @@ def register(registry):
             processor=processor,
             scheduler=scheduler,
             audio_scheduler=audio_scheduler,
+            **({"transformer_ref": transformer_m} if is_ref
+               else {"transformer": transformer_m}),
         )
 
         # ⑤ offload：大组件逐层 swap（24GB 卡跑 bf16 的必由之路）
         if offload == "sequential" and device.type == "cuda":
-            pipe.transformer = _sequential_offload(
-                pipe.transformer, device, "transformer")
+            comp = pipe.transformer_ref if is_ref else pipe.transformer
+            comp = _sequential_offload(comp, device, "transformer")
+            if is_ref:
+                pipe.transformer_ref = comp
+            else:
+                pipe.transformer = comp
             pipe.text_encoder = _sequential_offload(
                 pipe.text_encoder, device, "text_encoder")
 
@@ -1013,7 +1079,8 @@ def register(registry):
         if device.type == "cuda":
             class _ExecDeviceSentinel:
                 execution_device = "cuda"
-            pipe.transformer._hf_hook = _ExecDeviceSentinel()
+            tr = pipe.transformer_ref if is_ref else pipe.transformer
+            tr._hf_hook = _ExecDeviceSentinel()
             pipe.text_encoder._hf_hook = _ExecDeviceSentinel()
 
         def _sz(p):
@@ -1029,16 +1096,19 @@ def register(registry):
         "minimax.h3.gen",
         inputs={"model": "MODEL", "prompt": "STRING",
                 "image": "IMAGE", "last_image": "IMAGE",
+                "references": "STRING",
                 "num_frames": "INT", "seed": "INT", "steps": "INT",
                 "preview_every": "INT"},
         outputs={"video": "VIDEO", "seed": "INT"},
-        description="MiniMax-H3 生成：fl2va（首/末帧）或 t2va（纯文本）→ "
+        description="MiniMax-H3 生成：fl2va（首/末帧）或 t2va（纯文本）或 "
+                    "ref2va（references JSON：图/视频/音频参考列表，上限 "
+                    "9图+3视频+3音频，prompt 里用 <Picture 1> 等点名）→ "
                     "联合视频+音频。guidance-distilled 无负提示/cfg；24fps 固定，"
                     "num_frames 自动对齐 17n+5（5~15s）。输出 VIDEO 含 32kHz "
                     "立体声音轨（encode_mp4 时 mux 进 mp4）。分钟级任务，"
                     "请经 POST /jobs 异步执行")
     def _op_gen(model, prompt="", image=None, last_image=None, num_frames=125,
-                seed=-1, steps=4, preview_every=0):
+                seed=-1, steps=4, preview_every=0, references=""):
         import random
 
         import torch
@@ -1048,6 +1118,19 @@ def register(registry):
         pipe = model
         if not prompt:
             raise ValueError("minimax.h3.gen: prompt 必填（H3 是强文本引导模型）")
+
+        # ref2va：references JSON 列表 [{'type':'image|video|audio','id':'<对象id>'}]
+        # —— 与 image/last_image 互斥（官方 Auto blocks 的分流优先级是
+        # references > keyframes > 纯文本）
+        refs = _build_references(references) if references else None
+        if refs and (image is not None or last_image is not None):
+            raise ValueError(
+                "minimax.h3.gen: references 与 image/last_image 互斥"
+                "（ref2va 与 fl2va 是两个 checkpoint 分区）")
+        if refs and getattr(pipe, "transformer_ref", None) is None:
+            raise ValueError(
+                "minimax.h3.gen: 当前模型不是 ref2va 装配"
+                "（load 时 transformer 需选 *_ref2va_* 权重）")
 
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)
@@ -1065,6 +1148,8 @@ def register(registry):
 
         kwargs = {"prompt": prompt, "num_frames": aligned,
                   "num_inference_steps": int(steps), "generator": gen}
+        if refs:
+            kwargs["references"] = refs
         if image is not None:
             kwargs["image"] = image
         if last_image is not None:

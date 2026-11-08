@@ -3,7 +3,7 @@ const WIDGET_SPEC = {
   title: 'MiniMax H3 加载',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
-    { key: 'transformer', label: 'transformer int8 文件名', kind: 'text', mono: true, default: 'minimax_h3_fl2va_int8_convrot.safetensors' },
+    { key: 'transformer', label: 'transformer int8 文件名（ref2va 文件走参考模式）', kind: 'text', mono: true, default: 'minimax_h3_fl2va_int8_convrot.safetensors' },
     { key: 'text_encoder', label: 'Qwen3VL 文本塔 int8 文件名', kind: 'text', mono: true, default: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors' },
     { key: 'video_vae', label: '视频 VAE（diffusers 目录名）', kind: 'text', mono: true, default: 'vae-diffusers' },
     { key: 'audio_vae', label: '音频 VAE 官方文件名', kind: 'text', mono: true, default: 'minimax_h3_audio_vae_official.safetensors' },

@@ -40,7 +40,7 @@
     {
       "name": "transformer",
       "type": "string",
-      "description": "transformer int8 权重文件名（/models/minimax-h3/diffusion_models 下）",
+      "description": "transformer int8 文件名。fl2va（首末帧/t2v）或 ref2va（参考生成，挂到 transformer_ref 分区）——文件名含 ref2va 即走参考模式",
       "required": false,
       "default": "minimax_h3_fl2va_int8_convrot.safetensors"
     },
@@ -68,7 +68,7 @@
     {
       "name": "lora",
       "type": "string",
-      "description": "可选 turbo LoRA 文件名（/models/minimax-h3/loras 下；留空不挂。4 步出片的关键）",
+      "description": "可选 turbo LoRA 文件名（/models/minimax-h3/loras 下；留空不挂）。fl2va 配 *_fl2v_turbo_*，ref2va 配 *_ref2v_turbo_*（别混挂）",
       "required": false,
       "default": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"
     },

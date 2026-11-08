@@ -2825,6 +2825,7 @@ const WIDGET_SPEC = {
     { key: 'prompt', label: '提示词（画面+运动+声音描述）（prompt）', kind: 'text', mono: true },
     { key: 'image', label: '首帧 IMAGE 对象 ID（image，可空）', kind: 'text', mono: true },
     { key: 'last_image', label: '末帧 IMAGE 对象 ID（last_image，可空）', kind: 'text', mono: true },
+    { key: 'references', label: 'ref2va 参考列表 JSON（与首尾帧互斥）', kind: 'text', mono: true },
     { key: 'num_frames', label: '帧数（125 帧 @24fps ≈ 5.2 秒）（num_frames）', kind: 'text', default: 117 },
     { key: 'steps', label: '采样步数（turbo-4step LoRA 填 5 = 4 次评估）', kind: 'slider', min: 2, max: 60, step: 1, default: 5 },
     { key: 'seed', label: '随机种子（seed）', kind: 'text', default: -1 },

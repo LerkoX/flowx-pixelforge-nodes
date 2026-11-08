@@ -35,8 +35,12 @@ def main():
     last_id = param("last_image", "")
     if last_id:
         inputs["last_image"] = ref(last_id)
-
-    mode = "fl2va" if (image_id or last_id) else "t2va"
+    # ref2va：references JSON 原样透传（服务端校验格式与对象类型）
+    refs = param("references", "")
+    if refs.strip():
+        inputs["references"] = refs
+    mode = ("ref2va" if refs.strip()
+            else ("fl2va" if (image_id or last_id) else "t2va"))
     print(f"[minimax-h3-gen] mode={mode} frames={inputs['num_frames']} "
           f"steps={inputs['steps']} seed={inputs['seed']}", flush=True)
 

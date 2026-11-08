@@ -1,0 +1,127 @@
+{
+  "name": "minimax-h3-gen",
+  "displayName": "MiniMax H3 生成",
+  "description": "MiniMax-H3 联合视频+音频生成（fl2va 首末帧 / t2va 文生）。guidance-distilled：无负提示、无 cfg；24fps 固定，5~15 秒（num_frames 自动对齐 17n+5）；挂 turbo LoRA 时 4 步出片。输出 VIDEO（含 32kHz 立体声音轨，落盘自动 mux 进 mp4）。分钟级任务，走异步 /jobs+轮询。自包含节点：server_op.py 运行时自注册（需服务端 INFERENCE_TOKEN）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "minimax",
+    "h3",
+    "video",
+    "audio",
+    "inference"
+  ],
+  "icon": "🎞️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "MiniMax-H3 MODEL 组件引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "minimax-h3-load",
+        "output": "model",
+        "description": "由 MiniMax H3 加载节点输出提供"
+      }
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "提示词（视频内容/运动/声音描述；H3 是强文本引导模型，必填）",
+      "required": true
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "可选：首帧 IMAGE 对象 ID（fl2va；留空纯文生 t2va）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "last_image",
+      "type": "string",
+      "description": "可选：末帧 IMAGE 对象 ID（与首帧配合做首尾帧插值）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "num_frames",
+      "type": "number",
+      "description": "帧数（24fps：125 帧≈5.2s，365 帧≈15.2s；自动对齐 17n+5）",
+      "required": false,
+      "default": 125
+    },
+    {
+      "name": "steps",
+      "type": "number",
+      "description": "采样步数（挂 turbo LoRA 用 4；无 LoRA 建议 30~50）",
+      "required": false,
+      "default": 4
+    },
+    {
+      "name": "seed",
+      "type": "number",
+      "description": "随机种子（-1 随机）",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "number",
+      "required": false,
+      "default": 7200,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "number",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "VIDEO 对象 ID（含音轨 mp4，GET /videos/{id} 下载）"
+    },
+    {
+      "name": "seed",
+      "type": "number",
+      "description": "实际使用的随机种子"
+    }
+  ]
+}

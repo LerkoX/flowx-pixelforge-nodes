@@ -384,6 +384,9 @@ def _render_kp(candidate, subset, width, height, include_hand, include_face):
     W, H = int(width), int(height)
     cand = np.asarray(candidate, dtype=np.float32).reshape(134, 2).copy()
     sub = np.asarray(subset, dtype=np.float32).reshape(134).copy()
+    # 坐标钳制到画布内：DWPose 的 bbox padding 会把部分点外推到画布外，
+    # 这些点渲染时被裁掉、widget 上也拖不到（越界后无法命中/拖回）。
+    np.clip(cand, 0.0, 1.0, out=cand)
     cand[sub < 0.3] = -1
     body = cand[:18]
     score = sub[:18].copy()
@@ -422,11 +425,18 @@ def pose_detect(image, include_hand=True, include_face=False):
     sub = subset[best].copy()          # (134,)
     cand[:, 0] /= float(W)
     cand[:, 1] /= float(H)
+    # 记录被外推到画布外的点（钳制前），供 widget 标 ⚠️ 提示手动修正
+    oob = [int(i) for i in range(cand.shape[0])
+           if not (0.0 <= cand[i][0] <= 1.0 and 0.0 <= cand[i][1] <= 1.0)]
+    np.clip(cand, 0.0, 1.0, out=cand)
+    if oob:
+        print(f"[pose.detect] {len(oob)} 个关键点越界已钳制: {oob}", flush=True)
     img = _render_kp(cand, sub, W, H, bool(include_hand), bool(include_face))
     kp = {"width": W, "height": H,
           "candidate": [[round(float(x), 5), round(float(y), 5)]
                         for x, y in cand],
-          "subset": [round(float(s), 4) for s in sub]}
+          "subset": [round(float(s), 4) for s in sub],
+          "out_of_bounds": oob}
     print(f"[pose.detect] {image.size} -> {img.size} "
           f"hand={bool(include_hand)} face={bool(include_face)}", flush=True)
     return {"image": img, "keypoints": json.dumps(kp), "width": W,

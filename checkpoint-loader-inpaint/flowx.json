@@ -1,8 +1,8 @@
 {
   "name": "checkpoint-loader-inpaint",
   "displayName": "Checkpoint 加载 Inpaint",
-  "description": "加载 SD1.x Inpainting checkpoint（9 通道 UNet），输出 model/clip/vae；内部临时把 sniff 结果改为 StableDiffusionInpaintPipeline，适配 ChilloutMix Inpainting 等单文件模型。",
-  "version": "1.0.0",
+  "description": "加载 Inpainting checkpoint（9 通道 UNet，SD1.x/SDXL），输出 model/clip/vae；按路径名（单文件名或 diffusers 目录名）自动映射到对应的 *InpaintPipeline，支持 ChilloutMix Inpainting 等单文件模型与 RealisticVision V5.1 Inpainting 等 diffusers 目录模型。",
+  "version": "1.0.1",
   "author": "flowx-team",
   "tags": [
     "sd",

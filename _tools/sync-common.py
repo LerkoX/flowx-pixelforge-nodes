@@ -98,6 +98,8 @@ OP_FAMILIES = {
     # 人像美化族（九宫格 v2）：裁方 + 美白磨皮 + 大眼瘦脸（68 关键点 + IDW 位移场）
     "beautify.py": ["beautify-batch", "grid-picker"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
+    # MiniMax-H3 联合视频+音频（load 装配 + gen 生成两节点共享同族文件）
+    "minimax_h3.py": ["minimax-h3-load", "minimax-h3-gen"],
     # G12 视频流（P2 视频到视频）：视频 I/O（load/to_frames/encode）+ v2v
     # （repaint 逐帧重绘 / sample_v2v 原生 v2v）。五节点共享同族文件：
     # 解码 helper 只有一份，都注册同 5 个算子（同内容=同文件=幂等上传）。

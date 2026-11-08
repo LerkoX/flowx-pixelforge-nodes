@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "5e1cbc29bb3e"
+OP_VERSION = "fa1102ad3e36"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -122,7 +122,14 @@ def _install_torch_compat():
         print("[flux] torch.nn.RMSNorm patched (torch<2.4)", flush=True)
 
     import torch.nn.functional as F
-    if not getattr(F.scaled_dot_product_attention, "_flux_gqa_shim", False):
+    # enable_gqa 是 torch 2.5+ 的 SDPA 参数：仅老 torch 需要剥离 shim，
+    # 新 torch（如 M 栈 2.13）装上反而会拦截 H3 的 GQA 注意力（真机踩坑）。
+    def _ver_tuple():
+        import re
+        m = re.match(r"(\d+)\.(\d+)", torch.__version__)
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+    if _ver_tuple() < (2, 5) and not getattr(
+            F.scaled_dot_product_attention, "_flux_gqa_shim", False):
         _orig = F.scaled_dot_product_attention
 
         def _sdpa_shim(*a, **kw):
@@ -289,6 +296,58 @@ def _require_file(path, what):
     if not os.path.isfile(path):
         raise ValueError(f"flux: 缺 {what}（{path}）")
     return path
+
+
+# FLUX.1 Fill dev 的 transformer 结构（与基础版唯一差别是 in_channels）：
+# Fill 把「噪声 latent(64) + 被遮图 latent(64) + 蒙版(256)」拼成 384 通道输入；
+# 基础版是 64。用基础版 config 加载 Fill GGUF 会直接报
+# `x_embedder.weight expected shape [3072, 64], but got [3072, 384]`。
+_FLUX_FILL_CONFIG = {
+    "_class_name": "FluxTransformer2DModel",
+    "attention_head_dim": 128,
+    "axes_dims_rope": [16, 56, 56],
+    "guidance_embeds": True,   # Fill dev 基于 dev，带蒸馏 guidance（False 会让 guidance_scale 失效）
+    "in_channels": 384,   # 输入：noisy latent 64 + masked latent 64 + mask 256
+    # 输出仍是 64 通道 latent（proj_out 384×3072 是错的：Fill 只多扩输入层）
+    "out_channels": 64,
+    "joint_attention_dim": 4096,   # T5-XXL 维度（2048 会报 context_embedder 形状不符）
+    "num_attention_heads": 24,
+    "num_layers": 19,
+    "num_single_layers": 38,
+    "patch_size": 1,
+    "pooled_projection_dim": 768,
+}
+
+
+def _unet_config_dir(transformer):
+    """按权重文件名选择 transformer config 目录。
+
+    顺序：`/models/flux/transformer-<变体>/config.json`（用户放的真实 config，优先）
+    → 内置 config（写临时目录，仅 fill 有内置值）。
+    为什么不能只看一个 config.json：Fill（in_channels=384）与基础版（64）的
+    x_embedder 形状不同，同一份 config 不可能同时服务两者（exec 1222 实测报错）。
+    """
+    is_fill = "fill" in str(transformer or "").lower()
+    if not is_fill:
+        cfg = os.path.join(FLUX_DIR, "transformer", "config.json")
+        if not os.path.isfile(cfg):
+            raise ValueError(
+                "flux: 缺 transformer config（/models/flux/transformer/config.json）")
+        return os.path.dirname(cfg)
+    # 内置 fill config → 落临时目录（不污染 /models 只读挂载）
+    import json as _json
+    import tempfile as _tempfile
+    d = os.path.join(_tempfile.gettempdir(), "flux-fill-transformer-config")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        _json.dump(_FLUX_FILL_CONFIG, f)
+    print(f"[flux] fill transformer config → {path} "
+          f"(in_channels={_FLUX_FILL_CONFIG['in_channels']}, "
+          f"joint_attention_dim={_FLUX_FILL_CONFIG['joint_attention_dim']}, "
+          f"layers={_FLUX_FILL_CONFIG['num_layers']}/{_FLUX_FILL_CONFIG['num_single_layers']})",
+          flush=True)
+    return d
 
 
 class FluxClipBundle:
@@ -535,13 +594,11 @@ def register(registry):
             return {"model": models.get(key)}
         tr_path = _require_file(os.path.join(FLUX_DIR, transformer),
                                 "transformer GGUF")
-        tr_cfg = _require_file(
-            os.path.join(FLUX_DIR, "transformer", "config.json"),
-            "transformer config")
+        tr_cfg_dir = _unet_config_dir(transformer)
         t0 = time.time()
         quant = GGUFQuantizationConfig(compute_dtype=_FLUX_DTYPES[dt])
         tr = FluxTransformer2DModel.from_single_file(
-            tr_path, config=os.path.dirname(tr_cfg),
+            tr_path, config=tr_cfg_dir,
             quantization_config=quant, torch_dtype=_FLUX_DTYPES[dt])
         print(f"[flux] transformer {transformer} dtype={dt} "
               f"{time.time()-t0:.1f}s", flush=True)

@@ -1,0 +1,85 @@
+{
+  "name": "video-concat",
+  "version": "1.0.0",
+  "displayName": "视频拼接",
+  "description": "多段视频对象拼接为一条长视频：视频流滤镜 concat（重编码）+ 音频 acrossfade 交叉淡化——长视频工作流的合成收尾",
+  "category": "video",
+  "language": "python",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "file_path",
+      "type": "string",
+      "description": "拼接后长视频本地路径"
+    },
+    {
+      "name": "duration",
+      "type": "float",
+      "description": "总时长（秒）"
+    },
+    {
+      "name": "segments",
+      "type": "int",
+      "description": "拼接段数"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "videos",
+      "type": "string",
+      "description": "视频对象 ID 列表（逗号分隔，按顺序拼接；可用 {{ A.video }},{{ B.video }} 模板拼）",
+      "required": true
+    },
+    {
+      "name": "crossfade",
+      "type": "float",
+      "description": "段间音频交叉淡化秒数（0=硬切；0.3~0.8 自然）",
+      "required": false,
+      "default": 0.5
+    },
+    {
+      "name": "filename_prefix",
+      "type": "string",
+      "description": "输出文件名前缀",
+      "required": false,
+      "default": "flowx-long"
+    },
+    {
+      "name": "output_dir",
+      "type": "string",
+      "description": "输出目录（须在 server 媒体白名单内）",
+      "required": false,
+      "default": "~/flowx-output"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "files": [
+    "flowx_client.py"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 480,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  },
+  "entry": "main.py"
+}

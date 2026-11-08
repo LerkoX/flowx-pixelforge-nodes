@@ -1,0 +1,71 @@
+{
+  "name": "video-last-frame",
+  "version": "1.0.0",
+  "displayName": "视频末帧",
+  "description": "下载推理服务视频对象，抽最后一帧上传为 IMAGE 对象——长视频末帧续接的闭环件（下一段 H3Gen 的 image 输入）",
+  "category": "video",
+  "language": "python",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "image",
+      "type": "IMAGE",
+      "description": "末帧图像对象 ID（可接 H3Gen.image）"
+    },
+    {
+      "name": "width",
+      "type": "int",
+      "description": "帧宽"
+    },
+    {
+      "name": "height",
+      "type": "int",
+      "description": "帧高"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "description": "视频对象 ID（上游 Gen 节点的 video 输出）",
+      "required": true
+    },
+    {
+      "name": "offset",
+      "type": "float",
+      "description": "从末尾回退秒数抽帧（0.2s 避开黑场尾帧）",
+      "required": false,
+      "default": 0.2
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "files": [
+    "flowx_client.py"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local"
+  },
+  "entry": "main.py"
+}

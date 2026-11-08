@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "2e8d8444afba"
+OP_VERSION = "bbf82d3b58b1"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -488,16 +488,25 @@ def _build_tokenizer_processor():
     return tok, proc
 
 
-def _build_schedulers():
-    """双 scheduler：video shift=12.0 / audio shift=3.0（官方契约）。"""
+def _build_schedulers(shift_video=None, shift_audio=None):
+    """双 scheduler：video shift=12.0 / audio shift=3.0（官方契约）。
+    shift 参数覆盖 config 值（shift 控动态范围/细节——官方 ComfyUI 工作流
+    的可调项；None = 官方默认）。"""
     from diffusers import MiniMaxH3Scheduler
 
-    sched = MiniMaxH3Scheduler.from_config(
-        os.path.join(H3_CONFIG_DIR, "scheduler", "scheduler_config.json")) \
-        if os.path.isfile(os.path.join(
-            H3_CONFIG_DIR, "scheduler", "scheduler_config.json")) \
+    cfg_path = os.path.join(H3_CONFIG_DIR, "scheduler", "scheduler_config.json")
+    cfg = {}
+    if os.path.isfile(cfg_path):
+        import json as _json
+        with open(cfg_path) as f:
+            cfg = {k: v for k, v in _json.load(f).items()
+                   if not k.startswith("_")}
+    if shift_video is not None:
+        cfg["shift"] = float(shift_video)
+    sched = MiniMaxH3Scheduler.from_config(cfg) if cfg else MiniMaxH3Scheduler()
+    acfg = {"shift": float(shift_audio)} if shift_audio is not None else {}
+    audio_sched = MiniMaxH3Scheduler.from_config(acfg) if acfg \
         else MiniMaxH3Scheduler()
-    audio_sched = MiniMaxH3Scheduler()
     return sched, audio_sched
 
 
@@ -559,8 +568,174 @@ def _build_references(references_json):
     return refs
 
 
+def _sz_path(p):
+    """文件/目录体积（目录递归 walk）。"""
+    if os.path.isdir(p):
+        return sum(os.path.getsize(os.path.join(dp, f))
+                   for dp, _, fs in os.walk(p) for f in fs)
+    return os.path.getsize(p)
+
+
+def _arm_offload(module, device, offload, name):
+    """逐层 offload hook + _execution_device sentinel 一体化挂载。
+
+    sentinel：diffusers 靠组件的 _hf_hook.execution_device 推断执行设备
+    （真机读源码确认）；没有 _hf_hook 的组件会回落 pipe.device=cpu →
+    input_ids 留在 cpu 撞上已上卡的 embedding（index_select 设备冲突）。
+    挂 sentinel 指明 cuda；无 pre_forward 属性，encoders.py 的手动 hook
+    触发安全跳过。
+    """
+    if device.type != "cuda":
+        return module
+    if offload == "sequential":
+        module = _sequential_offload(module, device, name)
+
+    class _ExecDeviceSentinel:
+        execution_device = "cuda"
+    module._hf_hook = _ExecDeviceSentinel()
+    return module
+
+
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
+
+    # ============ 拆分装配算子（SD 风：组件各自加载/设置，pipe 组装）============
+    # 缓存键带组件前缀（minimax-h3:tr:/te:/vae:/pipe:），与一体版
+    # minimax-h3:<...> 互不冲突。组件常驻 model_manager LRU（跨执行复用：
+    # 换 VAE 不重装 32GB transformer）。pipe est=0——组件已各自记账，不重复计。
+
+    @registry.register(
+        "minimax.h3.transformer_load",
+        inputs={"transformer": "STRING", "lora": "STRING",
+                "lora_scale": "FLOAT", "dtype": "STRING", "offload": "STRING"},
+        outputs={"transformer": "TRANSFORMER"},
+        description="H3 transformer 组件加载（int8 反量化 + 可选 LoRA + 逐层 "
+                    "offload + sentinel）。文件名含 ref2va 自动标记参考分区")
+    def _op_tr_load(transformer="minimax_h3_fl2va_int8_convrot.safetensors",
+                    lora="", lora_scale=1.0, dtype="bf16", offload="sequential"):
+        import torch
+
+        key = f"minimax-h3:tr:{transformer}|{lora}@{lora_scale}|{dtype}|{offload}"
+        models = _models()
+        if key in models._pipes:
+            return {"transformer": models.get(key)}
+        tr_path = _require_file(
+            os.path.join(H3_DIR, "diffusion_models", transformer), "transformer")
+        t0 = time.time()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        m = _build_transformer(tr_path, dtype)
+        if lora:
+            lora_path = _require_file(
+                os.path.join(H3_DIR, "loras", lora), "LoRA")
+            _attach_lora(m, lora_path, float(lora_scale))
+        m = _arm_offload(m, device, offload, "transformer")
+        est = _sz_path(tr_path)
+        print(f"[minimax-h3] transformer ready {time.time()-t0:.1f}s "
+              f"({'ref2va' if 'ref2va' in transformer else 'fl2va/t2va'})",
+              flush=True)
+        return {"transformer": _register(
+            key, {"model": m, "is_ref": "ref2va" in transformer},
+            est, "MiniMaxH3Transformer3DModel")}
+
+    @registry.register(
+        "minimax.h3.te_load",
+        inputs={"text_encoder": "STRING", "dtype": "STRING",
+                "offload": "STRING"},
+        outputs={"text_encoder": "TEXT_ENCODER"},
+        description="H3 文本塔组件加载（Qwen3VL-32B int8 + tokenizer/processor "
+                    "+ 逐层 offload + sentinel）")
+    def _op_te_load(text_encoder="qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+                    dtype="bf16", offload="sequential"):
+        import torch
+
+        key = f"minimax-h3:te:{text_encoder}|{dtype}|{offload}"
+        models = _models()
+        if key in models._pipes:
+            return {"text_encoder": models.get(key)}
+        te_path = _require_file(
+            os.path.join(H3_DIR, "text_encoders", text_encoder), "text_encoder")
+        t0 = time.time()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        m = _build_text_encoder(te_path, dtype)
+        tok, proc = _build_tokenizer_processor()
+        m = _arm_offload(m, device, offload, "text_encoder")
+        est = _sz_path(te_path)
+        print(f"[minimax-h3] text encoder ready {time.time()-t0:.1f}s",
+              flush=True)
+        return {"text_encoder": _register(
+            key, {"model": m, "tokenizer": tok, "processor": proc},
+            est, "Qwen3VLTextEncoder")}
+
+    @registry.register(
+        "minimax.h3.vae_load",
+        inputs={"video_vae": "STRING", "audio_vae": "STRING",
+                "dtype": "STRING", "device": "STRING"},
+        outputs={"vae": "VAE"},
+        description="H3 双 VAE 组件加载（video diffusers 目录优先 + audio 官方权"
+                    "重）。device=cuda 上卡常驻（decode 快一个量级）；cpu 省显存")
+    def _op_vae_load(video_vae="vae-diffusers",
+                     audio_vae="minimax_h3_audio_vae_official.safetensors",
+                     dtype="bf16", device="cuda"):
+        import torch
+
+        key = f"minimax-h3:vae:{video_vae}|{audio_vae}|{dtype}|{device}"
+        models = _models()
+        if key in models._pipes:
+            return {"vae": models.get(key)}
+        vae_path = os.path.join(H3_DIR, video_vae)
+        if not os.path.isdir(vae_path):
+            vae_path = _require_file(
+                os.path.join(H3_DIR, "vae", video_vae), "video_vae")
+        avae_path = _require_file(
+            os.path.join(H3_DIR, "vae", audio_vae), "audio_vae")
+        t0 = time.time()
+        dev = torch.device(
+            "cuda" if (device == "cuda" and torch.cuda.is_available()) else "cpu")
+        v = _build_video_vae(vae_path, dtype)
+        a = _build_audio_vae(avae_path, dtype)
+        if dev.type == "cuda":
+            v = v.to(dev)
+            a = a.to(dev)
+        est = _sz_path(vae_path) + _sz_path(avae_path)
+        print(f"[minimax-h3] VAE ready {time.time()-t0:.1f}s ({dev})",
+              flush=True)
+        return {"vae": _register(key, {"video": v, "audio": a}, est, "H3VAEs")}
+
+    @registry.register(
+        "minimax.h3.pipe",
+        inputs={"transformer": "TRANSFORMER", "text_encoder": "TEXT_ENCODER",
+                "vae": "VAE", "shift_video": "FLOAT", "shift_audio": "FLOAT"},
+        outputs={"model": "MODEL"},
+        description="H3 管道组装（register_components + 双 scheduler）。"
+                    "shift_video/audio 默认官方 12.0/3.0——shift 控动态范围")
+    def _op_pipe(transformer, text_encoder, vae,
+                 shift_video=12.0, shift_audio=3.0):
+        from diffusers import MiniMaxH3ModularPipeline
+
+        is_ref = bool(transformer.get("is_ref"))
+        pipe = MiniMaxH3ModularPipeline()
+        sched, asched = _build_schedulers(
+            shift_video=float(shift_video), shift_audio=float(shift_audio))
+        pipe.register_components(
+            text_encoder=text_encoder["model"],
+            vae=vae["video"],
+            audio_vae=vae["audio"],
+            tokenizer=text_encoder["tokenizer"],
+            processor=text_encoder["processor"],
+            scheduler=sched,
+            audio_scheduler=asched,
+            **({"transformer_ref": transformer["model"]} if is_ref
+               else {"transformer": transformer["model"]}),
+        )
+        key = (f"minimax-h3:pipe:{id(transformer['model']):x}|"
+               f"{id(text_encoder['model']):x}|{id(vae['video']):x}|"
+               f"{shift_video}|{shift_audio}")
+        print(f"[minimax-h3] pipe assembled ({'ref2va' if is_ref else 'fl2va'} "
+              f"shift={shift_video}/{shift_audio})", flush=True)
+        # est=0：组件已各自记账
+        return {"model": _register(key, pipe, 0, "MiniMaxH3ModularPipeline")}
+
+    # ==================== 一体便捷版（向后兼容） ====================
 
     @registry.register(
         "minimax.h3.load",
@@ -680,6 +855,7 @@ def register(registry):
                 "image": "IMAGE", "last_image": "IMAGE",
                 "references": "STRING",
                 "num_frames": "INT", "seed": "INT", "steps": "INT",
+                "height": "INT", "width": "INT",
                 "preview_every": "INT"},
         outputs={"video": "VIDEO", "seed": "INT"},
         description="MiniMax-H3 生成：fl2va（首/末帧）或 t2va（纯文本）或 "
@@ -690,7 +866,8 @@ def register(registry):
                     "立体声音轨（encode_mp4 时 mux 进 mp4）。分钟级任务，"
                     "请经 POST /jobs 异步执行")
     def _op_gen(model, prompt="", image=None, last_image=None, num_frames=125,
-                seed=-1, steps=4, preview_every=0, references=""):
+                seed=-1, steps=4, preview_every=0, references="",
+                height=0, width=0):
         import random
 
         import torch
@@ -736,6 +913,11 @@ def register(registry):
             kwargs["image"] = image
         if last_image is not None:
             kwargs["last_image"] = last_image
+        # 画布自定义（0=官方默认 16:9 768p；须 32 的倍数，总量 ≤ 768×1344）
+        if int(height) > 0:
+            kwargs["height"] = int(height)
+        if int(width) > 0:
+            kwargs["width"] = int(width)
 
         job = execution.current()
         if job is not None:

@@ -1,0 +1,25 @@
+{
+  "name": "minimax-h3-te-load",
+  "version": "1.0.0",
+  "displayName": "H3 文本塔加载",
+  "description": "MiniMax-H3 文本编码器组件加载（Qwen3VL-32B int8 + tokenizer/processor + 逐层 offload）——拆分装配版，输出 TEXT_ENCODER 给 h3-pipe",
+  "category": "loaders",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    { "name": "text_encoder", "type": "TEXT_ENCODER", "description": "文本塔组件对象（含 tokenizer/processor）" }
+  ],
+  "parameters": [
+    { "name": "service_url", "type": "string", "description": "推理服务 service_url", "required": true },
+    { "name": "service_url_host", "type": "string", "description": "容器内回退地址（可空）", "required": false, "default": "" },
+    { "name": "text_encoder", "type": "string", "description": "Qwen3VL 文本塔 int8 文件名", "required": false, "default": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors" },
+    { "name": "dtype", "type": "string", "description": "计算精度（bf16/fp16/fp32）", "required": false, "default": "bf16" },
+    { "name": "offload", "type": "string", "description": "offload 策略（sequential/none）", "required": false, "default": "sequential" },
+    { "name": "service_token", "type": "string", "description": "service_token（可空）", "required": false, "default": "" },
+    { "name": "job_timeout", "type": "integer", "description": "job 超时（秒）", "required": false, "default": 3600 }
+  ],
+  "files": ["flowx_client.py", "server_op.py"],
+  "ui": { "entry": "ui/node-widget.js", "width": 300, "height": 340, "collapsed": false, "apiVersion": 1 },
+  "executor": { "supportedTypes": ["local", "docker"], "preferredType": "local", "bundled": true }
+}

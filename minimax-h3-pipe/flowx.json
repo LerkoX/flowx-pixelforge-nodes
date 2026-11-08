@@ -1,0 +1,27 @@
+{
+  "name": "minimax-h3-pipe",
+  "version": "1.0.0",
+  "displayName": "H3 管道组装",
+  "description": "MiniMax-H3 组件组装为完整管道（register_components + 双 scheduler）——TRANSFORMER + TEXT_ENCODER + VAE → MODEL，shift 可调",
+  "category": "loaders",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    { "name": "model", "type": "MODEL", "description": "装配好的 H3 管道（接 H3Gen.model_ref）" }
+  ],
+  "parameters": [
+    { "name": "service_url", "type": "string", "description": "推理服务 service_url", "required": true },
+    { "name": "service_url_host", "type": "string", "description": "容器内回退地址（可空）", "required": false, "default": "" },
+    { "name": "transformer", "type": "string", "description": "TRANSFORMER 对象 ID", "required": true },
+    { "name": "text_encoder", "type": "string", "description": "TEXT_ENCODER 对象 ID", "required": true },
+    { "name": "vae", "type": "string", "description": "VAE 对象 ID", "required": true },
+    { "name": "shift_video", "type": "float", "description": "视频 scheduler shift（官方默认 12.0；调动态范围/细节）", "required": false, "default": 12.0 },
+    { "name": "shift_audio", "type": "float", "description": "音频 scheduler shift（官方默认 3.0）", "required": false, "default": 3.0 },
+    { "name": "service_token", "type": "string", "description": "service_token（可空）", "required": false, "default": "" },
+    { "name": "job_timeout", "type": "integer", "description": "job 超时（秒）", "required": false, "default": 300 }
+  ],
+  "files": ["flowx_client.py", "server_op.py"],
+  "ui": { "entry": "ui/node-widget.js", "width": 300, "height": 380, "collapsed": false, "apiVersion": 1 },
+  "executor": { "supportedTypes": ["local", "docker"], "preferredType": "local", "bundled": true }
+}

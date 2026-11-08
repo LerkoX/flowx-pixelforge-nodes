@@ -84,6 +84,20 @@
       "default": 125
     },
     {
+      "name": "height",
+      "type": "integer",
+      "description": "画布高（0=官方默认 768p 16:9；须 32 的倍数，总量 ≤ 768×1344）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "画布宽（0=官方默认；竖屏如 768×1344 竖版= height 1344 width 768）",
+      "required": false,
+      "default": 0
+    },
+    {
       "name": "steps",
       "type": "integer",
       "description": "采样步数。⚠️ diffusers 语义差 1：num_inference_steps=N → N-1 次模型评估。挂 turbo-4step LoRA 传 5（=4 次评估）；无 LoRA 建议 31~51",

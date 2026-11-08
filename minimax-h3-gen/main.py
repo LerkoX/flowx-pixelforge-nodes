@@ -29,6 +29,13 @@ def main():
         "steps": param("steps", 5, int),
         "preview_every": 0,
     }
+    # 画布自定义（0=官方默认 16:9 768p）
+    h = param("height", 0, int)
+    w = param("width", 0, int)
+    if h > 0:
+        inputs["height"] = h
+    if w > 0:
+        inputs["width"] = w
     image_id = param("image", "")
     if image_id:
         inputs["image"] = ref(image_id)

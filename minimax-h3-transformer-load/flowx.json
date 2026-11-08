@@ -1,0 +1,27 @@
+{
+  "name": "minimax-h3-transformer-load",
+  "version": "1.0.0",
+  "displayName": "H3 Transformer 加载",
+  "description": "MiniMax-H3 transformer 组件加载（int8 反量化 + 可选 LoRA + 逐层 offload）——拆分装配版，输出 TRANSFORMER 给 h3-pipe 组装",
+  "category": "loaders",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    { "name": "transformer", "type": "TRANSFORMER", "description": "transformer 组件对象（含 is_ref 标记）" }
+  ],
+  "parameters": [
+    { "name": "service_url", "type": "string", "description": "推理服务 service_url", "required": true },
+    { "name": "service_url_host", "type": "string", "description": "容器内回退地址（可空）", "required": false, "default": "" },
+    { "name": "transformer", "type": "string", "description": "transformer int8 文件名（含 ref2va 即参考模式）", "required": false, "default": "minimax_h3_fl2va_int8_convrot.safetensors" },
+    { "name": "lora", "type": "string", "description": "turbo LoRA 文件名（留空不挂；fl2va 配 *_fl2v_turbo_*，ref2va 配 *_ref2v_turbo_*）", "required": false, "default": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors" },
+    { "name": "lora_scale", "type": "float", "description": "LoRA 强度", "required": false, "default": 1.0 },
+    { "name": "dtype", "type": "string", "description": "计算精度（bf16/fp16/fp32）", "required": false, "default": "bf16" },
+    { "name": "offload", "type": "string", "description": "offload 策略（sequential 逐层/none 全驻显存）", "required": false, "default": "sequential" },
+    { "name": "service_token", "type": "string", "description": "service_token（可空）", "required": false, "default": "" },
+    { "name": "job_timeout", "type": "integer", "description": "job 超时（秒）", "required": false, "default": 3600 }
+  ],
+  "files": ["flowx_client.py", "server_op.py"],
+  "ui": { "entry": "ui/node-widget.js", "width": 300, "height": 420, "collapsed": false, "apiVersion": 1 },
+  "executor": { "supportedTypes": ["local", "docker"], "preferredType": "local", "bundled": true }
+}

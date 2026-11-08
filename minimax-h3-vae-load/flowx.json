@@ -1,0 +1,26 @@
+{
+  "name": "minimax-h3-vae-load",
+  "version": "1.0.0",
+  "displayName": "H3 VAE 加载",
+  "description": "MiniMax-H3 双 VAE 组件加载（video diffusers 目录优先 + audio 官方权重）——拆分装配版，输出 VAE 给 h3-pipe",
+  "category": "loaders",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    { "name": "vae", "type": "VAE", "description": "双 VAE 组件对象 {video, audio}" }
+  ],
+  "parameters": [
+    { "name": "service_url", "type": "string", "description": "推理服务 service_url", "required": true },
+    { "name": "service_url_host", "type": "string", "description": "容器内回退地址（可空）", "required": false, "default": "" },
+    { "name": "video_vae", "type": "string", "description": "视频 VAE（diffusers 目录名，如 vae-diffusers）", "required": false, "default": "vae-diffusers" },
+    { "name": "audio_vae", "type": "string", "description": "音频 VAE 官方文件名", "required": false, "default": "minimax_h3_audio_vae_official.safetensors" },
+    { "name": "dtype", "type": "string", "description": "计算精度（bf16/fp16/fp32）", "required": false, "default": "bf16" },
+    { "name": "device", "type": "string", "description": "常驻设备（cuda=上卡 decode 快一个量级；cpu=省显存）", "required": false, "default": "cuda" },
+    { "name": "service_token", "type": "string", "description": "service_token（可空）", "required": false, "default": "" },
+    { "name": "job_timeout", "type": "integer", "description": "job 超时（秒）", "required": false, "default": 1800 }
+  ],
+  "files": ["flowx_client.py", "server_op.py"],
+  "ui": { "entry": "ui/node-widget.js", "width": 300, "height": 360, "collapsed": false, "apiVersion": 1 },
+  "executor": { "supportedTypes": ["local", "docker"], "preferredType": "local", "bundled": true }
+}

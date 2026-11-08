@@ -30,7 +30,7 @@ def main():
                            "vae-diffusers"),
         "audio_vae": param("audio_vae",
                            "minimax_h3_audio_vae_official.safetensors"),
-        "lora": param("lora", ""),
+        "lora": param("lora", "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
         "lora_scale": param("lora_scale", 1.0, float),
         "dtype": param("dtype", "bf16"),
         "offload": param("offload", "sequential"),

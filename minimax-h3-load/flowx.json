@@ -74,7 +74,7 @@
     },
     {
       "name": "lora_scale",
-      "type": "number",
+      "type": "float",
       "description": "LoRA 强度（turbo 推荐 1.0）",
       "required": false,
       "default": 1.0
@@ -95,7 +95,7 @@
     },
     {
       "name": "job_timeout",
-      "type": "number",
+      "type": "integer",
       "required": false,
       "default": 3600,
       "description": "job 超时秒数（冷加载反量化+装配数分钟）"
@@ -107,5 +107,13 @@
       "type": "string",
       "description": "MiniMax-H3 MODEL 组件引用 ID（供 minimax-h3-gen 消费）"
     }
-  ]
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
 }

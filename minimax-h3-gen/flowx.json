@@ -71,21 +71,21 @@
     },
     {
       "name": "num_frames",
-      "type": "number",
+      "type": "integer",
       "description": "帧数（24fps：125 帧≈5.2s，365 帧≈15.2s；自动对齐 17n+5）",
       "required": false,
       "default": 125
     },
     {
       "name": "steps",
-      "type": "number",
-      "description": "采样步数（挂 turbo LoRA 用 4；无 LoRA 建议 30~50）",
+      "type": "integer",
+      "description": "采样步数。⚠️ diffusers 语义差 1：num_inference_steps=N → N-1 次模型评估。挂 turbo-4step LoRA 传 5（=4 次评估）；无 LoRA 建议 31~51",
       "required": false,
-      "default": 4
+      "default": 5
     },
     {
       "name": "seed",
-      "type": "number",
+      "type": "integer",
       "description": "随机种子（-1 随机）",
       "required": false,
       "default": -1
@@ -99,14 +99,14 @@
     },
     {
       "name": "job_timeout",
-      "type": "number",
+      "type": "integer",
       "required": false,
       "default": 7200,
       "description": "job 超时秒数"
     },
     {
       "name": "poll_interval",
-      "type": "number",
+      "type": "integer",
       "required": false,
       "default": 5,
       "description": "轮询间隔秒数"
@@ -123,5 +123,13 @@
       "type": "number",
       "description": "实际使用的随机种子"
     }
-  ]
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
 }

@@ -25,7 +25,7 @@ def main():
         "prompt": param("prompt"),
         "num_frames": param("num_frames", 125, int),
         "seed": param("seed", -1, int),
-        "steps": param("steps", 4, int),
+        "steps": param("steps", 5, int),
         "preview_every": 0,
     }
     image_id = param("image", "")

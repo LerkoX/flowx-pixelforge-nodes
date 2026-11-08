@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "bbf82d3b58b1"
+OP_VERSION = "83df99f96831"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -346,6 +346,23 @@ def _attach_lora(model, path, strength=1.0):
         raise ValueError("LoRA 未挂到任何层——key 命名与 transformer 不匹配")
 
 
+def _attach_loras(model, lora_spec, default_scale=1.0):
+    """逗号分隔多 LoRA 挂载：'a.safetensors,b.safetensors@0.8'。
+
+    单项可带 @strength 后缀（缺省用 default_scale）。用于 akatz
+    character-swap 配方（swap LoRA + turbo8 双挂 strength 1.0）等场景。
+    """
+    for item in str(lora_spec or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        name, _, s = item.partition("@")
+        scale = float(s) if s else float(default_scale)
+        lora_path = _require_file(
+            os.path.join(H3_DIR, "loras", name.strip()), "LoRA")
+        _attach_lora(model, lora_path, scale)
+
+
 def _build_video_vae(path, dtype):
     """video_vae 加载。
 
@@ -625,9 +642,7 @@ def register(registry):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         m = _build_transformer(tr_path, dtype)
         if lora:
-            lora_path = _require_file(
-                os.path.join(H3_DIR, "loras", lora), "LoRA")
-            _attach_lora(m, lora_path, float(lora_scale))
+            _attach_loras(m, lora, float(lora_scale))
         m = _arm_offload(m, device, offload, "transformer")
         est = _sz_path(tr_path)
         print(f"[minimax-h3] transformer ready {time.time()-t0:.1f}s "
@@ -790,9 +805,7 @@ def register(registry):
         # ② LoRA 必须在 offload arm 之前挂：buffer 注册后 hook 才能正确
         # 统计并搬运（真机顺序坑）。
         if lora:
-            lora_path = _require_file(
-                os.path.join(H3_DIR, "loras", lora), "LoRA")
-            _attach_lora(transformer_m, lora_path, float(lora_scale))
+            _attach_loras(transformer_m, lora, float(lora_scale))
 
         # ③ VAE 上卡常驻（小：video ~5GB bf16 + audio ~0.5GB）
         if device.type == "cuda":

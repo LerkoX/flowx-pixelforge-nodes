@@ -1657,6 +1657,13 @@ function createNodeWidget(spec) {
     const prevWrap = h('div', 'display:none;margin-bottom:6px')
     const prevImg = h('img', 'width:100%;border-radius:8px;display:block;cursor:zoom-in;background:rgba(0,0,0,0.3)')
     prevImg.alt = '预览'
+    // 视频预览（2026-11-08）：preview url 路径含 /videos/ 时用 <video> 渲染
+    // （H3/video-gen 类节点 emit_result_preview(kind='videos') 的结果帧）。
+    const prevVideo = h('video', 'width:100%;border-radius:8px;display:none;background:#000')
+    prevVideo.controls = true
+    prevVideo.loop = true
+    prevVideo.muted = false
+    prevVideo.preload = 'auto'
     let overlay = null
     prevImg.addEventListener('click', () => {
       if (!prevImg.src || overlay) return
@@ -1733,7 +1740,7 @@ function createNodeWidget(spec) {
       }
     })
     prevRow.append(prevInfo, stopBtn)
-    prevWrap.append(prevImg, progOuter, prevRow)
+    prevWrap.append(prevImg, prevVideo, progOuter, prevRow)
 
     // ---- 前后对比区（compareInput）：输入图 vs 结果帧，拖拽分割线 ----
     const cmpWrap = h('div', 'display:none;margin-bottom:6px')
@@ -2726,9 +2733,12 @@ function createNodeWidget(spec) {
       if (pv && pv.url) {
         prevWrap.style.display = 'block'
         const effective = pv.url
+        const isVid = /\/videos\//.test(effective)
+        prevImg.style.display = isVid ? 'none' : 'block'
+        prevVideo.style.display = isVid ? 'block' : 'none'
         if (effective !== lastPreviewUrl) {
           lastPreviewUrl = effective
-          prevImg.src = effective
+          if (isVid) { prevVideo.src = effective } else { prevImg.src = effective }
         }
         const prog = typeof pv.progress === 'number' ? pv.progress : null
         const running = p.status === 'running' && (prog === null || prog < 1)
@@ -2743,6 +2753,7 @@ function createNodeWidget(spec) {
         // service-proxy 拉取；outputs/metadata 禁止内嵌 base64/data URL）
         prevWrap.style.display = 'none'
         lastPreviewUrl = ''
+        try { prevVideo.pause(); prevVideo.removeAttribute('src'); prevVideo.load() } catch (e) {}
       }
       const o = p.outputs || {}
       // 本地媒体显示：参数源文件（load-image 类）或落盘结果（save-* 类）

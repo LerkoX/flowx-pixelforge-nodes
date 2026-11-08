@@ -9,7 +9,8 @@ guidance-distilled：无负提示、无 cfg；24fps 固定，5~15 秒（num_fram
 """
 import time
 
-from flowx_client import (emit, emit_preview, ensure_plugin, host_base, param,
+from flowx_client import (emit, emit_preview, emit_result_preview,
+                          ensure_plugin, host_base, param,
                           ref, submit_job, wait_job, token)
 
 
@@ -52,6 +53,9 @@ def main():
     video_id = outs["video"].get("id")
     print(f"[minimax-h3-gen] done in {time.time()-t0:.1f}s "
           f"-> video={video_id} seed={seed}", flush=True)
+    # 完成后上报结果预览（widget 识别 /videos/ 路径用 <video> 内嵌播放）
+    if video_id:
+        emit_result_preview(pbase, video_id, tok, kind="videos")
     emit(video=video_id, seed=seed)
 
 

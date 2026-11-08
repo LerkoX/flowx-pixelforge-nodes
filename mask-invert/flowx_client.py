@@ -773,12 +773,14 @@ def host_base(url):
     return host.rstrip("/") or url
 
 
-def emit_result_preview(base, oid, tok=None):
+def emit_result_preview(base, oid, tok=None, kind="images"):
     """结果对象完成后上报一张预览帧（Studio 经 /preview-frame 中转拉取
-    {base}/images/{oid}）。媒体走 HTTP 二进制通道，**不得**把图片 base64 塞进
-    outputs/metadata（画布 widget 读 props.preview 渲染）。"""
+    {base}/{kind}/{oid}）。媒体走 HTTP 二进制通道，**不得**把媒体 base64 塞进
+    outputs/metadata（画布 widget 读 props.preview 渲染）。
+    kind：images（默认，图片）/ videos（视频——widget 识别 /videos/ 路径
+    用 <video> 渲染，2026-11-08 起，H3/video-gen 类节点用）。"""
     host = host_base(base)
-    emit_preview(f"{host}/images/{oid}", 1.0, tok, base=host)
+    emit_preview(f"{host}/{kind}/{oid}", 1.0, tok, base=host)
 
 
 def emit_input_media(base, oid, tok=None, name="input"):

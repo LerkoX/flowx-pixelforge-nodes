@@ -1657,6 +1657,13 @@ function createNodeWidget(spec) {
     const prevWrap = h('div', 'display:none;margin-bottom:6px')
     const prevImg = h('img', 'width:100%;border-radius:8px;display:block;cursor:zoom-in;background:rgba(0,0,0,0.3)')
     prevImg.alt = '预览'
+    // 视频预览（2026-11-08）：preview url 路径含 /videos/ 时用 <video> 渲染
+    // （H3/video-gen 类节点 emit_result_preview(kind='videos') 的结果帧）。
+    const prevVideo = h('video', 'width:100%;border-radius:8px;display:none;background:#000')
+    prevVideo.controls = true
+    prevVideo.loop = true
+    prevVideo.muted = false
+    prevVideo.preload = 'auto'
     let overlay = null
     prevImg.addEventListener('click', () => {
       if (!prevImg.src || overlay) return
@@ -1733,7 +1740,7 @@ function createNodeWidget(spec) {
       }
     })
     prevRow.append(prevInfo, stopBtn)
-    prevWrap.append(prevImg, progOuter, prevRow)
+    prevWrap.append(prevImg, prevVideo, progOuter, prevRow)
 
     // ---- 前后对比区（compareInput）：输入图 vs 结果帧，拖拽分割线 ----
     const cmpWrap = h('div', 'display:none;margin-bottom:6px')
@@ -2726,9 +2733,12 @@ function createNodeWidget(spec) {
       if (pv && pv.url) {
         prevWrap.style.display = 'block'
         const effective = pv.url
+        const isVid = /\/videos\//.test(effective)
+        prevImg.style.display = isVid ? 'none' : 'block'
+        prevVideo.style.display = isVid ? 'block' : 'none'
         if (effective !== lastPreviewUrl) {
           lastPreviewUrl = effective
-          prevImg.src = effective
+          if (isVid) { prevVideo.src = effective } else { prevImg.src = effective }
         }
         const prog = typeof pv.progress === 'number' ? pv.progress : null
         const running = p.status === 'running' && (prog === null || prog < 1)
@@ -2743,6 +2753,7 @@ function createNodeWidget(spec) {
         // service-proxy 拉取；outputs/metadata 禁止内嵌 base64/data URL）
         prevWrap.style.display = 'none'
         lastPreviewUrl = ''
+        try { prevVideo.pause(); prevVideo.removeAttribute('src'); prevVideo.load() } catch (e) {}
       }
       const o = p.outputs || {}
       // 本地媒体显示：参数源文件（load-image 类）或落盘结果（save-* 类）
@@ -2806,28 +2817,22 @@ createNodeWidget.simplifyPoints = simplifyPoints
 
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
-  icon: '🎬',
-  title: '视频生成',
+  icon: '🎞️',
+  title: 'MiniMax H3 生成',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
-    { key: 'model_ref', label: '视频模型引用 ID（model_ref）', kind: 'text', mono: true },
-    { key: 'prompt', label: '正向提示词（视频内容/运动描述）（prompt）', kind: 'text', mono: true },
-    { key: 'negative_prompt', label: '反向提示词（negative_prompt）', kind: 'text', mono: true },
-    { key: 'image', label: '首帧 IMAGE 对象 ID（image）', kind: 'text', mono: true },
-    { key: 'width', label: '宽度（width）', kind: 'text', default: 832 },
-    { key: 'height', label: '高度（height）', kind: 'text', default: 480 },
-    { key: 'num_frames', label: '帧数（121 帧 @24fps ≈ 5 秒）（num_frames）', kind: 'text', default: 121 },
-    { key: 'fps', label: '帧率（fps）', kind: 'text', default: 24 },
-    { key: 'steps', label: '采样步数（steps）', kind: 'slider', min: 1, max: 150, step: 1, default: 50 },
-    { key: 'cfg', label: '引导强度（cfg）', kind: 'slider', min: 1, max: 30, step: 0.5, default: 5.0 },
+    { key: 'model_ref', label: 'MiniMax H3 MODEL 引用 ID（model_ref）', kind: 'text', mono: true },
+    { key: 'prompt', label: '提示词（画面+运动+声音描述）（prompt）', kind: 'text', mono: true },
+    { key: 'image', label: '首帧 IMAGE 对象 ID（image，可空）', kind: 'text', mono: true },
+    { key: 'last_image', label: '末帧 IMAGE 对象 ID（last_image，可空）', kind: 'text', mono: true },
+    { key: 'num_frames', label: '帧数（125 帧 @24fps ≈ 5.2 秒）（num_frames）', kind: 'text', default: 117 },
+    { key: 'steps', label: '采样步数（turbo-4step LoRA 填 5 = 4 次评估）', kind: 'slider', min: 2, max: 60, step: 1, default: 5 },
     { key: 'seed', label: '随机种子（seed）', kind: 'text', default: -1 },
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200 },
-    { key: 'decode_chunk_size', label: 'VAE 分块解码帧数（decode_chunk_size）', kind: 'text', default: 0 },
-    { key: 'output_mode', label: '输出模式：pil=采样+解码一体输出 VIDEO（output_mode）', kind: 'text', default: 'pil' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
   ],
-  note: '文/图生视频',
+  note: 'MiniMax H3 联合视频+音频生成（24fps 固定）',
 }
 
 export default createNodeWidget(WIDGET_SPEC)

@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "9ab50efd802e"
+OP_VERSION = "ed998948667e"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -797,6 +797,11 @@ class _InpaintHook:
                 loop_self, components, block_state, i=i, t=t)
             hook._mix(block_state, components, n_cond, mask_t,
                       sigma_idx=None)
+            # 末步：decode 前把 VAE 挪回卡（inpaint 期间被挪 CPU 让显存）
+            if i == len(block_state.timesteps) - 1 and ctx.get("_vae_cpu"):
+                components.vae.to("cuda")
+                if getattr(components, "audio_vae", None) is not None:
+                    components.audio_vae.to("cuda")
             return components, block_state
 
         hook._orig = self._orig
@@ -1189,12 +1194,24 @@ def register(registry):
         if execution.check_cancelled is not None:
             execution.check_cancelled()
         if inpaint_ctx is not None:
+            # denoise 期间 VAE（~6.1GB 常驻）挪 CPU——ref2va 基线 20.5G/24G
+            # 时这 6G 决定成败（真机三次 OOM 实锤）；末步 hook 挪回 decode。
+            import torch as _torch
+            pipe.vae.to("cpu")
+            if getattr(pipe, "audio_vae", None) is not None:
+                pipe.audio_vae.to("cpu")
+            if _torch.cuda.is_available():
+                _torch.cuda.empty_cache()
+            inpaint_ctx["_vae_cpu"] = True
             hook = _InpaintHook(inpaint_ctx).install()
             try:
                 out = pipe(output=["videos", "audio", "sampling_rate"],
                            **kwargs)
             finally:
                 hook.restore()
+                pipe.vae.to("cuda")
+                if getattr(pipe, "audio_vae", None) is not None:
+                    pipe.audio_vae.to("cuda")
         else:
             out = pipe(output=["videos", "audio", "sampling_rate"], **kwargs)
         if execution.check_cancelled is not None:

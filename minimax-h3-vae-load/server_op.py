@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "cce13f38d6a8"
+OP_VERSION = "38db6c07d0b7"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1137,26 +1137,46 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     _memlog("inpaint-enter")
-    # 源视频 VAE encode 全程 CPU：ref2va 装配 lease 激活后卡上基线 ~20G，
-    # GPU encode 的 fp32 全帧副本+VAE attention 峰值（实测 +13G）必爆；
-    # CPU encode 117 帧 ~1-2 分钟换绝对安全（真机五次 OOM 后定案）。
-    # vae 挪下后留在 CPU——denoise 期间不用，decode 前由 hook 挪回。
-    vae = pipe.vae
-    vae_cuda = next(vae.parameters()).device.type == "cuda"
-    if vae_cuda:
-        vae.to("cpu")
-        if getattr(pipe, "audio_vae", None) is not None:
-            pipe.audio_vae.to("cpu")
+    # 先清历史峰值的 reserved 池（真机实测：上代 gen 23.9G 峰值残留在
+    # CUDA 缓存池，alloc 仅 6.4G 但 reserved 24.5G——encode 新分配撞上
+    # 碎片直接 OOM）。empty_cache 后池回落到 ~6.5G，GPU encode 有 17G 余量。
+    if device.type == "cuda":
         torch.cuda.empty_cache()
+    _memlog("after-empty_cache")
+    vae = pipe.vae
     pixels = torch.from_numpy(
         np.stack([np.asarray(f) for f in frames])
-    ).permute(3, 0, 1, 2).unsqueeze(0)  # (1,3,T,H,W) uint8, CPU
-    src_latent = encode_vae_condition(
-        vae, pixels, pipe.pixel_mean, pipe.pixel_std,
-        int(getattr(pipe, "keyframe_encode_seed", 42)))
-    _memlog("encoded(cpu)")
+    ).permute(3, 0, 1, 2).unsqueeze(0).to(device)  # (1,3,T,H,W) uint8
+    # bf16 内联 encode（官方 encode_vae_condition 强制 fp32：全帧副本
+    # 1.7G + VAE 中间激活 fp32 峰值 ~13G——24G 卡 lease 基线 6.2G 上必爆，
+    # 真机六次 OOM 实锤差 0.7G）。bf16 峰值减半；官方收尾本就 round fp16
+    # （encoders.py:135），精度路径不变。其余步骤与官方逐项对齐。
+    seed = int(getattr(pipe, "keyframe_encode_seed", 42))
+    latents_mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1)
+    latents_std = torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1)
+    pixel_mean = torch.tensor(
+        pipe.pixel_mean, device=device, dtype=torch.bfloat16).view(1, -1, 1, 1, 1)
+    pixel_std = torch.tensor(
+        pipe.pixel_std, device=device, dtype=torch.bfloat16).view(1, -1, 1, 1, 1)
+    pixels_f = (pixels.to(torch.bfloat16).div(255.0) - pixel_mean) / pixel_std
     del pixels, frames
+    _memlog("pixels-bf16")
+    with torch.no_grad():
+        posterior = vae.encode(pixels_f, return_dict=False)[0]
+        latents = posterior.sample(
+            generator=torch.Generator().manual_seed(seed))
+    _memlog("encoded-bf16")
+    del pixels_f, posterior
+    latents = latents.to(torch.float16).float().cpu()
+    src_latent = (latents - latents_mean) / latents_std
     src_latent = src_latent.to(device=device, dtype=torch.bfloat16)
+    del latents
+    # 注：vae 不能挪 CPU——pipe() 内部 reference image 的 encode
+    # （encode_vae_condition 官方 fp32 版）还要用它（设备不匹配实锤）。
+    # bf16 修复后 encode 峰值已可控，denoise 贴顶 + hook ~100MB 可过。
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    _memlog("prepared")
 
     patch = tuple(getattr(pipe, "patch_size", (1, 2, 2)))
     src_packed = patchify_video_latents(src_latent, patch)
@@ -1214,7 +1234,9 @@ class _InpaintHook:
             mask_t = ctx["_gpu_mask"]
             n_cond = int(getattr(block_state, "num_condition_video_rows", 0)
                          or 0)
-            rows_total = block_state.latents.shape[1]
+            # latents 是 2D (rows, dim)——denoise.py:229 直切
+            # latents[nc:]（noise_pred 才是 3D (1,rows,dim)，别搞混）。
+            rows_total = block_state.latents.shape[0]
             gen_rows = rows_total - n_cond
             if gen_rows != ctx["src_packed"].shape[0]:
                 raise ValueError(
@@ -1223,7 +1245,7 @@ class _InpaintHook:
                     f"须与生成参数一致）")
             if i == 0 and ctx["noise_eps"] is None:
                 # 捕获与生成区同一份初始噪声（Comfy denoise-mask 语义）
-                ctx["noise_eps"] = block_state.latents[0, n_cond:].clone()
+                ctx["noise_eps"] = block_state.latents[n_cond:].clone()
                 hook._mix(block_state, components, n_cond, mask_t,
                           sigma_idx=0)
             components, block_state = hook._orig(
@@ -1253,8 +1275,8 @@ class _InpaintHook:
         sig = float(sigmas[idx])
         src = ctx["_gpu_src"]
         noisy_src = (1.0 - sig) * src + sig * ctx["noise_eps"]
-        cur = block_state.latents[0, n_cond:]
-        block_state.latents[0, n_cond:] = (
+        cur = block_state.latents[n_cond:]
+        block_state.latents[n_cond:] = (
             cur * mask_t + noisy_src * (1.0 - mask_t))
 
     def restore(self):
@@ -1627,30 +1649,12 @@ def register(registry):
         if execution.check_cancelled is not None:
             execution.check_cancelled()
         if inpaint_ctx is not None:
-            # denoise 期间 VAE（~6.1GB 常驻）挪 CPU——ref2va 基线 20.5G/24G
-            # 时这 6G 决定成败（真机三次 OOM 实锤）；末步 hook 挪回 decode。
-            import torch as _torch
-            pipe.vae.to("cpu")
-            if getattr(pipe, "audio_vae", None) is not None:
-                pipe.audio_vae.to("cpu")
-            if _torch.cuda.is_available():
-                _torch.cuda.empty_cache()
-            inpaint_ctx["_vae_cpu"] = True
-            if _torch.cuda.is_available():
-                print(f"[inpaint] vae→cpu done, pipe.vae.device="
-                      f"{next(pipe.vae.parameters()).device}, "
-                      f"cuda_alloc={_torch.cuda.memory_allocated()/1e9:.1f}G "
-                      f"reserved={_torch.cuda.memory_reserved()/1e9:.1f}G",
-                      flush=True)
             hook = _InpaintHook(inpaint_ctx).install()
             try:
                 out = pipe(output=["videos", "audio", "sampling_rate"],
                            **kwargs)
             finally:
                 hook.restore()
-                pipe.vae.to("cuda")
-                if getattr(pipe, "audio_vae", None) is not None:
-                    pipe.audio_vae.to("cuda")
         else:
             out = pipe(output=["videos", "audio", "sampling_rate"], **kwargs)
         if execution.check_cancelled is not None:

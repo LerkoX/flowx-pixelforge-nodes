@@ -89,6 +89,20 @@
       "required": false
     },
     {
+      "name": "inpaint_soft",
+      "type": "float",
+      "description": "遮罩内生成权重（仅 inpaint 生效）：1.0=遮罩内全自由（姿态可能漂移）；0.6~0.8=保留 20~40% 源结构锚住姿态，身份仍由 LoRA/参考图决定",
+      "required": false,
+      "default": 1
+    },
+    {
+      "name": "inpaint_lock",
+      "type": "float",
+      "description": "前期全图锁源步数占比（仅 inpaint 生效）：0=关；0.4=前 40% 步数遮罩内也拉回源轨迹（结构先钉死、之后才放开），姿态保真度最高",
+      "required": false,
+      "default": 0
+    },
+    {
       "name": "num_frames",
       "type": "integer",
       "description": "帧数（24fps：125 帧≈5.2s，365 帧≈15.2s；自动对齐 17n+5）",

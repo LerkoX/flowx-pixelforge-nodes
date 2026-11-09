@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "38db6c07d0b7"
+OP_VERSION = "7e4ec0756b0f"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1098,12 +1098,17 @@ def _memlog(tag):
               f"reserved={_t.cuda.memory_reserved()/1e9:.2f}G", flush=True)
 
 
-def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
+def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
+                     soft_alpha=1.0, lock_ratio=0.0, num_steps=8):
     """源视频 latent + 遮罩 → packed 混合上下文（人物替换等局部编辑）。
 
     机制（对齐 Relay/Comfy denoise-mask 语义）：denoise 每步后把遮罩外
     latent 拉回「源 latent 加噪到当前 σ」，加噪用与生成区同一份初始噪声
     （i==0 时从 block_state 捕获）。
+
+    源约束强度旋钮（两者可叠加，详见 _InpaintHook._mix）：
+    - soft_alpha：遮罩内生成权重（1.0=全自由；0.6=保留 40% 源结构锚姿态）
+    - lock_ratio：前 N% 步数全图锁源（0=关；0.4=前 40% 步不放开遮罩内）
     """
     import numpy as np
     import torch
@@ -1205,9 +1210,14 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
 
     print(f"[minimax-h3] inpaint: src {tuple(src_latent.shape)} "
           f"packed={src_packed.shape[0]} rows, 编辑区 "
-          f"{mask_packed.mean()*100:.1f}% patches", flush=True)
+          f"{mask_packed.mean()*100:.1f}% patches | "
+          f"soft={soft_alpha} lock={lock_ratio}"
+          f"({max(1, round(num_steps * lock_ratio))}/{num_steps}步)",
+          flush=True)
     return {"src_packed": src_packed, "mask_packed": mask_packed,
-            "noise_eps": None}
+            "noise_eps": None,
+            "soft_alpha": float(soft_alpha),
+            "lock_steps": int(round(int(num_steps) * float(lock_ratio)))}
 
 
 class _InpaintHook:
@@ -1247,11 +1257,11 @@ class _InpaintHook:
                 # 捕获与生成区同一份初始噪声（Comfy denoise-mask 语义）
                 ctx["noise_eps"] = block_state.latents[n_cond:].clone()
                 hook._mix(block_state, components, n_cond, mask_t,
-                          sigma_idx=0)
+                          sigma_idx=0, step_i=0)
             components, block_state = hook._orig(
                 loop_self, components, block_state, i=i, t=t)
             hook._mix(block_state, components, n_cond, mask_t,
-                      sigma_idx=None)
+                      sigma_idx=None, step_i=i)
             # 末步：decode 前把 VAE 挪回卡（inpaint 期间被挪 CPU 让显存）
             if i == len(block_state.timesteps) - 1 and ctx.get("_vae_cpu"):
                 components.vae.to("cuda")
@@ -1263,7 +1273,21 @@ class _InpaintHook:
         self._cls.loop_step = patched
         return self
 
-    def _mix(self, block_state, components, n_cond, mask_t, sigma_idx):
+    def _mix(self, block_state, components, n_cond, mask_t, sigma_idx,
+             step_i=None):
+        """遮罩外拉回源轨迹；遮罩内按 
+        soft/lock 参数调节源约束强度。
+
+        三个旋钮统一成一个 effective_mask 计算（遮罩内生成权重）：
+        - 硬 inpaint（默认 soft=1.0, lock=0）：eff = mask（遮罩内全自由）
+        - 方案① soft：eff = mask * soft_alpha
+          遮罩内保留 (1-soft) 的源结构 → 锚住姿态/构图，身份仍由
+          LoRA/参考图决定（inpaint 社区的 soft inpaint 标准做法）。
+        - 方案② lock：前 lock 步 eff = 0（全图都拉回源）——
+          结构在前几步被钉死，之后才只放开遮罩内，等价于低 denoise
+          strength 的 img2img，姿态保真度高得多。
+        两种可叠加：先算 soft 再叠加 lock。
+        """
         ctx = self.ctx
         sched = components.scheduler
         sigmas = getattr(sched, "sigmas", None)
@@ -1275,9 +1299,16 @@ class _InpaintHook:
         sig = float(sigmas[idx])
         src = ctx["_gpu_src"]
         noisy_src = (1.0 - sig) * src + sig * ctx["noise_eps"]
+
+        # ── 方案①：遮罩内软化（保留部分源结构）
+        eff = mask_t * float(ctx.get("soft_alpha", 1.0))
+        # ── 方案②：前期全图锁源（结构锁定）
+        lock_steps = int(ctx.get("lock_steps", 0) or 0)
+        if lock_steps > 0 and step_i is not None and step_i < lock_steps:
+            eff = eff * 0.0  # 全图冻结：完全跟源轨迹
+
         cur = block_state.latents[n_cond:]
-        block_state.latents[n_cond:] = (
-            cur * mask_t + noisy_src * (1.0 - mask_t))
+        block_state.latents[n_cond:] = cur * eff + noisy_src * (1.0 - eff)
 
     def restore(self):
         self._cls.loop_step = self._orig
@@ -1566,6 +1597,7 @@ def register(registry):
                 "image": "IMAGE", "last_image": "IMAGE",
                 "references": "STRING",
                 "inpaint_video": "VIDEO", "inpaint_mask": "VIDEO",
+                "inpaint_soft": "FLOAT", "inpaint_lock": "FLOAT",
                 "num_frames": "INT", "seed": "INT", "steps": "INT",
                 "height": "INT", "width": "INT",
                 "preview_every": "INT"},
@@ -1579,7 +1611,8 @@ def register(registry):
                     "请经 POST /jobs 异步执行")
     def _op_gen(model, prompt="", image=None, last_image=None, num_frames=125,
                 seed=-1, steps=4, preview_every=0, references="",
-                height=0, width=0, inpaint_video=None, inpaint_mask=None):
+                height=0, width=0, inpaint_video=None, inpaint_mask=None,
+                inpaint_soft=1.0, inpaint_lock=0.0):
         import random
 
         import torch
@@ -1611,7 +1644,10 @@ def register(registry):
                 "minimax.h3.gen: inpaint_video 与 inpaint_mask 必须同时提供")
         inpaint_ctx = None
         if inpaint_video is not None:
-            inpaint_ctx = _prepare_inpaint(pipe, inpaint_video, inpaint_mask)
+            inpaint_ctx = _prepare_inpaint(
+                pipe, inpaint_video, inpaint_mask,
+                soft_alpha=inpaint_soft, lock_ratio=inpaint_lock,
+                num_steps=int(steps))
 
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)

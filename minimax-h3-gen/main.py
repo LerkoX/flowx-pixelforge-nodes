@@ -54,10 +54,13 @@ def main():
             raise RuntimeError("inpaint_video 与 inpaint_mask 必须同时接线")
         inputs["inpaint_video"] = ref(ipv)
         inputs["inpaint_mask"] = ref(ipm)
+        # 源约束强度旋钮：soft（遮罩内生成权重）/ lock（前期全图锁源占比）
+        inputs["inpaint_soft"] = float(param("inpaint_soft", "1") or "1")
+        inputs["inpaint_lock"] = float(param("inpaint_lock", "0") or "0")
     mode = ("inpaint" if (ipv and ipm)
             else "ref2va" if refs.strip()
             else ("fl2va" if (image_id or last_id) else "t2va"))
-    print(f"[minimax-h3-gen] mode={mode} frames={inputs['num_frames']} "
+    print(f"[minimax-h3-gen] mode={mode} frames={inputs["num_frames"]} "
           f"steps={inputs['steps']} seed={inputs['seed']}", flush=True)
 
     t0 = time.time()

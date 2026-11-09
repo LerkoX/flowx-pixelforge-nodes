@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "7e4ec0756b0f"
+OP_VERSION = "3e1621c931c2"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1279,7 +1279,12 @@ class _InpaintHook:
         soft/lock 参数调节源约束强度。
 
         三个旋钮统一成一个 effective_mask 计算（遮罩内生成权重）：
-        - 硬 inpaint（默认 soft=1.0, lock=0）：eff = mask（遮罩内全自由）
+        - 硬 inpaint（soft=1.0, lock=0）：eff = mask（遮罩内全自由）
+          ⚠ 真机实测：人物替换场景下姿态会严重漂移（直立施法→俯身跪伏），
+          因为遮罩内完全无结构约束，模型自由发挥新姿态。
+        - **推荐档位 soft=0.7, lock=0**（真机 A/B/C/D 四档对比胜出）：
+          姿态跟随源视频 + 身份替换成功；lock 只要 >0 身份就换不动
+          （前几步全图冻结，身份来不及注入）。
         - 方案① soft：eff = mask * soft_alpha
           遮罩内保留 (1-soft) 的源结构 → 锚住姿态/构图，身份仍由
           LoRA/参考图决定（inpaint 社区的 soft inpaint 标准做法）。

@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "3e1621c931c2"
+OP_VERSION = "5d487d341845"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -793,13 +793,14 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
     print(f"[minimax-h3] inpaint: src {tuple(src_latent.shape)} "
           f"packed={src_packed.shape[0]} rows, 编辑区 "
           f"{mask_packed.mean()*100:.1f}% patches | "
-          f"soft={soft_alpha} lock={lock_ratio}"
+          f"soft={soft_alpha}→1.0 升温 lock={lock_ratio}"
           f"({max(1, round(num_steps * lock_ratio))}/{num_steps}步)",
           flush=True)
     return {"src_packed": src_packed, "mask_packed": mask_packed,
             "noise_eps": None,
             "soft_alpha": float(soft_alpha),
-            "lock_steps": int(round(int(num_steps) * float(lock_ratio)))}
+            "lock_steps": int(round(int(num_steps) * float(lock_ratio))),
+            "num_steps": int(num_steps)}
 
 
 class _InpaintHook:
@@ -857,23 +858,17 @@ class _InpaintHook:
 
     def _mix(self, block_state, components, n_cond, mask_t, sigma_idx,
              step_i=None):
-        """遮罩外拉回源轨迹；遮罩内按 
-        soft/lock 参数调节源约束强度。
+        """遮罩外拉回源轨迹；遮罩内按 soft/lock 参数调节源约束强度。
 
-        三个旋钮统一成一个 effective_mask 计算（遮罩内生成权重）：
-        - 硬 inpaint（soft=1.0, lock=0）：eff = mask（遮罩内全自由）
-          ⚠ 真机实测：人物替换场景下姿态会严重漂移（直立施法→俯身跪伏），
-          因为遮罩内完全无结构约束，模型自由发挥新姿态。
-        - **推荐档位 soft=0.7, lock=0**（真机 A/B/C/D 四档对比胜出）：
-          姿态跟随源视频 + 身份替换成功；lock 只要 >0 身份就换不动
-          （前几步全图冻结，身份来不及注入）。
-        - 方案① soft：eff = mask * soft_alpha
-          遮罩内保留 (1-soft) 的源结构 → 锚住姿态/构图，身份仍由
-          LoRA/参考图决定（inpaint 社区的 soft inpaint 标准做法）。
-        - 方案② lock：前 lock 步 eff = 0（全图都拉回源）——
-          结构在前几步被钉死，之后才只放开遮罩内，等价于低 denoise
-          strength 的 img2img，姿态保真度高得多。
-        两种可叠加：先算 soft 再叠加 lock。
+        统一成一个 effective_mask 计算（遮罩内生成权重）：
+        - 硬 inpaint（soft=1.0）：eff = mask（遮罩内全自由）
+          ⚠ 真机实测：人物替换场景下姿态会严重漂移（直立施法→俯身跪伏）。
+        - **推荐档位 soft=0.7**：soft **schedule** 线性升温
+          （第0步 0.7 锚源结构 → 最后一步 1.0 纯生成）——前期锁姿态、
+          后期不留残影。⚠ 恒定 soft 会每步注入源人物轮廓→重影。
+        - 方案② lock：前 lock 步 eff = 0（全图拉回源）。
+          ⚠ 实测对 turbo 8 步蒸馏 LoRA 有害：跳过前几步破坏蒸馏轨迹
+          → 身份注入失效；且锁步结束时有重影。默认关闭，不推荐。
         """
         ctx = self.ctx
         sched = components.scheduler
@@ -887,9 +882,20 @@ class _InpaintHook:
         src = ctx["_gpu_src"]
         noisy_src = (1.0 - sig) * src + sig * ctx["noise_eps"]
 
-        # ── 方案①：遮罩内软化（保留部分源结构）
-        eff = mask_t * float(ctx.get("soft_alpha", 1.0))
-        # ── 方案②：前期全图锁源（结构锁定）
+        # ── 方案① soft **schedule**：前期锚结构、后期纯生成
+        # soft 恒定混合会在**每一步**把源人物轮廓注入一遍 → 新旧人物
+        # 叠加残影（真机修：女人身体还在）。改为随步数线性升温到 1.0：
+        #   i=0 → soft_start（源结构锚姿态）  i=last → 1.0（纯生成，无残影）
+        soft0 = float(ctx.get("soft_alpha", 1.0))
+        if step_i is not None and soft0 < 1.0:
+            total = max(1, int(ctx.get("num_steps", 0) or 0))
+            frac = min(1.0, max(0.0, step_i / max(1, total - 1)))
+            soft_i = soft0 + (1.0 - soft0) * frac
+        else:
+            soft_i = soft0
+        eff = mask_t * soft_i
+        # ── 方案② lock：前 N 步全图冻结（实测对 turbo 蒸馏 LoRA 有害：
+        # 跳过前几步会破坏 8 步蒸馏轨迹 → 身份注入失效，默认关闭）
         lock_steps = int(ctx.get("lock_steps", 0) or 0)
         if lock_steps > 0 and step_i is not None and step_i < lock_steps:
             eff = eff * 0.0  # 全图冻结：完全跟源轨迹

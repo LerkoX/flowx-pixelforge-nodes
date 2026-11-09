@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "bf790ec5a7bf"
+OP_VERSION = "59123aa2a2d7"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1115,8 +1115,12 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
         frames = _decode_video_reference(path)["frames"]
 
     mdata = inpaint_mask
-    mframes = (mdata or {}).get("frames") if isinstance(mdata, dict) else None
-    if not mframes:
+    if isinstance(mdata, dict) and mdata.get("frames"):
+        mframes = mdata["frames"]
+    elif isinstance(mdata, dict) and mdata.get("path"):
+        # 对象仓库存贮形态：VIDEO 统一落盘 mp4（{path, fps, num_frames}）
+        mframes = _decode_video_reference(mdata["path"])["frames"]
+    else:
         raise ValueError("minimax.h3.gen: inpaint_mask 需为帧形态对象"
                          "（video.person_mask 的输出）")
     if len(mframes) != len(frames):

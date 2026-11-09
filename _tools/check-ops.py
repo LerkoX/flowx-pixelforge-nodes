@@ -121,7 +121,7 @@ def main() -> int:
         elif m.group(1) != path.stem:
             problems.append(f"{fam}: OP_FAMILY={m.group(1)!r} 须等于文件 stem "
                             f"{path.stem!r}（否则同族节点会各传各的文件）")
-        expect = sync.family_version(src)
+        expect = sync.family_version(sync.inline_deps(src))
         if f'OP_VERSION = "{expect}"' not in src:
             problems.append(f"{fam}: 版本戳 ≠ 内容 hash（应为 {expect}）"
                             f"——请跑 python3 nodes/_tools/sync-common.py")

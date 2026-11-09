@@ -1,0 +1,168 @@
+{
+  "name": "wan-load",
+  "displayName": "Wan 加载",
+  "description": "通义万相（Wan2.1 14B / Wan2.2 MoE）视频模型装配。三种管道：t2v 文生视频（WanPipeline）/ i2v 图生视频（WanImageToVideoPipeline，同时给末帧即首尾帧）/ animate 角色动画与替换（WanAnimatePipeline）。Wan2.2 是 MoE 双去噪器：transformer2 非空即启用（boundary_ratio 处从高噪专家切低噪专家）。权重支持 Comfy-Org 单文件直读（from_single_file，免 ComfyUI 依赖）。14B bf16 ≈28GB 走逐层 offload 可在 24GB 卡跑。可选 LightX2V 加速 LoRA。冷装配数分钟，走异步 /jobs。自包含节点：server_op.py 运行时自注册（需服务端 INFERENCE_TOKEN）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "video",
+    "t2v",
+    "i2v",
+    "inference"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址；docker 节点跑在远端宿主时 service_url 是容器内地址，必须另绑本参数（留空则同 service_url）"
+    },
+    {
+      "name": "task",
+      "type": "string",
+      "description": "管道类型：t2v 文生视频 / i2v 图生视频（含首尾帧）/ animate 角色动画与替换",
+      "required": false,
+      "default": "t2v"
+    },
+    {
+      "name": "transformer",
+      "type": "string",
+      "description": "transformer 权重文件名（/models/wan/diffusion_models 下）。Comfy-Org 重打包单文件如 wan2.1_t2v_14B_bf16.safetensors；文件名含 ti2v_5b 会自动按 24fps 出片",
+      "required": false,
+      "default": "wan2.1_t2v_14B_bf16.safetensors"
+    },
+    {
+      "name": "transformer2",
+      "type": "string",
+      "description": "Wan2.2 MoE 低噪专家权重文件名（留空=单专家 Wan2.1）。填了即启用双阶段去噪，boundary_ratio 处从 transformer 切到 transformer2",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "description": "UMT5-XXL 文本编码器文件名（/models/wan/text_encoders 下，Comfy-Org 的 umt5_xxl_* 单文件）",
+      "required": false,
+      "default": "umt5_xxl_bf16.safetensors"
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "Wan VAE 文件名（/models/wan/vae 下）。强制 fp32 加载——官方明确 fp32 解码质量更好",
+      "required": false,
+      "default": "wan_2.1_vae.safetensors"
+    },
+    {
+      "name": "image_encoder",
+      "type": "string",
+      "description": "CLIP-ViT-H 图像编码器文件名（/models/wan/image_encoders 下）。仅 task=i2v/animate 需要",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "lora",
+      "type": "string",
+      "description": "可选 LoRA 文件名（/models/wan/loras 下；多个用逗号分隔，可带 @强度）。常用 LightX2V 4step 加速；Wan2.2 MoE 会自动同时挂到低噪专家",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "lora_scale",
+      "type": "float",
+      "description": "LoRA 默认强度",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "权重精度：bf16（推荐）/ fp16 / fp32。注意 VAE 始终 fp32",
+      "required": false,
+      "default": "bf16"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "description": "offload 策略：sequential=逐层 swap（24GB 卡跑 14B 必选）/ none=不 offload（大显存直跑）",
+      "required": false,
+      "default": "sequential"
+    },
+    {
+      "name": "boundary_ratio",
+      "type": "float",
+      "description": "Wan2.2 MoE 专家切换比例（0.875 = 前 87.5% 时间步用高噪专家，之后切低噪）。仅 transformer2 非空时生效",
+      "required": false,
+      "default": 0.875
+    },
+    {
+      "name": "flow_shift",
+      "type": "float",
+      "description": "UniPC 调度器 flow_shift：720p 用 5.0，480p 用 3.0（官方建议）",
+      "required": false,
+      "default": 5.0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN 环境变量）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数（冷装配 14B 逐层 offload 数分钟）"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "Wan MODEL 组件引用 ID（供 wan-gen / wan-animate 消费）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 580,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

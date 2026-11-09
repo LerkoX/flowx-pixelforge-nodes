@@ -1,0 +1,22 @@
+const WIDGET_SPEC = {
+  icon: '🌊',
+  title: 'Wan 加载',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'task', label: '管道类型（t2v / i2v / animate）', kind: 'text', default: 't2v' },
+    { key: 'transformer', label: 'transformer 权重文件名', kind: 'text', mono: true, default: 'wan2.1_t2v_14B_bf16.safetensors' },
+    { key: 'transformer2', label: 'Wan2.2 低噪专家（留空=单专家）', kind: 'text', mono: true, default: '' },
+    { key: 'text_encoder', label: 'UMT5-XXL 文本编码器文件名', kind: 'text', mono: true, default: 'umt5_xxl_bf16.safetensors' },
+    { key: 'vae', label: 'Wan VAE 文件名（强制 fp32）', kind: 'text', mono: true, default: 'wan_2.1_vae.safetensors' },
+    { key: 'image_encoder', label: 'CLIP-ViT-H（仅 i2v/animate）', kind: 'text', mono: true, default: '' },
+    { key: 'lora', label: 'LoRA 文件名（逗号分隔，可带 @强度）', kind: 'text', mono: true, default: '' },
+    { key: 'lora_scale', label: 'LoRA 默认强度', kind: 'slider', min: 0, max: 2, step: 0.05, default: 1.0 },
+    { key: 'dtype', label: '精度（bf16/fp16/fp32）', kind: 'text', default: 'bf16' },
+    { key: 'offload', label: 'offload 策略（sequential/none）', kind: 'text', default: 'sequential' },
+    { key: 'boundary_ratio', label: 'MoE 专家切换比例（仅双专家）', kind: 'slider', min: 0.5, max: 1, step: 0.005, default: 0.875, advanced: true },
+    { key: 'flow_shift', label: 'flow_shift（720p=5.0 / 480p=3.0）', kind: 'slider', min: 1, max: 12, step: 0.5, default: 5.0, advanced: true },
+    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600, advanced: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+  ],
+  note: 'Wan 视频模型装配（14B bf16 逐层 offload，24GB 卡可跑）',
+}

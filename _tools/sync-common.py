@@ -25,6 +25,36 @@ STAMP_RE = re.compile(r'^OP_VERSION\s*=\s*"[0-9a-f]*"', re.M)
 STAMP_ZERO = 'OP_VERSION = "000000000000"'
 
 
+INLINE_RE = re.compile(
+    r"# --- sync-common 内联点：[^\n]*\n"
+    r"from (\w+) import \([^)]*\)\n"
+    r"# --- 内联点结束 ---")
+
+FAM_DIR = pathlib.Path(__file__).resolve().parent.parent / "_common" / "server_ops"
+
+
+def inline_deps(text: str) -> str:
+    """把族文件的 <dep> 内联标记展开为 dep 全文（与分发时完全一致）。
+
+    供 check-ops 复用：版本戳是按**拼接后**文本算的，校验也必须拼后再算，
+    否则有内联依赖的族会被误报「版本戳 ≠ 内容 hash」。
+    """
+    m = INLINE_RE.search(text)
+    if not m:
+        return text
+    dep_name = m.group(1)
+    dep_file = FAM_DIR / f"{dep_name}.py"
+    if not dep_file.exists():
+        raise SystemExit(
+            f"✗ 内联依赖 {dep_name}.py 不存在于 _common/server_ops/")
+    dep = dep_file.read_text()
+    return (text[:m.start()]
+            + f"# --- 以下为 {dep_name}.py 内联（sync-common 自动生成，勿改）---\n"
+            + dep
+            + "\n# --- 内联结束 ---\n"
+            + text[m.end():])
+
+
 def family_version(text: str) -> str:
     """由族文件内容算版本（stamp 行归零后取 sha256 前 12 位）。"""
     probe = STAMP_RE.sub(STAMP_ZERO, text, count=1)
@@ -109,6 +139,9 @@ OP_FAMILIES = {
                       "video-repaint", "video-v2v"],
     # SAM3 视频人物遮罩（文本检测+全片追踪）：人物替换 inpaint_mask 选区件
     "video_mask.py": ["video-person-mask"],
+    # Wan 视频族（通义万相）：load 装配（t2v/i2v/animate 三管）+
+    # gen 生成 + animate 角色替换。三节点共享同族文件。
+    "wan.py": ["wan-load", "wan-gen", "wan-animate"],
 }
 
 
@@ -142,26 +175,6 @@ def main():
     # 标记处（插件上传是单文件机制），版本戳按**拼接后**文本计算；源文件保留
     # import 标记保持可编辑，只同步 OP_VERSION 行。
     fam_dir = ROOT / "_common" / "server_ops"
-    inline_re = re.compile(
-        r"# --- sync-common 内联点：[^\n]*\n"
-        r"from (\w+) import \([^)]*\)\n"
-        r"# --- 内联点结束 ---")
-
-    def inline_deps(text):
-        m = inline_re.search(text)
-        if not m:
-            return text
-        dep_name = m.group(1)
-        dep_file = fam_dir / f"{dep_name}.py"
-        if not dep_file.exists():
-            raise SystemExit(
-                f"✗ 内联依赖 {dep_name}.py 不存在于 _common/server_ops/")
-        dep = dep_file.read_text()
-        return (text[:m.start()]
-                + f"# --- 以下为 {dep_name}.py 内联（sync-common 自动生成，勿改）---\n"
-                + dep
-                + "\n# --- 内联结束 ---\n"
-                + text[m.end():])
 
     versions = {}
     for fam in sorted(OP_FAMILIES):

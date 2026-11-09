@@ -1,0 +1,174 @@
+{
+  "name": "wan-gen",
+  "displayName": "Wan 生成",
+  "description": "通义万相视频生成：image 留空=文生视频（T2V），给 image=图生视频（I2V），image+last_image=首尾帧插值。注意 Wan 有 CFG——guidance_scale>1 时 negative_prompt 才生效（与 MiniMax-H3 的 guidance-distilled 不同，计算量翻倍）。帧数自动对齐 4k+1（81/121/161），fps=16（Wan2.1）/24（Wan2.2-TI2V-5B）。输出 VIDEO 无音轨，需配音请接视频音轨节点。分钟级任务，走异步 /jobs。自包含节点：server_op.py 运行时自注册。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "video",
+    "t2v",
+    "i2v",
+    "inference"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "Wan MODEL 引用 ID（接 wan-load 的 model 输出）",
+      "required": true,
+      "source": {
+        "nodeRef": "wan-load",
+        "output": "model"
+      }
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "正向提示词（Wan 对镜头语言敏感，建议写清景别/运动/光线）",
+      "required": true,
+      "default": ""
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "description": "负向提示词（仅 guidance_scale>1 生效）。留空则用官方推荐负面词",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "首帧参考图对象 ID（接 load-image）。留空=T2V，给图=I2V",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "last_image",
+      "type": "string",
+      "description": "末帧参考图对象 ID。与 image 同时给=首尾帧插值（FLF2V）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "帧数，自动对齐 4k+1（Wan2.1 @16fps：81 帧=5.1s，121 帧=7.6s；Wan2.2-TI2V-5B @24fps：121 帧=5s）",
+      "required": false,
+      "default": 81
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "宽度（取 16 的倍数；480p 用 832，720p 用 1280）",
+      "required": false,
+      "default": 832
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "高度（取 16 的倍数；480p 用 480，720p 用 720；竖屏 480x832）",
+      "required": false,
+      "default": 480
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数（官方默认 30~50；挂 LightX2V 加速 LoRA 时可用 4~8）",
+      "required": false,
+      "default": 30
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "description": "CFG 强度（官方推荐 5.0~7.0）。>1 时每步两次前向，negative_prompt 生效",
+      "required": false,
+      "default": 5.0
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子，-1 为随机",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "生成视频对象 ID（可接 save-video 落盘）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的种子"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "视频帧率（Wan2.1=16，Wan2.2-TI2V-5B=24）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 620,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

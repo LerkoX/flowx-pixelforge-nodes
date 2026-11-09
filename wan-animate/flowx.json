@@ -1,0 +1,202 @@
+{
+  "name": "wan-animate",
+  "displayName": "Wan 角色替换",
+  "description": "Wan-Animate（Wan2.2-Animate-14B）角色动画与角色替换。animate 模式：给一张角色图+参考视频，让角色复现参考视频的动作与表情；replace 模式：把背景视频里的人换成新角色（额外需背景视频+遮罩视频，白=生成区/黑=保留区），内置 Relighting LoRA 做环境光照与色调融合。⚠ pose_video/face_video 必须是预处理后的骨骼与人脸表示（官方 Wan2.2 仓库 preprocess 脚本产出），不能直接喂原始视频。相比 MiniMax-H3+SAM3 手工 inpaint，本节点是为此任务专训的端到端模型。走异步 /jobs。自包含节点：server_op.py 运行时自注册。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "animate",
+    "character-swap",
+    "video",
+    "inference"
+  ],
+  "icon": "🎭",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "Wan-Animate MODEL 引用 ID（接 wan-load task=animate 的 model 输出）",
+      "required": true,
+      "source": {
+        "nodeRef": "wan-load",
+        "output": "model"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "角色参考图对象 ID（接 load-image；脸部/半身清晰即可）",
+      "required": true,
+      "default": ""
+    },
+    {
+      "name": "pose_video",
+      "type": "string",
+      "description": "骨骼动作视频对象 ID（预处理后的 keypoints 渲染，非原始视频）",
+      "required": true,
+      "default": ""
+    },
+    {
+      "name": "face_video",
+      "type": "string",
+      "description": "人脸表情视频对象 ID（预处理后的面部特征表示，非原始视频）",
+      "required": true,
+      "default": ""
+    },
+    {
+      "name": "background_video",
+      "type": "string",
+      "description": "背景视频对象 ID（仅 replace 模式需要：含原人物的原始场景）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "mask_video",
+      "type": "string",
+      "description": "遮罩视频对象 ID（仅 replace 模式需要：白=生成新内容 / 黑=保留原画面）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "description": "模式：animate 角色动画 / replace 角色替换",
+      "required": false,
+      "default": "animate"
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "提示词（replace 模式建议描述光照融合，如 seamless lighting）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "description": "负向提示词（仅 guidance_scale>1 生效）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "segment_frame_length",
+      "type": "integer",
+      "description": "每段帧数（官方 77，按片段分段生成再接续）",
+      "required": false,
+      "default": 77
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "生成宽度（0=按角色图尺寸自动，取 16 的倍数）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "生成高度（0=按角色图尺寸自动）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "description": "采样步数（官方示例 20~50）",
+      "required": false,
+      "default": 20
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "description": "CFG 强度（Wan-Animate 默认 1.0 即关闭 CFG；要负向提示就设 5~7，代价是计算翻倍）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "随机种子，-1 为随机",
+      "required": false,
+      "default": -1
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数（14B 分段生成较慢）"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "生成视频对象 ID"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的种子"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "视频帧率（Animate 官方 30fps）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 640,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

@@ -99,6 +99,20 @@
       "required": false,
       "default": 3600,
       "description": "job 超时秒数（冷加载反量化+装配数分钟）"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "required": false,
+      "default": "bf16",
+      "description": "权重精度：bf16（推荐）/ fp16 / fp32"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
     }
   ],
   "outputs": [

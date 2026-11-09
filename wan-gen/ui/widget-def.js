@@ -1,0 +1,21 @@
+const WIDGET_SPEC = {
+  icon: '🌊',
+  title: 'Wan 生成',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'model', label: 'MODEL（接 wan-load）', kind: 'text', mono: true },
+    { key: 'prompt', label: '正向提示词', kind: 'textarea', rows: 4, default: '' },
+    { key: 'negative_prompt', label: '负向提示词（CFG>1 生效）', kind: 'textarea', rows: 2, default: '', advanced: true },
+    { key: 'image', label: '首帧图对象 ID（留空=T2V）', kind: 'text', mono: true, default: '' },
+    { key: 'last_image', label: '末帧图对象 ID（首尾帧插值）', kind: 'text', mono: true, default: '', advanced: true },
+    { key: 'num_frames', label: '帧数（4k+1 对齐）', kind: 'text', default: 81 },
+    { key: 'width', label: '宽（16 倍数；480p=832 / 720p=1280）', kind: 'text', default: 832 },
+    { key: 'height', label: '高（16 倍数；480p=480 / 720p=720）', kind: 'text', default: 480 },
+    { key: 'steps', label: '采样步数（LightX2V 加速可 4~8）', kind: 'slider', min: 1, max: 60, step: 1, default: 30 },
+    { key: 'guidance_scale', label: 'CFG 强度（>1 每步两次前向）', kind: 'slider', min: 0, max: 15, step: 0.5, default: 5.0 },
+    { key: 'seed', label: '种子（-1 随机）', kind: 'text', default: -1 },
+    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600, advanced: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+  ],
+  note: 'Wan 视频生成（T2V / I2V / 首尾帧）；有 CFG，帧数 4k+1',
+}

@@ -63,7 +63,9 @@ def main():
         "steps": param("steps", 20, int),
         "guidance_scale": param("guidance_scale", 1.0, float),
         "prev_segment_conditioning_frames":
-            param("prev_segment_conditioning_frames", 0, int),
+            param("prev_segment_conditioning_frames", 1, int),
+        "motion_encode_batch_size":
+            param("motion_encode_batch_size", 0, int),
         "seed": param("seed", -1, int),
     }
     if bg_id:

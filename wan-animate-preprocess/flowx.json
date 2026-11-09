@@ -1,7 +1,7 @@
 {
   "name": "wan-animate-preprocess",
   "displayName": "Wan 动作预处理",
-  "description": "Wan-Animate 输入预处理：原始参考视频 → 骨骼动作视频（pose_video），供 wan-animate 消费。实现：DWPose（133 关键点 wholebody）逐帧提取 + OpenPose 风格渲染，即 Wan-Animate 论文描述的空间对齐骨骼信号。纯编排节点（video.load → video.to_frames → preprocess.openpose → video.encode），无新增服务端算子。⚠ 官方预处理脚本未公开代码，本节点是最接近的公开实现；若与权重不匹配，可用官方脚本离线产出后经 load-video 直接喂 wan-animate。face_video 官方为「隐式人脸特征」，格式未公开，本节点默认用原视频占位（pass_through_face）。",
+  "description": "Wan-Animate 输入预处理：原始参考视频 → 骨骼动作视频（pose_video），供 wan-animate 消费。实现：DWPose（133 关键点 wholebody）逐帧提取 + OpenPose 风格渲染。**格式实证**：读 ComfyUI nodes_wan.py 源码确认，pose_video 无私有骨骼格式——WanAnimateToVideo 直接 vae.encode(pose_video[:,:,:,:3]) 压成 conditioning，所以骨骼可视化图完全对路。纯编排节点（video.load → video.to_frames → preprocess.openpose → video.encode），无新增服务端算子。face_video 在 ComfyUI v1 是人脸裁剪序列（内部缩放 512×512），Wan-Animate 2 已移除该输入，故默认用原视频占位（pass_through_face 开关）。",
   "version": "1.0.0",
   "author": "flowx-team",
   "tags": [

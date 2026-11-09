@@ -482,7 +482,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "10456e92c6cd"
+OP_VERSION = "3aff2417ee5d"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1388,6 +1388,7 @@ def register(registry):
                 "prompt": "STRING", "negative_prompt": "STRING",
                 "mode": "STRING", "segment_frame_length": "INT",
                 "prev_segment_conditioning_frames": "INT",
+                "motion_encode_batch_size": "INT",
                 "height": "INT", "width": "INT", "steps": "INT",
                 "guidance_scale": "FLOAT", "seed": "INT"},
         outputs={"video": "VIDEO", "seed": "INT", "fps": "INT"},
@@ -1400,7 +1401,8 @@ def register(registry):
                     background_video=None, mask_video=None,
                     prompt="", negative_prompt="", mode="animate",
                     segment_frame_length=77,
-                    prev_segment_conditioning_frames=0,
+                    prev_segment_conditioning_frames=1,
+                    motion_encode_batch_size=0,
                     height=0, width=0, steps=20,
                     guidance_scale=1.0, seed=-1):
         import random
@@ -1469,10 +1471,13 @@ def register(registry):
                       guidance_scale=float(guidance_scale),
                       num_inference_steps=int(steps),
                       mode=mode, generator=gen, output_type="np")
-        if int(prev_segment_conditioning_frames) > 0:
-            # 段间时序引导（官方建议 1 或 5；5 更连贯但更吃显存）
+        if int(prev_segment_conditioning_frames) >= 0:
+            # 段间时序引导（diffusers 默认 1；5 更连贯但更吃显存）
             kwargs["prev_segment_conditioning_frames"] = int(
                 prev_segment_conditioning_frames)
+        if int(motion_encode_batch_size) > 0:
+            # 动作 VAE encode 的 batch（大分辨率/长片段时调低可省显存）
+            kwargs["motion_encode_batch_size"] = int(motion_encode_batch_size)
         if mode == "replace":
             kwargs["background_video"] = bg
             kwargs["mask_video"] = msk

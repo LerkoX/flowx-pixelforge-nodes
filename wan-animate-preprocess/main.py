@@ -1,26 +1,34 @@
 """wan-animate-preprocess：Wan-Animate 输入预处理（参考视频 → 骨骼动作视频）。
 
-⚠ 重要说明（先读）：
-Wan-Animate 官方预处理脚本**未公开代码**（humanaigc/Wan-Animate 只有项目
-页），diffusers 也只说「见官方仓库」。本节点采用论文描述的最接近实现：
-用 **DWPose（133 关键点 wholebody）逐帧提取 + OpenPose 风格渲染**产出
-`pose_video`——即 Wan-Animate 期望的 "spatially-aligned skeleton signals"。
+## 格式实证（读 ComfyUI comfy_extras/nodes_wan.py 源码确认，2026-11-11）
 
-若实测与官方权重不匹配，两条退路：
-1. 用官方脚本离线产出 pose/face 视频，再用 load-video 上传，直接喂
-   wan-animate（本节点产出的对象 ID 与 load-video 等价）
-2. 调整 detector（openpose / dwpose）与渲染参数再试
+**pose_video 没有私有骨骼格式要求**——ComfyUI 的 WanAnimateToVideo 拿到的就是
+任意 RGB 帧批次，直接：
 
-实现方式：**纯编排**，不新增算子——
-  video.load → video.to_frames → preprocess.openpose(逐帧) →
-  video.encode
-全部复用现成算子，无新增服务端代码。
+    pose_video = common_upscale(pose_video[:length], width, height, "area")
+    pose_video_latent = vae.encode(pose_video[:, :, :, :3])
+    positive = conditioning_set_values(positive, {"pose_video_latent": ...})
 
-face_video：官方为「implicit facial features」，公开资料不足以可靠复现。
-本节点提供 pass_through_face 开关：把原视频直接作为 face_video 占位
-（部分权重容忍），或留空让 wan-animate 只用 pose。实测后再决定是否需要
-专门的 face 提取算子。
+即骨骼可视化图（DWPose / OpenPose 渲染）走标准 VAE encode 变成 conditioning。
+「预处理后的骨骼表示」= 这类可视化骨骼视频/帧序列，**不是二进制私有格式**。
+（同一函数里 face_video 缩放到 512×512 归一化 [-1,1]；负向用全 -1。）
+
+所以本节点用 **DWPose 133 关键点 + OpenPose 渲染** 产出的骨架视频完全对路。
+
+## 实现
+
+纯编排，不新增服务端算子：
+  video.load → video.to_frames → preprocess.openpose(逐帧) → video.encode
+（preprocess.py 已内联 DWPose ONNX：yolox_l 人检 + dw-ll_ucoco_384 关键点）
+
+## face_video
+
+ComfyUI v1 语义是人脸裁剪序列（内部缩放到 512×512）；Wan-Animate **2**
+（WanAnimate2ToVideo）已**移除 face_video**，改用 pose_strength /
+pose_start_percent / pose_end_percent / reference_image_strength 四个旋钮。
+故 face_video 用原视频占位影响有限，pass_through_face 开关默认开。
 """
+
 import time
 
 from flowx_client import (emit, ensure_plugin, param, ref, submit_job,

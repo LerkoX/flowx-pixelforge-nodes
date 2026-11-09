@@ -149,8 +149,15 @@
       "name": "prev_segment_conditioning_frames",
       "type": "integer",
       "required": false,
+      "default": 1,
+      "description": "段间时序引导帧数（diffusers 默认 1；官方建议 1 或 5，5 更连贯但更吃显存）"
+    },
+    {
+      "name": "motion_encode_batch_size",
+      "type": "integer",
+      "required": false,
       "default": 0,
-      "description": "段间时序引导帧数（0=不启用；官方建议 1 或 5，5 更连贯但更吃显存）"
+      "description": "动作 VAE encode 的 batch（0=管道默认；长片段/大分辨率时调低可省显存）"
     },
     {
       "name": "service_token",

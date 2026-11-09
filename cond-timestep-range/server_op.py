@@ -23,7 +23,7 @@ LATENT 为 4D 张量 (b, 4, h/8, w/8) 或 LatentBundle（samples+noise_mask）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "839199f26a22"
+OP_VERSION = "cafeecc13b0e"
 OP_FAMILY = "cond_latent"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -45,6 +45,134 @@ from PIL import Image
 from app import ops as _core_ops  # 插件可见性约定：可复用核心原语
 
 _SDXL_CONDS = (_core_ops.SDXLCond, _core_ops.SDXLSegments)
+
+
+# ===========================================================================
+# COND 类型层次（对标 ComfyUI conds.py 的 CONDRegular / CONDNoiseShape /
+# CONDCrossAttn / CONDList）
+#
+# 设计目标：让「多条件 + 区域 + 时间窗 + 不同序列长」可任意组合，而不用为
+# 每种组合单写一个算子。协议三条：
+#   to_segments()  → 统一出口 [(tensor, area, strength, start, end), ...]
+#   can_concat(o)  → 协商能否拼接（不同序列长时用 repeat 到 lcm 而不是补零）
+#   concat(os)     → 实际拼接
+#
+# **向后兼容**：裸张量 / 3&5 元组段列表 / SDXLCond / SDXLSegments 继续被
+# 服务端 as_cond_segments 直接接受；本层次只是新增一条更结构化的路径。
+# ===========================================================================
+
+import math as _math
+
+MAX_CONCAT_REPEAT = 4   # 序列长差异超过 4 倍就不拼接（ComfyUI 的任意上限）
+
+
+class Conditioning:
+    """COND 基类：所有形态都能归一化成段列表。"""
+
+    def to_segments(self):
+        raise NotImplementedError
+
+    def can_concat(self, other):
+        return False
+
+    def concat(self, others):
+        raise NotImplementedError
+
+    def size(self):
+        segs = self.to_segments()
+        return list(segs[0][0].shape) if segs else []
+
+
+class CondTensor(Conditioning):
+    """单条整图条件（对标 CONDRegular/CONDNoiseShape）。
+
+    area == None 表示全图生效；area=(ly,lx,lh,lw) 表示仅该 latent 区域。
+    start/end 为采样进度窗口（对齐 ConditioningSetTimestepRange）。
+    """
+
+    def __init__(self, tensor, area=None, strength=1.0,
+                 start=0.0, end=1.0):
+        self.tensor = tensor
+        self.area = area
+        self.strength = float(strength)
+        self.start = float(start)
+        self.end = float(end)
+
+    def to_segments(self):
+        return [(self.tensor, self.area, self.strength,
+                 self.start, self.end)]
+
+    def with_area(self, area, strength=None):
+        return CondTensor(self.tensor, area,
+                          self.strength if strength is None else strength,
+                          self.start, self.end)
+
+    def with_range(self, start, end):
+        return CondTensor(self.tensor, self.area, self.strength, start, end)
+
+    def can_concat(self, other):
+        if not isinstance(other, CondTensor):
+            return False
+        s1, s2 = self.tensor.shape, other.tensor.shape
+        if s1[0] != s2[0] or s1[2] != s2[2]:
+            return False          # batch / 特征维必须一致
+        if s1[1] == s2[1]:
+            return True
+        diff = _math.lcm(s1[1], s2[1]) // min(s1[1], s2[1])
+        return diff <= MAX_CONCAT_REPEAT   # 拉得太远就不拼（性能会崩）
+
+    def concat(self, others):
+        """沿序列维拼接（对标 CONDCrossAttn.concat）。
+
+        **关键**：序列长不同时用 `repeat` 填到最小公倍数，而不是补零——
+        repeat 不改变注意力语义（同样的 token 重复出现），补零则会把
+        padding 位置的注意力权重分走。
+        """
+        conds = [self.tensor] + [o.tensor for o in others]
+        lcm = 1
+        for c in conds:
+            lcm = _math.lcm(lcm, c.shape[1])
+        out = []
+        for c in conds:
+            if c.shape[1] < lcm:
+                c = c.repeat(1, lcm // c.shape[1], 1)
+            out.append(c)
+        # 拼接后 as 一个整图段：区域/窗口信息在多段场景下逐段保留更准确，
+        # 故默认返回段列表而非单张量（调用方按需选 concat / to_segments）
+        return torch.cat(out, dim=1)
+
+
+class ConditioningList(Conditioning):
+    """多条件组合容器（对标 CONDList）：逐段保留区域/权重/时间窗。"""
+
+    def __init__(self, items=None):
+        self.items = list(items or [])
+
+    def to_segments(self):
+        out = []
+        for it in self.items:
+            if isinstance(it, Conditioning):
+                out.extend(it.to_segments())
+            elif isinstance(it, list):
+                out.extend(it)
+            else:
+                out.append(it)
+        return out
+
+    def can_concat(self, other):
+        return isinstance(other, (ConditioningList, CondTensor))
+
+    def concat(self, others):
+        items = list(self.items)
+        for o in (others if isinstance(others, list) else [others]):
+            if isinstance(o, ConditioningList):
+                items.extend(o.items)
+            else:
+                items.append(o)
+        return ConditioningList(items)
+
+    def add(self, other):
+        return self.concat(other)
 
 
 def _is_sdxl(cond):
@@ -224,6 +352,55 @@ def cond_set_timestep_range(cond, start_percent=0.0, end_percent=1.0):
     print(f"[cond.set_timestep_range] window="
           f"[{start_percent},{end_percent})", flush=True)
     return {"cond": [_wrap((t, None, 1.0))]}
+
+
+def cond_pack(cond, weight=1.0, start_percent=0.0, end_percent=1.0,
+              layer_start=0, layer_end=-1):
+    """把任意形态 COND 打包成结构化 Conditioning（复杂编排的起点）。
+
+    对标 ComfyUI 的 cond 包装链：一条裸 cond 依次可加
+    - weight：整体权重（等价 ConditioningSetAreaStrength 的全局版）
+    - [start_percent, end_percent)：生效的采样进度窗口
+    - [layer_start, layer_end)：生效的 cross-attention 层区间
+      （对标 CONDCrossAttn：不同层喂不同提示词，例如浅层管构图、深层管细节）
+
+    输出 ConditioningList（服务端 to_segments 归一化），可继续与
+    cond.concat / cond.set_area 组合。
+    """
+    segs = (cond.to_segments() if isinstance(cond, Conditioning)
+            else cond if isinstance(cond, list)
+            else [(cond, None, 1.0, 0.0, 1.0)])
+    items = []
+    for seg in segs:
+        t = seg[0]
+        area = seg[1] if len(seg) > 1 else None
+        s0 = float(seg[2]) if len(seg) > 2 else 1.0
+        items.append({"tensor": t, "area": area,
+                      "strength": s0 * float(weight),
+                      "start": float(start_percent),
+                      "end": float(end_percent),
+                      "layer_start": int(layer_start),
+                      "layer_end": int(layer_end)})
+    print(f"[cond.pack] {len(items)} 段 weight={weight} "
+          f"window=[{start_percent},{end_percent}) "
+          f"layers=[{layer_start},{layer_end})", flush=True)
+    return {"cond": {"__cond_pack__": items}}
+
+
+def cond_concat(cond_a, cond_b):
+    """多条件拼接（对标 ComfyUI ConditioningConcat / CONDList 协商）。
+
+    与 cond.combine 的差异：
+    - cond.combine：**序列维拼接**成一条更长的提示词（突破 77 token）
+    - cond.concat ：**并列多条条件**，各自保留区域/权重/时间窗/层区间
+      （多区域构图、分段提示词、分阶段约束的标准做法）
+    序列长不一致时用 repeat 到 lcm 填充（不改变注意力语义，优于补零）。
+    """
+    a = cond_a if isinstance(cond_a, Conditioning) else ConditioningList([cond_a])
+    b = cond_b if isinstance(cond_b, Conditioning) else ConditioningList([cond_b])
+    out = a.concat(b)
+    print(f"[cond.concat] -> {len(out.to_segments())} 段", flush=True)
+    return {"cond": out}
 
 
 def cond_average(cond_a, cond_b, weight=0.5):
@@ -428,6 +605,22 @@ def register(registry):
                     "生效（图像像素），strength 为该段权重（默认 1.0）；"
                     "多区域 = 多个 set_area 经 cond.combine 拼接；"
                     "暂不与 controlnet 组合")(cond_set_area)
+    registry.register(
+        "cond.pack",
+        inputs={"cond": "COND", "weight": "FLOAT",
+                "start_percent": "FLOAT", "end_percent": "FLOAT",
+                "layer_start": "INT", "layer_end": "INT"},
+        outputs={"cond": "COND"},
+        description="把 COND 打包成结构化条件：整体权重 + 采样进度窗口 + "
+                    "cross-attention 层区间（对标 ComfyUI cond 包装链）。"
+                    "复杂多条件编排的起点，可继续 cond.concat / cond.set_area")(cond_pack)
+    registry.register(
+        "cond.concat",
+        inputs={"cond_a": "COND", "cond_b": "COND"},
+        outputs={"cond": "COND"},
+        description="多条件并列拼接（对标 ConditioningConcat/CONDList 协商）："
+                    "各条条件保留自己的区域/权重/时间窗/层区间。与 cond.combine "
+                    "的序列维拼接不同，本算子是「多条并存」")(cond_concat)
     registry.register(
         "cond.set_timestep_range",
         inputs={"cond": "COND", "start_percent": "FLOAT",

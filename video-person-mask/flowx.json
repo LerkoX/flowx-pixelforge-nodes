@@ -1,0 +1,109 @@
+{
+  "name": "video-person-mask",
+  "version": "1.0.0",
+  "displayName": "人物遮罩（SAM3）",
+  "description": "SAM3 文本提示检测+全片追踪：用自然语言点名目标人物（如 'the woman in white'），输出逐帧灰度遮罩视频——多人精确替换（H3Gen inpaint_mask）的选区件",
+  "category": "video",
+  "language": "python",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "VIDEO",
+      "description": "灰度遮罩视频对象 ID（255=选中人物；接 H3Gen.inpaint_mask）"
+    },
+    {
+      "name": "num_frames",
+      "type": "int",
+      "description": "帧数"
+    },
+    {
+      "name": "width",
+      "type": "int",
+      "description": "帧宽"
+    },
+    {
+      "name": "height",
+      "type": "int",
+      "description": "帧高"
+    },
+    {
+      "name": "objects",
+      "type": "int",
+      "description": "检测到的目标数峰值"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）",
+      "required": false
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "description": "源视频对象 ID（load-video 输出；多人视频）",
+      "required": true
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "目标人物描述（英文更稳）：如 'the woman in white dress' / 'the man on the left'",
+      "required": true,
+      "default": "person"
+    },
+    {
+      "name": "obj_pick",
+      "type": "string",
+      "description": "多目标策略：all=提示命中的全部目标合并（默认）；best=仅置信度最高的一个",
+      "required": false,
+      "default": "all"
+    },
+    {
+      "name": "dilate",
+      "type": "integer",
+      "description": "遮罩膨胀像素（盖过发丝/边缘；0=不膨胀）",
+      "required": false,
+      "default": 12
+    },
+    {
+      "name": "max_frames",
+      "type": "integer",
+      "description": "最多处理帧数（0=全片；调试时可截短省时间）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务令牌（可空）",
+      "required": false
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "job 超时秒数",
+      "required": false,
+      "default": 3600
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "轮询间隔秒数",
+      "required": false,
+      "default": 5
+    }
+  ],
+  "executor": {
+    "supportedTypes": ["local", "docker"],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "7a86fac114af"
+OP_VERSION = "f3749b1b9152"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -652,6 +652,170 @@ def _build_references(references_json):
     return refs
 
 
+def _patchify_mask(mask_np, patch_size):
+    """(T, H, W) bool 遮罩 → packed (num_patches, 1) float32。
+
+    与官方 patchify_video_latents 同序（frame-major→row-major），patch 内
+    任一像素为真则该 patch 为编辑区（相当于 patch 级膨胀，边缘由节点端
+    dilate 参数控制）。
+    """
+    import numpy as np
+
+    pt, ph, pw = patch_size
+    T, H, W = mask_np.shape
+    if T % pt or H % ph or W % pw:
+        raise ValueError(
+            f"遮罩形状 {(T, H, W)} 与 patch {patch_size} 不整除")
+    v = mask_np.reshape(T // pt, pt, H // ph, ph, W // pw, pw)
+    v = v.transpose(0, 2, 4, 1, 3, 5)  # (T/pt, H/ph, W/pw, pt, ph, pw)
+    v = v.reshape(-1, pt * ph * pw)
+    packed = v.any(axis=1)
+    return packed.astype(np.float32)[:, None]
+
+
+def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
+    """源视频 latent + 遮罩 → packed 混合上下文（人物替换等局部编辑）。
+
+    机制（对齐 Relay/Comfy denoise-mask 语义）：denoise 每步后把遮罩外
+    latent 拉回「源 latent 加噪到当前 σ」，加噪用与生成区同一份初始噪声
+    （i==0 时从 block_state 捕获）。
+    """
+    import numpy as np
+    import torch
+    from diffusers.modular_pipelines.minimax_h3.before_denoise import (
+        patchify_video_latents)
+    from diffusers.modular_pipelines.minimax_h3.encoders import (
+        encode_vae_condition)
+
+    vdata = (inpaint_video.get("data")
+             if isinstance(inpaint_video, dict) else inpaint_video)
+    if isinstance(vdata, dict) and vdata.get("frames"):
+        frames = list(vdata["frames"])
+    else:
+        path = (vdata or {}).get("path")
+        if not path:
+            raise ValueError("minimax.h3.gen: inpaint_video 对象无 frames/path")
+        frames = _decode_video_reference(path)["frames"]
+
+    mdata = (inpaint_mask.get("data")
+             if isinstance(inpaint_mask, dict) else inpaint_mask)
+    mframes = (mdata or {}).get("frames")
+    if not mframes:
+        raise ValueError("minimax.h3.gen: inpaint_mask 需为帧形态对象"
+                         "（video.person_mask 的输出）")
+    if len(mframes) != len(frames):
+        raise ValueError(
+            f"minimax.h3.gen: 遮罩帧数 {len(mframes)} != 源视频帧数 "
+            f"{len(frames)}（遮罩应与源视频一一对应）")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    pixels = torch.from_numpy(
+        np.stack([np.asarray(f) for f in frames])
+    ).permute(3, 0, 1, 2).unsqueeze(0).to(device)  # (1,3,T,H,W) uint8
+    vae = pipe.vae
+    src_latent = encode_vae_condition(
+        vae, pixels, pipe.pixel_mean, pipe.pixel_std,
+        int(getattr(pipe, "keyframe_encode_seed", 42)))
+    src_latent = src_latent.to(device=device, dtype=torch.bfloat16)
+
+    patch = tuple(getattr(pipe, "patch_size", (1, 2, 2)))
+    src_packed = patchify_video_latents(src_latent, patch)
+
+    # 遮罩：像素 (T,H,W) → 时间/空间对齐 latent 网格 → patchify
+    _, _, t_lat, h_lat, w_lat = src_latent.shape
+    m_np = np.stack([
+        np.asarray(f.convert("L")) > 127 for f in mframes])  # (T,H,W) bool
+    t_px = m_np.shape[0]
+    if t_px != t_lat:
+        # latent 时间轴区间映射（VAE 时间压缩非线性，膨胀遮罩容忍线性近似）
+        idx = np.linspace(0, t_px, t_lat + 1).astype(int)
+        m_lat = np.stack([
+            m_np[a:b].any(axis=0) if b > a else m_np[min(a, t_px - 1)]
+            for a, b in zip(idx[:-1], idx[1:])])
+    else:
+        m_lat = m_np
+    if m_lat.shape[1:] != (h_lat, w_lat):
+        from PIL import Image
+        m_lat = np.stack([
+            np.asarray(Image.fromarray(
+                m_lat[i].astype(np.uint8) * 255).resize(
+                    (w_lat, h_lat), resample=Image.BILINEAR)) > 127
+            for i in range(t_lat)])
+    mask_packed = _patchify_mask(m_lat, patch)
+
+    print(f"[minimax-h3] inpaint: src {tuple(src_latent.shape)} "
+          f"packed={src_packed.shape[0]} rows, 编辑区 "
+          f"{mask_packed.mean()*100:.1f}% patches", flush=True)
+    return {"src_packed": src_packed, "mask_packed": mask_packed,
+            "noise_eps": None}
+
+
+class _InpaintHook:
+    """MiniMaxH3DenoiseLoopWrapper.loop_step 的 monkeypatch 混合器。"""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+
+    def install(self):
+        from diffusers.modular_pipelines.minimax_h3.denoise import (
+            MiniMaxH3DenoiseLoopWrapper)
+        self._cls = MiniMaxH3DenoiseLoopWrapper
+        self._orig = self._cls.loop_step
+        hook = self
+
+        def patched(loop_self, components, block_state, i, t):
+            ctx = hook.ctx
+            import torch
+            mask_t = torch.from_numpy(ctx["mask_packed"]).to(
+                device=block_state.latents.device,
+                dtype=block_state.latents.dtype)
+            n_cond = int(getattr(block_state, "num_condition_video_rows", 0)
+                         or 0)
+            rows_total = block_state.latents.shape[1]
+            gen_rows = rows_total - n_cond
+            if gen_rows != ctx["src_packed"].shape[0]:
+                raise ValueError(
+                    f"inpaint: 生成行数 {gen_rows} 与源 latent "
+                    f"{ctx['src_packed'].shape[0]} 不匹配（源视频尺寸/帧数"
+                    f"须与生成参数一致）")
+            if i == 0 and ctx["noise_eps"] is None:
+                # 捕获与生成区同一份初始噪声（Comfy denoise-mask 语义）
+                ctx["noise_eps"] = block_state.latents[0, n_cond:].clone()
+                hook._mix(block_state, components, n_cond, mask_t,
+                          sigma_idx=0)
+            components, block_state = hook._orig(
+                loop_self, components, block_state, i=i, t=t)
+            hook._mix(block_state, components, n_cond, mask_t,
+                      sigma_idx=None)
+            return components, block_state
+
+        hook._orig = self._orig
+        self._cls.loop_step = patched
+        return self
+
+    def _mix(self, block_state, components, n_cond, mask_t, sigma_idx):
+        import torch
+        ctx = self.ctx
+        sched = components.scheduler
+        sigmas = getattr(sched, "sigmas", None)
+        if sigmas is None:
+            return
+        idx = sigma_idx if sigma_idx is not None else int(
+            getattr(sched, "_step_index", 0) or 0)
+        idx = max(0, min(int(idx), len(sigmas) - 1))
+        sig = float(sigmas[idx])
+        src = ctx["src_packed"].to(
+            device=block_state.latents.device,
+            dtype=block_state.latents.dtype)
+        noisy_src = (1.0 - sig) * src + sig * ctx["noise_eps"]
+        cur = block_state.latents[0, n_cond:]
+        block_state.latents[0, n_cond:] = (
+            cur * mask_t + noisy_src * (1.0 - mask_t))
+
+    def restore(self):
+        self._cls.loop_step = self._orig
+
+
 def _sz_path(p):
     """文件/目录体积（目录递归 walk）。"""
     if os.path.isdir(p):
@@ -934,6 +1098,7 @@ def register(registry):
         inputs={"model": "MODEL", "prompt": "STRING",
                 "image": "IMAGE", "last_image": "IMAGE",
                 "references": "STRING",
+                "inpaint_video": "VIDEO", "inpaint_mask": "VIDEO",
                 "num_frames": "INT", "seed": "INT", "steps": "INT",
                 "height": "INT", "width": "INT",
                 "preview_every": "INT"},
@@ -947,7 +1112,7 @@ def register(registry):
                     "请经 POST /jobs 异步执行")
     def _op_gen(model, prompt="", image=None, last_image=None, num_frames=125,
                 seed=-1, steps=4, preview_every=0, references="",
-                height=0, width=0):
+                height=0, width=0, inpaint_video=None, inpaint_mask=None):
         import random
 
         import torch
@@ -970,6 +1135,16 @@ def register(registry):
             raise ValueError(
                 "minimax.h3.gen: 当前模型不是 ref2va 装配"
                 "（load 时 transformer 需选 *_ref2va_* 权重）")
+
+        # 局部编辑（人物替换）：源视频 latent + SAM 遮罩 → denoise 每步
+        # 遮罩外拉回源轨迹（Relay denoise-mask 语义）。尺寸/帧数必须与
+        # 生成参数一致（hook 首次调用时校验行数）。
+        if (inpaint_video is None) != (inpaint_mask is None):
+            raise ValueError(
+                "minimax.h3.gen: inpaint_video 与 inpaint_mask 必须同时提供")
+        inpaint_ctx = None
+        if inpaint_video is not None:
+            inpaint_ctx = _prepare_inpaint(pipe, inpaint_video, inpaint_mask)
 
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)
@@ -1006,7 +1181,15 @@ def register(registry):
         t0 = time.time()
         if execution.check_cancelled is not None:
             execution.check_cancelled()
-        out = pipe(output=["videos", "audio", "sampling_rate"], **kwargs)
+        if inpaint_ctx is not None:
+            hook = _InpaintHook(inpaint_ctx).install()
+            try:
+                out = pipe(output=["videos", "audio", "sampling_rate"],
+                           **kwargs)
+            finally:
+                hook.restore()
+        else:
+            out = pipe(output=["videos", "audio", "sampling_rate"], **kwargs)
         if execution.check_cancelled is not None:
             execution.check_cancelled()
 

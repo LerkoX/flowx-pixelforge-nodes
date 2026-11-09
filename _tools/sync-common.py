@@ -107,6 +107,8 @@ OP_FAMILIES = {
     # 解码 helper 只有一份，都注册同 5 个算子（同内容=同文件=幂等上传）。
     "video_flow.py": ["load-video", "video-to-frames", "frames-to-video",
                       "video-repaint", "video-v2v"],
+    # SAM3 视频人物遮罩（文本检测+全片追踪）：人物替换 inpaint_mask 选区件
+    "video_mask.py": ["video-person-mask"],
 }
 
 

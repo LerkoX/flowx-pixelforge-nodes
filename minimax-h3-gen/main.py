@@ -46,7 +46,16 @@ def main():
     refs = param("references", "")
     if refs.strip():
         inputs["references"] = refs
-    mode = ("ref2va" if refs.strip()
+    # 局部编辑（人物替换）：源视频对象 + SAM 遮罩对象（video-person-mask）
+    ipv = param("inpaint_video", "")
+    ipm = param("inpaint_mask", "")
+    if ipv or ipm:
+        if not (ipv and ipm):
+            raise RuntimeError("inpaint_video 与 inpaint_mask 必须同时接线")
+        inputs["inpaint_video"] = ref(ipv)
+        inputs["inpaint_mask"] = ref(ipm)
+    mode = ("inpaint" if (ipv and ipm)
+            else "ref2va" if refs.strip()
             else ("fl2va" if (image_id or last_id) else "t2va"))
     print(f"[minimax-h3-gen] mode={mode} frames={inputs['num_frames']} "
           f"steps={inputs['steps']} seed={inputs['seed']}", flush=True)

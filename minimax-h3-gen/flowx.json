@@ -77,6 +77,18 @@
       "default": ""
     },
     {
+      "name": "inpaint_video",
+      "type": "string",
+      "description": "可选：局部编辑源视频对象 ID（load-video 输出）。与 inpaint_mask 同时接线——遮罩外画面冻结，仅重绘遮罩区（人物替换）",
+      "required": false
+    },
+    {
+      "name": "inpaint_mask",
+      "type": "string",
+      "description": "可选：编辑区遮罩视频对象 ID（video-person-mask 输出；255=重绘区）",
+      "required": false
+    },
+    {
       "name": "num_frames",
       "type": "integer",
       "description": "帧数（24fps：125 帧≈5.2s，365 帧≈15.2s；自动对齐 17n+5）",

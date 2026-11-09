@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "ed998948667e"
+OP_VERSION = "cce13f38d6a8"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1091,6 +1091,13 @@ def _patchify_mask(mask_np, patch_size):
     return packed.astype(np.float32)[:, None]
 
 
+def _memlog(tag):
+    import torch as _t
+    if _t.cuda.is_available():
+        print(f"[memlog] {tag}: alloc={_t.cuda.memory_allocated()/1e9:.2f}G "
+              f"reserved={_t.cuda.memory_reserved()/1e9:.2f}G", flush=True)
+
+
 def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
     """源视频 latent + 遮罩 → packed 混合上下文（人物替换等局部编辑）。
 
@@ -1129,19 +1136,27 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
             f"{len(frames)}（遮罩应与源视频一一对应）")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _memlog("inpaint-enter")
+    # 源视频 VAE encode 全程 CPU：ref2va 装配 lease 激活后卡上基线 ~20G，
+    # GPU encode 的 fp32 全帧副本+VAE attention 峰值（实测 +13G）必爆；
+    # CPU encode 117 帧 ~1-2 分钟换绝对安全（真机五次 OOM 后定案）。
+    # vae 挪下后留在 CPU——denoise 期间不用，decode 前由 hook 挪回。
+    vae = pipe.vae
+    vae_cuda = next(vae.parameters()).device.type == "cuda"
+    if vae_cuda:
+        vae.to("cpu")
+        if getattr(pipe, "audio_vae", None) is not None:
+            pipe.audio_vae.to("cpu")
+        torch.cuda.empty_cache()
     pixels = torch.from_numpy(
         np.stack([np.asarray(f) for f in frames])
-    ).permute(3, 0, 1, 2).unsqueeze(0).to(device)  # (1,3,T,H,W) uint8
-    vae = pipe.vae
+    ).permute(3, 0, 1, 2).unsqueeze(0)  # (1,3,T,H,W) uint8, CPU
     src_latent = encode_vae_condition(
         vae, pixels, pipe.pixel_mean, pipe.pixel_std,
         int(getattr(pipe, "keyframe_encode_seed", 42)))
+    _memlog("encoded(cpu)")
     del pixels, frames
     src_latent = src_latent.to(device=device, dtype=torch.bfloat16)
-    # encode 的 fp32 中间副本（~1.7GB @117帧）释放后立刻还 cache——
-    # ref2va 装配 denoise 基线 ~20.5GB/24GB，这几百 MB 决定成败（真机坑）。
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
 
     patch = tuple(getattr(pipe, "patch_size", (1, 2, 2)))
     src_packed = patchify_video_latents(src_latent, patch)
@@ -1621,6 +1636,12 @@ def register(registry):
             if _torch.cuda.is_available():
                 _torch.cuda.empty_cache()
             inpaint_ctx["_vae_cpu"] = True
+            if _torch.cuda.is_available():
+                print(f"[inpaint] vae→cpu done, pipe.vae.device="
+                      f"{next(pipe.vae.parameters()).device}, "
+                      f"cuda_alloc={_torch.cuda.memory_allocated()/1e9:.1f}G "
+                      f"reserved={_torch.cuda.memory_reserved()/1e9:.1f}G",
+                      flush=True)
             hook = _InpaintHook(inpaint_ctx).install()
             try:
                 out = pipe(output=["videos", "audio", "sampling_rate"],

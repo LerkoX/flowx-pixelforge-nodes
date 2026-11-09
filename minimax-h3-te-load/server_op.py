@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "59123aa2a2d7"
+OP_VERSION = "9ab50efd802e"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1136,7 +1136,12 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
     src_latent = encode_vae_condition(
         vae, pixels, pipe.pixel_mean, pipe.pixel_std,
         int(getattr(pipe, "keyframe_encode_seed", 42)))
+    del pixels, frames
     src_latent = src_latent.to(device=device, dtype=torch.bfloat16)
+    # encode 的 fp32 中间副本（~1.7GB @117帧）释放后立刻还 cache——
+    # ref2va 装配 denoise 基线 ~20.5GB/24GB，这几百 MB 决定成败（真机坑）。
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
 
     patch = tuple(getattr(pipe, "patch_size", (1, 2, 2)))
     src_packed = patchify_video_latents(src_latent, patch)
@@ -1186,9 +1191,12 @@ class _InpaintHook:
         def patched(loop_self, components, block_state, i, t):
             ctx = hook.ctx
             import torch
-            mask_t = torch.from_numpy(ctx["mask_packed"]).to(
-                device=block_state.latents.device,
-                dtype=block_state.latents.dtype)
+            dev, dt = block_state.latents.device, block_state.latents.dtype
+            if ctx.get("_gpu_src") is None:  # 缓存：勿每步重复 H2D
+                ctx["_gpu_src"] = ctx["src_packed"].to(device=dev, dtype=dt)
+                ctx["_gpu_mask"] = torch.from_numpy(ctx["mask_packed"]).to(
+                    device=dev, dtype=dt)
+            mask_t = ctx["_gpu_mask"]
             n_cond = int(getattr(block_state, "num_condition_video_rows", 0)
                          or 0)
             rows_total = block_state.latents.shape[1]
@@ -1214,7 +1222,6 @@ class _InpaintHook:
         return self
 
     def _mix(self, block_state, components, n_cond, mask_t, sigma_idx):
-        import torch
         ctx = self.ctx
         sched = components.scheduler
         sigmas = getattr(sched, "sigmas", None)
@@ -1224,9 +1231,7 @@ class _InpaintHook:
             getattr(sched, "_step_index", 0) or 0)
         idx = max(0, min(int(idx), len(sigmas) - 1))
         sig = float(sigmas[idx])
-        src = ctx["src_packed"].to(
-            device=block_state.latents.device,
-            dtype=block_state.latents.dtype)
+        src = ctx["_gpu_src"]
         noisy_src = (1.0 - sig) * src + sig * ctx["noise_eps"]
         cur = block_state.latents[0, n_cond:]
         block_state.latents[0, n_cond:] = (

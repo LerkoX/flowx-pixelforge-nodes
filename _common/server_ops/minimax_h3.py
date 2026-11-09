@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "f3749b1b9152"
+OP_VERSION = "bf790ec5a7bf"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -687,8 +687,7 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
     from diffusers.modular_pipelines.minimax_h3.encoders import (
         encode_vae_condition)
 
-    vdata = (inpaint_video.get("data")
-             if isinstance(inpaint_video, dict) else inpaint_video)
+    vdata = inpaint_video  # registry 已解包到对象 data 本体
     if isinstance(vdata, dict) and vdata.get("frames"):
         frames = list(vdata["frames"])
     else:
@@ -697,9 +696,8 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask):
             raise ValueError("minimax.h3.gen: inpaint_video 对象无 frames/path")
         frames = _decode_video_reference(path)["frames"]
 
-    mdata = (inpaint_mask.get("data")
-             if isinstance(inpaint_mask, dict) else inpaint_mask)
-    mframes = (mdata or {}).get("frames")
+    mdata = inpaint_mask
+    mframes = (mdata or {}).get("frames") if isinstance(mdata, dict) else None
     if not mframes:
         raise ValueError("minimax.h3.gen: inpaint_mask 需为帧形态对象"
                          "（video.person_mask 的输出）")

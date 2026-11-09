@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2c04fc7511bf"
+OP_VERSION = "48899affaaeb"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -145,7 +145,7 @@ def register(registry):
         prompt = str(prompt or "").strip()
         if not prompt:
             raise ValueError("video.person_mask: prompt 不能为空")
-        data = video.get("data") if isinstance(video, dict) else video
+        data = video  # registry 已解包到对象 data 本体
         frames, fps = _video_to_frames(data, int(max_frames or 0))
         n = len(frames)
         w, h = frames[0].size

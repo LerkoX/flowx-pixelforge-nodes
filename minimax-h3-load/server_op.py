@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "5d487d341845"
+OP_VERSION = "d50ff48baccb"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -600,18 +600,27 @@ def _models():
     return models
 
 
-def _register(key, obj, est_bytes, arch):
+def _register(key, obj, est_bytes, arch, offload_mode="none",
+              vram_bytes=None):
+    """注册常驻对象（走 model_manager.register_external 统一口径）。
+
+    est_bytes 是**权重体积**（文件/state_dict），不是显存需求：
+    offload=sequential 时权重在 CPU、显存峰值只是「最大单层 + 激活」，
+    服务端按 vram_budget_of 折算（否则 14B 会被当成 28GB 显存需求而误拒）。
+    """
     models = _models()
+    reg = getattr(models, "register_external", None)
+    if reg is not None:
+        return reg(key, obj, weights_bytes=est_bytes, arch=arch,
+                   offload_mode=offload_mode, vram_bytes=vram_bytes)
+    # 旧服务端兜底（无 register_external）：维持原语义
     with models._lock:
         models._evict_if_needed(est_bytes)
         models._pipes[key] = obj
         models._archs[key] = arch
         models._sizes[key] = est_bytes
         models._last_used[key] = time.time()
-    print(f"[minimax-h3] registered '{key}' est={est_bytes/1e9:.1f}GB", flush=True)
     return obj
-
-
 def _require_file(path, what):
     if not os.path.isfile(path):
         raise ValueError(f"minimax-h3: 缺 {what}（{path}）")
@@ -706,6 +715,7 @@ def _attach_lora(model, path, strength=1.0):
     import re
     from safetensors import safe_open
     pairs = {}
+    unmatched = []
     with safe_open(path, framework="pt") as f:
         for k in f.keys():
             m = re.match(
@@ -748,9 +758,11 @@ def _attach_lora(model, path, strength=1.0):
                 mod = model.get_submodule(mod_path)
             except AttributeError:
                 skipped += 1
+                unmatched.append(mod_path)
                 continue
             if not isinstance(mod, _Int8DequantLinear):
                 skipped += 1
+                unmatched.append(mod_path)
                 continue
             Bi = torch.chunk(B, parts, dim=0)[idx] if parts > 1 else B
             if swap:
@@ -760,8 +772,18 @@ def _attach_lora(model, path, strength=1.0):
             n += 1
     print(f"[minimax-h3] LoRA 挂载 {n} 层（{len(pairs)} 对，跳过 {skipped}）",
           flush=True)
+    # **未匹配 key 点名**（对齐 ComfyUI load_lora_for_models 的
+    # `NOT LOADED xxx` 告警）——静默失败是最难排查的一类问题：LoRA 看起来
+    # 挂上了、流程 success、效果却完全没变。这里把前几个未匹配层名打出来，
+    # 便于直接对着 transformer 的模块名改映射。
+    if unmatched:
+        print(f"[minimax-h3] ⚠ LoRA 有 {len(unmatched)} 个目标层未匹配"
+              f"（样例 {unmatched[:5]}）——检查 key 命名/融合层拆分映射",
+              flush=True)
     if n == 0:
-        raise ValueError("LoRA 未挂到任何层——key 命名与 transformer 不匹配")
+        raise ValueError(
+            f"LoRA 未挂到任何层——key 命名与 transformer 不匹配"
+            f"（样例 {unmatched[:5]}）")
 
 
 def _attach_loras(model, lora_spec, default_scale=1.0):
@@ -1099,7 +1121,9 @@ def _memlog(tag):
 
 
 def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
-                     soft_alpha=1.0, lock_ratio=0.0, num_steps=8):
+                     soft_alpha=1.0, lock_ratio=0.0, num_steps=8,
+                     cond_aug=0.999, mask_schedule="linear",
+                     window_start=0.0, window_end=1.0):
     """源视频 latent + 遮罩 → packed 混合上下文（人物替换等局部编辑）。
 
     机制（对齐 Relay/Comfy denoise-mask 语义）：denoise 每步后把遮罩外
@@ -1211,14 +1235,57 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
     print(f"[minimax-h3] inpaint: src {tuple(src_latent.shape)} "
           f"packed={src_packed.shape[0]} rows, 编辑区 "
           f"{mask_packed.mean()*100:.1f}% patches | "
-          f"soft={soft_alpha}→1.0 升温 lock={lock_ratio}"
+          f"soft={soft_alpha}→1.0 升温 lock={lock_ratio} aug={cond_aug}"
           f"({max(1, round(num_steps * lock_ratio))}/{num_steps}步)",
           flush=True)
     return {"src_packed": src_packed, "mask_packed": mask_packed,
             "noise_eps": None,
             "soft_alpha": float(soft_alpha),
             "lock_steps": int(round(int(num_steps) * float(lock_ratio))),
-            "num_steps": int(num_steps)}
+            "num_steps": int(num_steps),
+            "cond_aug": float(cond_aug),
+            "mask_schedule": str(mask_schedule),
+            "window_start": float(window_start),
+            "window_end": float(window_end)}
+
+
+def _sched_value(ctx, step_i):
+    """按 mask_schedule 计算当前步的保留强度（0=不保留/全生成，1=全冻结）。
+
+    对应 ComfyUI `denoise_mask_function(sigma, denoise_mask, extra_options)`：
+    把「保留强度」表达为采样进度的函数。内置曲线：
+
+    - ``linear``（默认）：``soft0 → 1.0`` 线性升温
+      早期步用源结构锚住姿态，末步纯生成不留残影
+    - ``cosine``：``soft0 → 1.0`` 余弦缓入（前期锚定更久，适合姿态复杂素材）
+    - ``window``：仅在 ``[start, end]`` 进度区间内按 ``soft0`` 保留，
+      区间外完全放开——等价 Wan-Animate 2 的 pose_start_percent/
+      pose_end_percent（「动作在早期就定型，0.7 后可放松细节」）
+    - ``const``：恒为 ``soft0``（旧行为，容易留残影，仅调试用）
+    """
+    soft0 = float(ctx.get("soft_alpha", 1.0))
+    if soft0 >= 1.0 or step_i is None:
+        return soft0
+    total = max(1, int(ctx.get("num_steps", 0) or 0))
+    frac = min(1.0, max(0.0, step_i / max(1, total - 1)))
+    mode = str(ctx.get("mask_schedule", "linear")).lower()
+
+    if mode == "const":
+        return soft0
+    if mode == "cosine":
+        import math
+        w = 0.5 - 0.5 * math.cos(math.pi * frac)   # 0→1 缓入
+        return soft0 + (1.0 - soft0) * w
+    if mode == "window":
+        start = float(ctx.get("window_start", 0.0))
+        end = float(ctx.get("window_end", 1.0))
+        if frac < start or frac > end:
+            return 1.0        # 区间外：完全放开（纯生成）
+        span = max(1e-6, end - start)
+        w = min(1.0, (frac - start) / span)
+        return soft0 + (1.0 - soft0) * w
+    # linear（默认）
+    return soft0 + (1.0 - soft0) * frac
 
 
 class _InpaintHook:
@@ -1255,14 +1322,19 @@ class _InpaintHook:
                     f"{ctx['src_packed'].shape[0]} 不匹配（源视频尺寸/帧数"
                     f"须与生成参数一致）")
             if i == 0 and ctx["noise_eps"] is None:
-                # 捕获与生成区同一份初始噪声（Comfy denoise-mask 语义）
+                # 捕获与生成区同一份初始噪声（所有条件共用同一 RNG 流，
+                # 对齐 ComfyUI minimax `_cond_video_rows` 的注释语义）
                 ctx["noise_eps"] = block_state.latents[n_cond:].clone()
-                hook._mix(block_state, components, n_cond, mask_t,
-                          sigma_idx=0, step_i=0)
+            # **输入混合**（对齐 ComfyUI KSamplerX0Inpaint：模型前向前把
+            # 保留区拉回条件强度）——模型因此看到"保留区是干净的"，
+            # 而不是只看输出被覆盖。
+            hook._mix(block_state, components, n_cond, mask_t, sigma_idx=0,
+                      step_i=i, phase="in")
             components, block_state = hook._orig(
                 loop_self, components, block_state, i=i, t=t)
+            # **输出混合**：预测结果里保留区强制回到条件强度
             hook._mix(block_state, components, n_cond, mask_t,
-                      sigma_idx=None, step_i=i)
+                      sigma_idx=None, step_i=i, phase="out")
             # 末步：decode 前把 VAE 挪回卡（inpaint 期间被挪 CPU 让显存）
             if i == len(block_state.timesteps) - 1 and ctx.get("_vae_cpu"):
                 components.vae.to("cuda")
@@ -1275,7 +1347,7 @@ class _InpaintHook:
         return self
 
     def _mix(self, block_state, components, n_cond, mask_t, sigma_idx,
-             step_i=None):
+             step_i=None, phase="out"):
         """遮罩外拉回源轨迹；遮罩内按 soft/lock 参数调节源约束强度。
 
         统一成一个 effective_mask 计算（遮罩内生成权重）：
@@ -1298,19 +1370,32 @@ class _InpaintHook:
         idx = max(0, min(int(idx), len(sigmas) - 1))
         sig = float(sigmas[idx])
         src = ctx["_gpu_src"]
-        noisy_src = (1.0 - sig) * src + sig * ctx["noise_eps"]
+        # **条件注入强度（对齐 ComfyUI minimax VISUAL_COND_TIMESTEP=0.999）**
+        # ComfyUI 原话：「preserved regions run at the cond timestep, inject
+        # them at cond strength」+ `_cond_video_rows` 里
+        #   r = aug * r + (1 - aug) * noise
+        # 即保留区用**固定 aug**（0.999，几乎干净）注入，**与当前采样 σ
+        # 无关**。旧实现用 (1-σ)·src + σ·noise 会随步加噪：σ≈1 时源几乎被
+        # 噪声淹没 → 早期步丢信息 → 只能靠 soft<1 多放源进来，而恒定混合
+        # 又留残影（真机 A/B 两难）。aug 模式从根上消除这个矛盾。
+        aug = float(ctx.get("cond_aug", 0.999))
+        if aug >= 1.0:
+            injected = src
+        elif aug >= 0.0:
+            injected = aug * src + (1.0 - aug) * ctx["noise_eps"]
+        else:  # aug<0：兼容旧行为（按 sigma 加噪），供 A/B 对比
+            injected = (1.0 - sig) * src + sig * ctx["noise_eps"]
 
-        # ── 方案① soft **schedule**：前期锚结构、后期纯生成
-        # soft 恒定混合会在**每一步**把源人物轮廓注入一遍 → 新旧人物
-        # 叠加残影（真机修：女人身体还在）。改为随步数线性升温到 1.0：
-        #   i=0 → soft_start（源结构锚姿态）  i=last → 1.0（纯生成，无残影）
-        soft0 = float(ctx.get("soft_alpha", 1.0))
-        if step_i is not None and soft0 < 1.0:
-            total = max(1, int(ctx.get("num_steps", 0) or 0))
-            frac = min(1.0, max(0.0, step_i / max(1, total - 1)))
-            soft_i = soft0 + (1.0 - soft0) * frac
-        else:
-            soft_i = soft0
+        # ── 有效 mask = mask × 强度曲线（**回调化**，对齐 ComfyUI 的
+        # `denoise_mask_function(sigma, mask, ...)` 设计：mask 是 sigma 的
+        # 函数，而不是硬编码曲线。这样"何时放开保留区"可插拔，
+        # 与 Wan-Animate 2 的 pose_start_percent/pose_end_percent 同源。
+        # 内置三种曲线（mask_schedule）：
+        #   linear（默认）  soft0 → 1.0 线性升温（前期锚结构、后期纯生成）
+        #   cosine          余弦缓入，前期锚定更久
+        #   window          只在 [start,end] 区间作用，区间外完全放开
+        #                    （= Wan-Animate2 的 pose_start/end_percent 语义）
+        soft_i = _sched_value(ctx, step_i)
         eff = mask_t * soft_i
         # ── 方案② lock：前 N 步全图冻结（实测对 turbo 蒸馏 LoRA 有害：
         # 跳过前几步会破坏 8 步蒸馏轨迹 → 身份注入失效，默认关闭）
@@ -1319,7 +1404,7 @@ class _InpaintHook:
             eff = eff * 0.0  # 全图冻结：完全跟源轨迹
 
         cur = block_state.latents[n_cond:]
-        block_state.latents[n_cond:] = cur * eff + noisy_src * (1.0 - eff)
+        block_state.latents[n_cond:] = cur * eff + injected * (1.0 - eff)
 
     def restore(self):
         self._cls.loop_step = self._orig
@@ -1390,7 +1475,7 @@ def register(registry):
               flush=True)
         return {"transformer": _register(
             key, {"model": m, "is_ref": "ref2va" in transformer},
-            est, "MiniMaxH3Transformer3DModel")}
+            est, "MiniMaxH3Transformer3DModel", offload_mode=offload)}
 
     @registry.register(
         "minimax.h3.te_load",
@@ -1419,7 +1504,7 @@ def register(registry):
               flush=True)
         return {"text_encoder": _register(
             key, {"model": m, "tokenizer": tok, "processor": proc},
-            est, "Qwen3VLTextEncoder")}
+            est, "Qwen3VLTextEncoder", offload_mode=offload)}
 
     @registry.register(
         "minimax.h3.vae_load",
@@ -1600,7 +1685,8 @@ def register(registry):
             return os.path.getsize(p)
         est = sum(_sz(p) for p in (tr_path, te_path, vae_path, avae_path))
         print(f"[minimax-h3] pipeline assembled {time.time()-t0:.1f}s", flush=True)
-        return {"model": _register(key, pipe, est, "MiniMaxH3ModularPipeline")}
+        return {"model": _register(key, pipe, est, "MiniMaxH3ModularPipeline",
+                                   offload_mode=offload)}
 
     @registry.register(
         "minimax.h3.gen",
@@ -1609,6 +1695,8 @@ def register(registry):
                 "references": "STRING",
                 "inpaint_video": "VIDEO", "inpaint_mask": "VIDEO",
                 "inpaint_soft": "FLOAT", "inpaint_lock": "FLOAT",
+                "inpaint_aug": "FLOAT", "mask_schedule": "STRING",
+                "window_start": "FLOAT", "window_end": "FLOAT",
                 "num_frames": "INT", "seed": "INT", "steps": "INT",
                 "height": "INT", "width": "INT",
                 "preview_every": "INT"},
@@ -1623,7 +1711,8 @@ def register(registry):
     def _op_gen(model, prompt="", image=None, last_image=None, num_frames=125,
                 seed=-1, steps=4, preview_every=0, references="",
                 height=0, width=0, inpaint_video=None, inpaint_mask=None,
-                inpaint_soft=1.0, inpaint_lock=0.0):
+                inpaint_soft=1.0, inpaint_lock=0.0, inpaint_aug=0.999,
+                mask_schedule="linear", window_start=0.0, window_end=1.0):
         import random
 
         import torch
@@ -1658,7 +1747,9 @@ def register(registry):
             inpaint_ctx = _prepare_inpaint(
                 pipe, inpaint_video, inpaint_mask,
                 soft_alpha=inpaint_soft, lock_ratio=inpaint_lock,
-                num_steps=int(steps))
+                num_steps=int(steps), cond_aug=inpaint_aug,
+                mask_schedule=mask_schedule, window_start=window_start,
+                window_end=window_end)
 
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)

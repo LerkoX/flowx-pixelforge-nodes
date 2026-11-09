@@ -2834,6 +2834,10 @@ const WIDGET_SPEC = {
     { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 7200 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
+    { key: 'inpaint_aug', label: '条件注入强度（0.999=正确冻结 / -1=旧 sigma 模式）', kind: 'slider', min: -1, max: 1, step: 0.001, default: 0.999, advanced: true },
+    { key: 'mask_schedule', label: '保留强度曲线（linear/cosine/window/const）', kind: 'text', default: 'linear', advanced: true },
+    { key: 'window_start', label: 'window 起始进度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.0, advanced: true },
+    { key: 'window_end', label: 'window 结束进度（0.7=定型后放松细节）', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1.0, advanced: true },
   ],
   note: 'MiniMax H3 联合视频+音频生成（24fps 固定）',
 }

@@ -60,7 +60,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "3aff2417ee5d"
+OP_VERSION = "397455575e01"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -195,18 +195,27 @@ def _models():
     return models
 
 
-def _register(key, obj, est_bytes, arch):
+def _register(key, obj, est_bytes, arch, offload_mode="none",
+              vram_bytes=None):
+    """注册常驻对象（走 model_manager.register_external 统一口径）。
+
+    est_bytes 是**权重体积**（文件/state_dict），不是显存需求：
+    offload=sequential 时权重在 CPU、显存峰值只是「最大单层 + 激活」，
+    服务端按 vram_budget_of 折算（否则 14B 会被当成 28GB 显存需求而误拒）。
+    """
     models = _models()
+    reg = getattr(models, "register_external", None)
+    if reg is not None:
+        return reg(key, obj, weights_bytes=est_bytes, arch=arch,
+                   offload_mode=offload_mode, vram_bytes=vram_bytes)
+    # 旧服务端兜底（无 register_external）：维持原语义
     with models._lock:
         models._evict_if_needed(est_bytes)
         models._pipes[key] = obj
         models._archs[key] = arch
         models._sizes[key] = est_bytes
         models._last_used[key] = time.time()
-    print(f"[wan] registered '{key}' est={est_bytes/1e9:.1f}GB", flush=True)
     return obj
-
-
 def _require_file(path, what):
     if not os.path.isfile(path):
         raise ValueError(f"wan: 缺 {what}（{path}）")
@@ -321,6 +330,41 @@ def _build_transformer(path, dtype, which="transformer"):
     return model
 
 
+def _lora_unmatched(pipe, path):
+    """检查 LoRA 文件的层名能否映射到目标 transformer，返回未匹配名列表。
+
+    diffusers 的 load_lora_weights 对无法映射的 key **静默跳过**（不报错也
+    不告警），于是「LoRA 看起来加载成功但效果为 0」这类问题极难定位。
+    这里按 LoRA 的 target 名去 transformer 的模块名里查，给运维一个显式
+    信号（对齐 ComfyUI load_lora_for_models 的 `NOT LOADED xxx` 告警）。
+    """
+    import re
+
+    tr = getattr(pipe, "transformer", None)
+    if tr is None:
+        return []
+    try:
+        from safetensors import safe_open
+        with safe_open(path, framework="pt") as f:
+            keys = list(f.keys())
+    except Exception:  # noqa: BLE001
+        return []
+
+    tgt = {name for name, _ in tr.named_modules()}
+    bad = set()
+    for k in keys:
+        m = re.match(r"^(.+?)\.(lora_A|lora_B|lora_down|lora_up)\b", k)
+        if not m:
+            continue
+        name = m.group(1)
+        cand = [name]
+        if name.startswith("transformer."):
+            cand.append(name[len("transformer."):])
+        if not any(c in tgt for c in cand):
+            bad.add(name)
+    return sorted(bad)
+
+
 def _load_lora(pipe, spec, scale, into_transformer_2=False):
     """逗号分隔多挂 LoRA（可带 @strength），Wan 版。
 
@@ -349,6 +393,14 @@ def _load_lora(pipe, spec, scale, into_transformer_2=False):
             kwargs.pop("load_into_transformer_2", None)
             pipe.load_lora_weights(path, **kwargs)
         pipe.set_adapters(adapter, adapter_weights=strength)
+        # **未匹配 key 点名**（对齐 ComfyUI `NOT LOADED xxx`）：
+        # diffusers 的 load_lora_weights 遇到不认识的 key 只会静默忽略，
+        # 表现为「LoRA 挂上了、流程 success、效果没变」——最难排查的一类。
+        unmatched = _lora_unmatched(pipe, path)
+        if unmatched:
+            print(f"[wan] ⚠ LoRA '{os.path.basename(path)}' 有 "
+                  f"{len(unmatched)} 个 key 未匹配（样例 {unmatched[:5]}）",
+                  flush=True)
         print(f"[wan] LoRA '{os.path.basename(path)}' "
               f"strength={strength} (transformer_2={into_transformer_2})",
               flush=True)
@@ -711,7 +763,8 @@ def register(registry):
                                                transformer2))
                                 if transformer2 else 0)
         return {"transformer": _register(key, info, est,
-                                         "WanTransformer3DModel")}
+                                         "WanTransformer3DModel",
+                                         offload_mode=offload)}
 
     @registry.register(
         "wan.te_load",
@@ -748,7 +801,8 @@ def register(registry):
 
         info = {"model": te, "tokenizer": tokenizer}
         return {"text_encoder": _register(key, info, _size(te_path),
-                                          "UMT5EncoderModel")}
+                                          "UMT5EncoderModel",
+                                          offload_mode=offload)}
 
     @registry.register(
         "wan.vae_load",

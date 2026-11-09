@@ -103,6 +103,34 @@
       "default": 0
     },
     {
+      "name": "inpaint_aug",
+      "type": "float",
+      "required": false,
+      "default": 0.999,
+      "description": "条件注入强度（仅 inpaint 生效）：保留区按 aug·源 + (1-aug)·噪声 注入，**与采样步无关**（对齐 ComfyUI 的 VISUAL_COND_TIMESTEP=0.999）。0.999≈几乎干净源=正确冻结语义；-1=旧行为（按当前 sigma 加噪，供 A/B 对比）"
+    },
+    {
+      "name": "mask_schedule",
+      "type": "string",
+      "required": false,
+      "default": "linear",
+      "description": "保留强度曲线（仅 inpaint）：linear 线性升温（默认）/ cosine 余弦缓入（前期锚更久）/ window 仅区间内保留（= Wan-Animate2 的 pose_start/end_percent）/ const 恒定（易残影，调试用）"
+    },
+    {
+      "name": "window_start",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "window 曲线的起始进度（0~1）"
+    },
+    {
+      "name": "window_end",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "window 曲线的结束进度（0~1；0.7 即「动作定型后放松细节」）"
+    },
+    {
       "name": "num_frames",
       "type": "integer",
       "description": "帧数（24fps：125 帧≈5.2s，365 帧≈15.2s；自动对齐 17n+5）",

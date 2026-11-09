@@ -57,6 +57,10 @@ def main():
         # 源约束强度旋钮：soft（遮罩内生成权重）/ lock（前期全图锁源占比）
         inputs["inpaint_soft"] = float(param("inpaint_soft", "1") or "1")
         inputs["inpaint_lock"] = float(param("inpaint_lock", "0") or "0")
+        inputs["inpaint_aug"] = float(param("inpaint_aug", "0.999") or "0.999")
+        inputs["mask_schedule"] = param("mask_schedule", "linear")
+        inputs["window_start"] = float(param("window_start", "0") or "0")
+        inputs["window_end"] = float(param("window_end", "1") or "1")
     mode = ("inpaint" if (ipv and ipm)
             else "ref2va" if refs.strip()
             else ("fl2va" if (image_id or last_id) else "t2va"))

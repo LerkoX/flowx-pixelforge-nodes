@@ -70,6 +70,13 @@
       "default": ""
     },
     {
+      "name": "reference_image",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "单张参考图对象 ID（接 load-image；ref2va 场景）。给了它就不用手写 references JSON——节点自动包成 [{type:image,id:...}]"
+    },
+    {
       "name": "references",
       "type": "string",
       "description": "ref2va 参考列表 JSON（与 image/last_image 互斥）：[{\"type\":\"image\",\"id\":\"...\"},{\"type\":\"video\",\"id\":\"...\"},{\"type\":\"audio\",\"id\":\"...\"}]，上限 9图/3视频/3音频共12；prompt 里用 <Picture 1>/<Video 1>/<Audio 1> 点名引用",

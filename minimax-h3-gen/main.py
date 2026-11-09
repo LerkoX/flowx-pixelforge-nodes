@@ -7,6 +7,7 @@ guidance-distilled：无负提示、无 cfg；24fps 固定，5~15 秒（num_fram
 
 分钟级任务：走异步任务通道 POST /jobs + 轮询（同 video-gen 模式）。
 """
+import json
 import time
 
 from flowx_client import (emit, emit_preview, emit_result_preview,
@@ -44,6 +45,13 @@ def main():
         inputs["last_image"] = ref(last_id)
     # ref2va：references JSON 原样透传（服务端校验格式与对象类型）
     refs = param("references", "")
+    # reference_image：单张图对象 ID（流水线友好）——自动包成 references JSON。
+    # 为什么需要它：references 是字符串 JSON，画布上无法把 LoadImage 的输出接进
+    # JSON 字符串里（模板只做整值替换，不做字符串内嵌），故给单图场景一条直路。
+    ref_img = param("reference_image", "")
+    if not refs.strip() and ref_img.strip():
+        refs = json.dumps([{"type": "image", "id": ref_img.strip()}])
+        print(f"[minimax-h3-gen] reference_image -> references: {refs}", flush=True)
     if refs.strip():
         inputs["references"] = refs
     # 局部编辑（人物替换）：源视频对象 + SAM 遮罩对象（video-person-mask）

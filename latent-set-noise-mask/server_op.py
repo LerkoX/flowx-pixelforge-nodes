@@ -23,7 +23,7 @@ LATENT 为 4D 张量 (b, 4, h/8, w/8) 或 LatentBundle（samples+noise_mask）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "cafeecc13b0e"
+OP_VERSION = "9e71759f257f"
 OP_FAMILY = "cond_latent"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -224,16 +224,21 @@ def _sdxl_size(a, b):
     return (wa or wb, ha or hb)
 
 
-def cond_combine(cond_a, cond_b):
+def cond_combine(cond_a, cond_b, pooled_mode="mean"):
     """Conditioning Combine：沿序列维拼接两段 conditioning（对标 ComfyUI
     ConditioningCombine），语义 = 两段提示词同时生效（不受 77 token 截断限制）。
     batch 维不同时按广播对齐（一方为 1 则 expand）。
     任一侧为 cond.set_area 段列表时退化为段列表拼接（各自区域/strength 保留，
     多区域构图 = 多个 set_area 产物经本算子串联）。
-    SDXL：embeds 序列拼接 + **pooled 取两者均值**（单张量 COND 只能承载一个
-    pooled；均值是不丢信息的“同时生效”近似，出图风格为两段折中；
-    ComfyUI 是每条 cond 各自前向，若实测发现均值导致风格漂移可改走段列表
-    逐段前向——与本文件 set_area 路径同一骨架，属 P1）。"""
+    SDXL：embeds 序列拼接，pooled 用 ``pooled_mode`` 决定——
+    - ``mean``（默认）：两段均值。单张量 COND 只能承载一个 pooled，均值是
+      不丢信息的「同时生效」近似（两段风格各占一半）
+    - ``first`` / ``last``：只取前/后一段的 pooled（后段通常承载主体描述）
+    - ``segments``：**不复用单张量**，改走 SDXLSegments 逐段前向——每段自带
+      pooled、各自前向后再相加，语义最准（= 两条提示词独立生效），代价是
+      前向次数翻倍。实测发现均值导致风格漂移时选它。
+    注：ComfyUI 的 ConditioningCombine 是 batch 维拼接（同样两次前向），
+    本算子默认走序列拼接（一次前向 + 更长的提示词），性能更优。"""
     if _is_sdxl(cond_a) or _is_sdxl(cond_b):
         _check_same_arch(cond_a, cond_b, "cond.combine")
         if isinstance(cond_a, _core_ops.SDXLSegments) \
@@ -248,13 +253,35 @@ def cond_combine(cond_a, cond_b):
             out = _core_ops.SDXLSegments(segs, pooleds, *_sdxl_size(cond_a, cond_b))
             print(f"[cond.combine] SDXL 段列表拼接 -> {len(out)} 段", flush=True)
             return {"cond": out}
+        mode = str(pooled_mode or "mean").lower()
+        if mode not in ("mean", "first", "last", "segments"):
+            raise ValueError(
+                f"cond.combine: pooled_mode 需为 mean/first/last/segments，"
+                f"got {pooled_mode}")
         a_emb, b_emb = _broadcast_batch(cond_a.embeds, cond_b.embeds, "cond.combine")
         a_pool, b_pool = _broadcast_batch(cond_a.pooled, cond_b.pooled, "cond.combine")
-        out = _core_ops.SDXLCond(torch.cat([a_emb, b_emb], dim=1),
-                                 (a_pool + b_pool) / 2.0,
+        if mode == "segments":
+            # 逐段前向：每段自带 pooled，语义最准（等价两条提示词独立生效）
+            pa = a_pool if a_pool.shape[0] > 1 else a_pool.expand(
+                a_emb.shape[0], -1)
+            pb = b_pool if b_pool.shape[0] > 1 else b_pool.expand(
+                b_emb.shape[0], -1)
+            segs = [(a_emb, None, 1.0, 0.0, 1.0), (b_emb, None, 1.0, 0.0, 1.0)]
+            out = _core_ops.SDXLSegments(
+                segs, [pa[:1], pb[:1]], *_sdxl_size(cond_a, cond_b))
+            print(f"[cond.combine] SDXL → 2 段逐段前向（pooled 各自生效）",
+                  flush=True)
+            return {"cond": out}
+        if mode == "first":
+            pool = a_pool
+        elif mode == "last":
+            pool = b_pool
+        else:
+            pool = (a_pool + b_pool) / 2.0
+        out = _core_ops.SDXLCond(torch.cat([a_emb, b_emb], dim=1), pool,
                                  *_sdxl_size(cond_a, cond_b))
         print(f"[cond.combine] SDXL {tuple(a_emb.shape)} + {tuple(b_emb.shape)} "
-              f"-> {tuple(out.embeds.shape)}（pooled 取均值）", flush=True)
+              f"-> {tuple(out.embeds.shape)}（pooled={mode}）", flush=True)
         return {"cond": out}
     if isinstance(cond_a, list) or isinstance(cond_b, list):
         segs = _core_ops.as_cond_segments(cond_a, "cond.combine") \
@@ -439,14 +466,34 @@ def cond_average(cond_a, cond_b, weight=0.5):
 
 
 def _pad_seq(a, b):
-    """序列长度不同时短者补零到长者（dim=1）。"""
-    n = max(a.shape[1], b.shape[1])
-    if a.shape[1] < n:
-        a = torch.cat([a, a.new_zeros(a.shape[0], n - a.shape[1], a.shape[2])],
-                      dim=1)
-    if b.shape[1] < n:
-        b = torch.cat([b, b.new_zeros(b.shape[0], n - b.shape[1], b.shape[2])],
-                      dim=1)
+    """序列长度不同时用 **repeat 到最小公倍数** 对齐（dim=1）。
+
+    【为什么不是补零】早期实现是把短的一方补零到长者，但 padding 位置会
+    分走 cross-attention 的权重——等于稀释真实 token 的注意力（提示词
+    越长越明显）。ComfyUI 的 CONDCrossAttn.concat 用
+    `c.repeat(1, lcm // c.shape[1], 1)`：同一个 token 重复出现，注意力语义
+    不变（重复 token 的关注度均摊后总量相当），是目前公认的稳妥做法。
+    （参考 comfy/conds.py:CONDCrossAttn.concat）
+
+    长度差超过 MAX_CONCAT_REPEAT 倍时退化回补零——repeat 太多次会让序列
+    膨胀到几倍长，注意力开销按 O(n²) 涨，得不偿失。
+    """
+    na, nb = a.shape[1], b.shape[1]
+    if na == nb:
+        return a, b
+    lcm = _math.lcm(na, nb)
+    if lcm // min(na, nb) <= MAX_CONCAT_REPEAT:
+        if na < lcm:
+            a = a.repeat(1, lcm // na, 1)
+        if nb < lcm:
+            b = b.repeat(1, lcm // nb, 1)
+        return a, b
+    # 差异过大：退回补零（避免序列膨胀）
+    n = max(na, nb)
+    if na < n:
+        a = torch.cat([a, a.new_zeros(a.shape[0], n - na, a.shape[2])], dim=1)
+    if nb < n:
+        b = torch.cat([b, b.new_zeros(b.shape[0], n - nb, b.shape[2])], dim=1)
     return a, b
 
 
@@ -568,7 +615,8 @@ def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
     registry.register(
         "cond.combine",
-        inputs={"cond_a": "COND", "cond_b": "COND"},
+        inputs={"cond_a": "COND", "cond_b": "COND",
+                "pooled_mode": "STRING"},
         outputs={"cond": "COND"},
         description="Conditioning Combine：两段 conditioning 沿序列维拼接，"
                     "两段提示词同时生效（可突破 77 token 截断）；"

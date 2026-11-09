@@ -1,0 +1,106 @@
+{
+  "name": "cond-timestep-range",
+  "displayName": "条件时间窗",
+  "description": "条件的时间步区间（对标 ComfyUI ConditioningSetTimestepRange）：让一条 conditioning 只在采样进度 [start,end) 内生效，区间外整段跳过——避免不该生效的条件污染画面，并省掉一次 UNet 前向（更快）。典型用法：分段提示词（前半程起稿描述 + 后半程细节描述，两条 cond 各设窗口后 cond.combine 拼接）、分阶段风格注入；可与 cond.set_area 叠加做「区域 + 时间」双重限定。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "cond",
+    "conditioning",
+    "timestep",
+    "sampling"
+  ],
+  "icon": "⏱",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达地址（留空同 service_url）"
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "required": true,
+      "description": "COND 引用（接 clip-text-encode 等编码节点）",
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "cond"
+      }
+    },
+    {
+      "name": "start_percent",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "起始进度（0~1）；0 = 从第一步开始生效"
+    },
+    {
+      "name": "end_percent",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "结束进度（0~1，开区间）；1 = 到最后一步仍生效"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 300,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 2,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "带时间窗的 COND 引用"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

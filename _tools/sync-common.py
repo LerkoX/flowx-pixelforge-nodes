@@ -92,7 +92,7 @@ def targets(name, node_dir):
 OP_FAMILIES = {
     "cond_latent.py": ["cond-average", "cond-combine", "cond-set-area",
                        "latent-composite", "latent-set-noise-mask",
-                       "latent-upscale"],
+                       "latent-upscale", "cond-timestep-range"],
     # 三算子族（canny/depth/openpose）：与历史服务端已上传的 preprocess_canny.py
     # 同内容 ⇒ hash 命中不重传
     "preprocess.py": ["preprocess-canny", "preprocess-depth",

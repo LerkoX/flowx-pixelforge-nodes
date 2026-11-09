@@ -482,7 +482,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "397455575e01"
+OP_VERSION = "52749c821be0"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -939,14 +939,53 @@ def _build_image_encoder(path):
     return m.to(torch.float32)
 
 
-def _build_scheduler(flow_shift):
-    """UniPCMultistepScheduler + flow_shift（720p→5.0，480p→3.0）。"""
-    from diffusers.schedulers.scheduling_unipc_multistep import (
-        UniPCMultistepScheduler)
+# 可选调度器（对齐 ComfyUI 的「采样器 × 调度器」二维选择思路：模型族给出
+# 合法集，用户按画质/速度取舍）。Wan 是 flow-matching 模型，ddim/euler_a 这类
+# 非 flow 调度器不适用，故只给 flow 兼容集：
+_SCHEDULERS = {
+    # UniPC 多步：官方默认，25~30 步出片质量最稳，支持 flow_shift
+    "unipc": "UniPCMultistepScheduler",
+    # 一阶 Euler（flow match）：步数少时更快，细节略弱于 UniPC
+    "euler": "FlowMatchEulerDiscreteScheduler",
+    # DPM++ 2M（flow match）：中低步数画质好，支持 flow_shift
+    "dpm++": "FlowMatchDPMSolverMultistepScheduler",
+    # 二阶 Heun：质量略高于 Euler，步数翻倍（慢）
+    "heun": "FlowMatchHeunDiscreteScheduler",
+}
+
+
+def _build_scheduler(flow_shift, name="unipc"):
+    """按名字构建 flow-matching 调度器（默认 unipc，官方推荐）。
+
+    flow_shift：720p→5.0 / 480p→3.0（官方建议）；UniPC 与 DPM++ 都吃这个参数。
+    """
+    import diffusers
+
+    key = str(name or "unipc").lower().strip()
+    if key not in _SCHEDULERS:
+        raise ValueError(
+            f"wan: 未知 scheduler '{name}'，可选 {sorted(_SCHEDULERS)}")
+    cls_name = _SCHEDULERS[key]
+    cls = getattr(diffusers, cls_name, None)
+    if cls is None:
+        # 老版本 diffusers 缺该调度器 → 明确回退而不是静默换
+        print(f"[wan] diffusers 无 {cls_name}，回退 unipc", flush=True)
+        cls = diffusers.UniPCMultistepScheduler
+        key = "unipc"
 
     cfg = _config_json("scheduler") or {}
-    cfg.update({"num_train_timesteps": 1000, "flow_shift": float(flow_shift)})
-    return UniPCMultistepScheduler.from_config(cfg)
+    cfg.update({"num_train_timesteps": 1000})
+    # flow_shift 只有部分调度器接受，按签名探测后传（不支持的忽略并提示）
+    import inspect
+    params = set(inspect.signature(cls.__init__).parameters)
+    if "flow_shift" in params:
+        cfg["flow_shift"] = float(flow_shift)
+    elif float(flow_shift) != 5.0:
+        print(f"[wan] {key} 不支持 flow_shift，忽略（仅 UniPC/DPM++ 支持）",
+              flush=True)
+    print(f"[wan] scheduler={key} ({cls_name}) "
+          f"flow_shift={cfg.get('flow_shift', 'n/a')}", flush=True)
+    return cls.from_config(cfg)
 
 
 def _align_frames(n):
@@ -1087,7 +1126,8 @@ def register(registry):
                 "dtype": "STRING", "offload": "STRING",
                 "boundary_ratio": "FLOAT", "flow_shift": "FLOAT",
                 "vae_tiling": "BOOLEAN", "vae_slicing": "BOOLEAN",
-                "attention": "STRING", "max_sequence_length": "INT"},
+                "attention": "STRING", "max_sequence_length": "INT",
+                "scheduler": "STRING"},
         outputs={"model": "MODEL"},
         description="Wan 装配：task=t2v（WanPipeline）/ i2v（WanImageToVideo"
                     "Pipeline，给 last_image 即首尾帧）/ animate（WanAnimate"
@@ -1103,7 +1143,8 @@ def register(registry):
                  lora="", lora_scale=1.0, dtype="bf16",
                  offload="sequential", boundary_ratio=0.875,
                  flow_shift=5.0, vae_tiling=False, vae_slicing=False,
-                 attention="default", max_sequence_length=512):
+                 attention="default", max_sequence_length=512,
+                 scheduler="unipc"):
         task = (task or "t2v").lower()
         if task not in ("t2v", "i2v", "animate"):
             raise ValueError(f"wan.load: task 须为 t2v/i2v/animate，得 {task}")
@@ -1123,7 +1164,7 @@ def register(registry):
         tr_info, te_info, vae_info, img_info, gb = _load_components(
             transformer, transformer2, text_encoder, vae, image_encoder,
             dtype, offload)
-        sched = _build_scheduler(flow_shift)
+        sched = _build_scheduler(flow_shift, scheduler)
         pipe = _assemble_pipe(
             task, tr_info, te_info, vae_info, img_info, sched, boundary_ratio,
             extra={"vae_tiling": vae_tiling, "vae_slicing": vae_slicing,
@@ -1282,14 +1323,15 @@ def register(registry):
                 "boundary_ratio": "FLOAT", "flow_shift": "FLOAT",
                 "lora": "STRING", "lora_scale": "FLOAT",
                 "vae_tiling": "BOOLEAN", "vae_slicing": "BOOLEAN",
-                "attention": "STRING", "max_sequence_length": "INT"},
+                "attention": "STRING", "max_sequence_length": "INT",
+                "scheduler": "STRING"},
         outputs={"model": "MODEL"},
         description="Wan 管道组装：把 transformer/text_encoder/vae/"
                     "image_encoder 组件装成可生成管道（task=t2v/i2v/animate）。"
                     "换 VAE 或采样参数不必重装 28GB transformer。")
     def _op_pipe(task="t2v", transformer=None, text_encoder=None, vae=None,
                  image_encoder=None, boundary_ratio=0.875, flow_shift=5.0,
-                 lora="", lora_scale=1.0,
+                 scheduler="unipc", lora="", lora_scale=1.0,
                  vae_tiling=False, vae_slicing=False, attention="default",
                  max_sequence_length=512):
         if transformer is None or text_encoder is None or vae is None:
@@ -1307,14 +1349,14 @@ def register(registry):
                f"{id(vae.get('vae')):x}|"
                f"{id((image_encoder or {}).get('model')):x}|"
                f"{boundary_ratio}|{flow_shift}|{vae_tiling}|{vae_slicing}|"
-               f"{attention}|{max_sequence_length}")
+               f"{attention}|{max_sequence_length}|{scheduler}")
         models = _models()
         with models._lock:
             if key in models._pipes:
                 models._last_used[key] = time.time()
                 return {"model": models._pipes[key]}
 
-        sched = _build_scheduler(flow_shift)
+        sched = _build_scheduler(flow_shift, scheduler)
         pipe = _assemble_pipe(
             task, tr_info, text_encoder, vae, image_encoder or {}, sched,
             boundary_ratio,

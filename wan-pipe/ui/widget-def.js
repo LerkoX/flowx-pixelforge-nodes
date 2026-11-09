@@ -18,6 +18,7 @@ const WIDGET_SPEC = {
     { key: 'vae_slicing', label: 'VAE slicing（省显存）', kind: 'check', default: false, advanced: true },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 1800, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'scheduler', label: '调度器（unipc/euler/dpm++/heun）', kind: 'text', default: 'unipc' },
   ],
   note: 'Wan 管道组装（组件复用，换 VAE/采样参数不用重装 transformer）',
 }

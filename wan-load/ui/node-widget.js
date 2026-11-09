@@ -2839,6 +2839,7 @@ const WIDGET_SPEC = {
     { key: 'max_sequence_length', label: '提示词最大 token 数', kind: 'text', default: 512, advanced: true },
     { key: 'vae_tiling', label: 'VAE tiling（省显存）', kind: 'check', default: false, advanced: true },
     { key: 'vae_slicing', label: 'VAE slicing（省显存）', kind: 'check', default: false, advanced: true },
+    { key: 'scheduler', label: '调度器（unipc/euler/dpm++/heun）', kind: 'text', default: 'unipc' },
   ],
   note: 'Wan 视频模型装配（14B bf16 逐层 offload，24GB 卡可跑）',
 }

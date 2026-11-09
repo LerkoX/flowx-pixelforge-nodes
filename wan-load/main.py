@@ -40,6 +40,7 @@ def main():
         "offload": param("offload", "sequential"),
         "boundary_ratio": param("boundary_ratio", 0.875, float),
         "flow_shift": param("flow_shift", 5.0, float),
+        "scheduler": param("scheduler", "unipc"),
         "vae_tiling": param("vae_tiling", "0") in ("1", "true", "True"),
         "vae_slicing": param("vae_slicing", "0") in ("1", "true", "True"),
         "attention": param("attention", "default"),

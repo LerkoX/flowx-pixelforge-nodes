@@ -40,6 +40,7 @@ def main():
         "vae": ref(va),
         "boundary_ratio": param("boundary_ratio", 0.875, float),
         "flow_shift": param("flow_shift", 5.0, float),
+        "scheduler": param("scheduler", "unipc"),
         "lora": param("lora", ""),
         "lora_scale": param("lora_scale", 1.0, float),
         "vae_tiling": _bool("vae_tiling"),

@@ -150,6 +150,13 @@
       "description": "提示词最大 token 数（umt5 编码长度）"
     },
     {
+      "name": "scheduler",
+      "type": "string",
+      "required": false,
+      "default": "unipc",
+      "description": "采样调度器（flow-matching 兼容集）：unipc 官方默认质量最稳 / euler 一阶最快 / dpm++ 中低步数画质好 / heun 二阶更高质量但慢一倍"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "required": false,

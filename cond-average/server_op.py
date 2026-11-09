@@ -23,7 +23,7 @@ LATENT 为 4D 张量 (b, 4, h/8, w/8) 或 LatentBundle（samples+noise_mask）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "32051c150230"
+OP_VERSION = "839199f26a22"
 OP_FAMILY = "cond_latent"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -176,6 +176,54 @@ def cond_set_area(cond, x=0, y=0, width=512, height=512, strength=1.0):
     area = _resolve_area(x, y, width, height, strength)
     print(f"[cond.set_area] area(latent px)={area} strength={strength}", flush=True)
     return {"cond": [(t, area, float(strength))]}
+
+
+def cond_set_timestep_range(cond, start_percent=0.0, end_percent=1.0):
+    """Conditioning Set Timestep Range：条件只在采样进度 [start,end) 内生效
+    （对标 ComfyUI ConditioningSetTimestepRange）。
+
+    用途：分段提示词（前 40% 步按"起稿"描述、后 60% 步按"细节"描述）、
+    分阶段 ControlNet 风格约束等。采样循环按当前步进度过滤，区间外**整段
+    跳过**——既避免不该生效的条件污染画面，也省掉一次前向（速度更快）。
+
+    输入：整图 cond 或 cond.set_area 的段列表（每段统一追加窗口）。
+    输出：段列表，每段 (tensor, area, strength, start, end)。
+    """
+    if not 0.0 <= start_percent <= 1.0 or not 0.0 <= end_percent <= 1.0:
+        raise ValueError(
+            f"cond.set_timestep_range: start/end 需在 [0,1]，"
+            f"got ({start_percent},{end_percent})")
+    if end_percent <= start_percent:
+        raise ValueError(
+            f"cond.set_timestep_range: end 需 > start，"
+            f"got ({start_percent},{end_percent})")
+
+    def _wrap(seg):
+        t, area = seg[0], seg[1]
+        strength = seg[2] if len(seg) > 2 else 1.0
+        return (t, area, float(strength), float(start_percent),
+                float(end_percent))
+
+    if isinstance(cond, _core_ops.SDXLCond):
+        out = [_wrap((cond.embeds, None, 1.0))]
+        print(f"[cond.set_timestep_range] SDXL window="
+              f"[{start_percent},{end_percent})", flush=True)
+        return {"cond": out}
+    if isinstance(cond, list):
+        out = []
+        for seg in cond:
+            if not (isinstance(seg, (list, tuple)) and len(seg) in (3, 5)):
+                raise ValueError(
+                    "cond.set_timestep_range: 段需为 (tensor, area, strength"
+                    "[, start, end])")
+            out.append(_wrap(seg))
+        print(f"[cond.set_timestep_range] {len(out)} 段 window="
+              f"[{start_percent},{end_percent})", flush=True)
+        return {"cond": out}
+    t = _as_tensor_cond(cond, "cond.set_timestep_range")
+    print(f"[cond.set_timestep_range] window="
+          f"[{start_percent},{end_percent})", flush=True)
+    return {"cond": [_wrap((t, None, 1.0))]}
 
 
 def cond_average(cond_a, cond_b, weight=0.5):
@@ -380,6 +428,15 @@ def register(registry):
                     "生效（图像像素），strength 为该段权重（默认 1.0）；"
                     "多区域 = 多个 set_area 经 cond.combine 拼接；"
                     "暂不与 controlnet 组合")(cond_set_area)
+    registry.register(
+        "cond.set_timestep_range",
+        inputs={"cond": "COND", "start_percent": "FLOAT",
+                "end_percent": "FLOAT"},
+        outputs={"cond": "COND"},
+        description="Conditioning Set Timestep Range：条件只在采样进度 "
+                    "[start,end) 内生效（对标 ComfyUI ConditioningSet"
+                    "TimestepRange）。分段提示词/分阶段约束；区间外整段跳过"
+                    "（避免污染 + 省一次前向）。可叠加 cond.set_area")(cond_set_timestep_range)
     registry.register(
         "latent.set_noise_mask",
         inputs={"latent": "LATENT", "mask": "IMAGE"},

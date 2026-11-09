@@ -2838,6 +2838,7 @@ const WIDGET_SPEC = {
     { key: 'seed', label: '种子（-1 随机）', kind: 'text', default: -1 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'prev_segment_conditioning_frames', label: '段间时序引导帧数（0=关，官方 1 或 5）', kind: 'text', default: 0, advanced: true },
   ],
   note: 'Wan-Animate 角色动画/替换（pose/face 需预处理）',
 }

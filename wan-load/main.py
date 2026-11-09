@@ -40,6 +40,10 @@ def main():
         "offload": param("offload", "sequential"),
         "boundary_ratio": param("boundary_ratio", 0.875, float),
         "flow_shift": param("flow_shift", 5.0, float),
+        "vae_tiling": param("vae_tiling", "0") in ("1", "true", "True"),
+        "vae_slicing": param("vae_slicing", "0") in ("1", "true", "True"),
+        "attention": param("attention", "default"),
+        "max_sequence_length": param("max_sequence_length", 512, int),
     }
 
     t0 = time.time()

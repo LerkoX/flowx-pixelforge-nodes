@@ -60,7 +60,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "33dc8a13b130"
+OP_VERSION = "10456e92c6cd"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -486,6 +486,121 @@ def _align_frames(n):
 # 算子注册
 # ---------------------------------------------------------------------------
 
+def _assemble_pipe(task, tr_info, te_info, vae_info, img_enc_info,
+                   scheduler, boundary_ratio, extra=None):
+    """三管道装配（一体版与拆分版共用）。
+
+    tr_info   {"model": transformer, "model2": transformer_2|None, "is_moe": b}
+    te_info   {"model": text_encoder, "tokenizer": tokenizer}
+    vae_info  {"vae": autoencoder_kl_wan}
+    img_enc_info {"model": clip_vision|None}
+    """
+    from diffusers import (WanAnimatePipeline, WanImageToVideoPipeline,
+                           WanPipeline)
+
+    common = dict(tokenizer=te_info["tokenizer"], text_encoder=te_info["model"],
+                  vae=vae_info["vae"], scheduler=scheduler,
+                  transformer=tr_info["model"])
+    if tr_info.get("is_moe") and tr_info.get("model2") is not None:
+        common["transformer_2"] = tr_info["model2"]
+        common["boundary_ratio"] = float(boundary_ratio)
+
+    if task == "animate":
+        pipe = WanAnimatePipeline(**common)
+    elif task == "i2v":
+        pipe = WanImageToVideoPipeline(
+            image_encoder=img_enc_info.get("model"), **common)
+    else:
+        pipe = WanPipeline(**common)
+
+    # 可选：VAE tiling/slicing（大分辨率解码省显存）
+    if extra:
+        if extra.get("vae_tiling"):
+            try:
+                pipe.vae.enable_tiling()
+                print("[wan] vae tiling on", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[wan] vae tiling 不可用: {type(e).__name__}", flush=True)
+        if extra.get("vae_slicing"):
+            try:
+                pipe.vae.enable_slicing()
+                print("[wan] vae slicing on", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[wan] vae slicing 不可用: {type(e).__name__}", flush=True)
+        if extra.get("attention") in ("sdpa", "flash_attention_2"):
+            mode = extra["attention"]
+            for attr in ("transformer", "transformer_2"):
+                m = getattr(pipe, attr, None)
+                if m is None:
+                    continue
+                try:
+                    m.set_attn_processor(m.attn_processors)  # noqa: PLW2901
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                pipe.transformer.set_attention_backend(mode)
+                if getattr(pipe, "transformer_2", None) is not None:
+                    pipe.transformer_2.set_attention_backend(mode)
+                print(f"[wan] attention backend -> {mode}", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[wan] attention backend {mode} 不可用"
+                      f"（{type(e).__name__}），用默认", flush=True)
+    return pipe
+
+
+def _load_components(transformer, transformer2, text_encoder, vae,
+                     image_encoder, dtype, offload, key_prefix="wan:load"):
+    """加载全部组件（一体版与拆分版共用），返回 (tr_info, te_info,
+    vae_info, img_info, cache_key, weight_gb)。"""
+    import torch
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tr_path = _resolve("diffusion_models", transformer)
+    _require_file(tr_path, "transformer")
+    tr = _build_transformer(tr_path, dtype, "transformer")
+    tr = _offload(tr, device, offload, "transformer")
+    tr2 = None
+    if transformer2:
+        tr2_path = _resolve("diffusion_models", transformer2)
+        _require_file(tr2_path, "transformer2")
+        tr2 = _build_transformer(tr2_path, dtype, "transformer_2")
+        tr2 = _offload(tr2, device, offload, "transformer_2")
+
+    te_path = _resolve("text_encoders", text_encoder)
+    _require_file(te_path, "text_encoder")
+    te = _build_text_encoder(te_path, dtype)
+    te = _offload(te, device, offload, "text_encoder")
+
+    tok_src = os.path.join(WAN_CONFIG_DIR, "tokenizer")
+    if not os.path.isdir(tok_src):
+        tok_src = os.path.join(WAN_CONFIG_DIR, "tokenizer_2")
+    if not os.path.isdir(tok_src):
+        raise ValueError(f"wan: 缺 tokenizer 目录（{WAN_CONFIG_DIR}/tokenizer）"
+                         f"——umt5 词表须从官方 Diffusers 仓库 copy，KB 级")
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(tok_src)
+
+    vae_path = _resolve("vae", vae)
+    _require_file(vae_path, "vae")
+    vae_m = _build_vae(vae_path)
+    if device.type == "cuda":
+        vae_m = vae_m.to(device)
+
+    img_info = {"model": None}
+    if image_encoder:
+        img_enc = _build_image_encoder(
+            _resolve("image_encoders", image_encoder))
+        if device.type == "cuda":
+            img_enc = img_enc.to(device)
+        img_info = {"model": img_enc}
+
+    gb = _size(tr_path) + (_size(_resolve("diffusion_models", transformer2))
+                           if transformer2 else 0)
+    return ({"model": tr, "model2": tr2, "is_moe": bool(transformer2)},
+            {"model": te, "tokenizer": tokenizer},
+            {"vae": vae_m}, img_info, gb)
+
+
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
 
@@ -496,7 +611,9 @@ def register(registry):
                 "vae": "STRING", "image_encoder": "STRING",
                 "lora": "STRING", "lora_scale": "FLOAT",
                 "dtype": "STRING", "offload": "STRING",
-                "boundary_ratio": "FLOAT", "flow_shift": "FLOAT"},
+                "boundary_ratio": "FLOAT", "flow_shift": "FLOAT",
+                "vae_tiling": "BOOLEAN", "vae_slicing": "BOOLEAN",
+                "attention": "STRING", "max_sequence_length": "INT"},
         outputs={"model": "MODEL"},
         description="Wan 装配：task=t2v（WanPipeline）/ i2v（WanImageToVideo"
                     "Pipeline，给 last_image 即首尾帧）/ animate（WanAnimate"
@@ -511,16 +628,17 @@ def register(registry):
                  image_encoder="",
                  lora="", lora_scale=1.0, dtype="bf16",
                  offload="sequential", boundary_ratio=0.875,
-                 flow_shift=5.0):
-        import torch
-
+                 flow_shift=5.0, vae_tiling=False, vae_slicing=False,
+                 attention="default", max_sequence_length=512):
         task = (task or "t2v").lower()
         if task not in ("t2v", "i2v", "animate"):
             raise ValueError(f"wan.load: task 须为 t2v/i2v/animate，得 {task}")
         is_moe = bool(transformer2)
         key = (f"wan:{task}:{transformer}|{transformer2}|{text_encoder}|{vae}|"
                f"{image_encoder}|{lora}@{lora_scale}|{dtype}|{offload}|"
-               f"{boundary_ratio}|{flow_shift}")
+               f"{boundary_ratio}|{flow_shift}|{lora}@{lora_scale}|"
+               f"{vae_tiling}|{vae_slicing}|"
+               f"{attention}|{max_sequence_length}")
         models = _models()
         with models._lock:
             if key in models._pipes:
@@ -528,82 +646,213 @@ def register(registry):
                 print(f"[wan] cache hit '{key[:40]}…'", flush=True)
                 return {"model": models._pipes[key]}
 
+        tr_info, te_info, vae_info, img_info, gb = _load_components(
+            transformer, transformer2, text_encoder, vae, image_encoder,
+            dtype, offload)
+        sched = _build_scheduler(flow_shift)
+        pipe = _assemble_pipe(
+            task, tr_info, te_info, vae_info, img_info, sched, boundary_ratio,
+            extra={"vae_tiling": vae_tiling, "vae_slicing": vae_slicing,
+                   "attention": attention})
+
+        # LoRA（Wan2.2 MoE 要同时挂两个专家才有效）
+        if lora:
+            pipe = _load_lora(pipe, lora, lora_scale,
+                              into_transformer_2=is_moe)
+
+        pipe._wan_fps = _guess_fps(transformer)
+        pipe._wan_max_seq = int(max_sequence_length)
+        print(f"[wan] pipe assembled ({task}"
+              f"{', MoE' if is_moe else ''}, offload={offload}, "
+              f"权重 {gb/1e9:.1f}GB)", flush=True)
+        # est=0：组件已各自记账（与 H3 同口径，避免 vram 闸门误判）
+        return {"model": _register(
+            key, pipe, 0,
+            f"Wan{'Animate' if task == 'animate' else 'Pipeline'}")}
+
+    # ============ 拆分装配算子（SD 风：组件各自加载/设置，pipe 组装）============
+    # 缓存键带组件前缀（wan:tr:/te:/vae:/img:/pipe:），与一体版 wan:<task>: 互不
+    # 冲突。组件常驻 model_manager LRU（跨执行复用：换 VAE 不重装 28GB
+    # transformer）。pipe est=0——组件已各自记账，不重复计。
+
+    @registry.register(
+        "wan.transformer_load",
+        inputs={"transformer": "STRING", "transformer2": "STRING",
+                "dtype": "STRING", "offload": "STRING"},
+        outputs={"transformer": "TRANSFORMER"},
+        description="Wan transformer 组件加载（+ Wan2.2 MoE 低噪专家、"
+                    "可选 LoRA 双挂）。14B bf16 ~28GB 走逐层 offload。")
+    def _op_transformer_load(
+            transformer="wan2.1_t2v_14B_bf16.safetensors",
+            transformer2="", dtype="bf16", offload="sequential"):
+        import torch
+
+        key = f"wan:tr:{transformer}|{transformer2}|{dtype}|{offload}"
+        models = _models()
+        with models._lock:
+            if key in models._pipes:
+                models._last_used[key] = time.time()
+                return {"transformer": models._pipes[key]}
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         tr_path = _resolve("diffusion_models", transformer)
         _require_file(tr_path, "transformer")
-
-        # ① transformer（+ MoE 低噪专家）
         tr = _build_transformer(tr_path, dtype, "transformer")
         tr = _offload(tr, device, offload, "transformer")
         tr2 = None
-        if is_moe:
+        if transformer2:
             tr2_path = _resolve("diffusion_models", transformer2)
             _require_file(tr2_path, "transformer2")
             tr2 = _build_transformer(tr2_path, dtype, "transformer_2")
             tr2 = _offload(tr2, device, offload, "transformer_2")
 
-        # ② text encoder
+        info = {"model": tr, "model2": tr2, "is_moe": bool(transformer2)}
+        est = _size(tr_path) + (_size(_resolve("diffusion_models",
+                                               transformer2))
+                                if transformer2 else 0)
+        return {"transformer": _register(key, info, est,
+                                         "WanTransformer3DModel")}
+
+    @registry.register(
+        "wan.te_load",
+        inputs={"text_encoder": "STRING", "dtype": "STRING",
+                "offload": "STRING"},
+        outputs={"text_encoder": "TEXT_ENCODER"},
+        description="Wan 文本编码器（UMT5-XXL，11GB bf16）组件加载 + "
+                    "tokenizer（从 WAN_DIR/config/tokenizer 读 umt5 词表）。")
+    def _op_te_load(text_encoder="umt5_xxl_bf16.safetensors",
+                    dtype="bf16", offload="sequential"):
+        import torch
+
+        key = f"wan:te:{text_encoder}|{dtype}|{offload}"
+        models = _models()
+        with models._lock:
+            if key in models._pipes:
+                models._last_used[key] = time.time()
+                return {"text_encoder": models._pipes[key]}
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         te_path = _resolve("text_encoders", text_encoder)
         _require_file(te_path, "text_encoder")
         te = _build_text_encoder(te_path, dtype)
         te = _offload(te, device, offload, "text_encoder")
 
-        # ③ vae（fp32）
-        vae_path = _resolve("vae", vae)
-        _require_file(vae_path, "vae")
-        vae_m = _build_vae(vae_path)
-        if device.type == "cuda":
-            vae_m = vae_m.to(device)
-
-        # ④ tokenizer（umt5 词表；共享盘/本地 config 目录均可）
         tok_src = os.path.join(WAN_CONFIG_DIR, "tokenizer")
         if not os.path.isdir(tok_src):
             tok_src = os.path.join(WAN_CONFIG_DIR, "tokenizer_2")
         if not os.path.isdir(tok_src):
-            raise ValueError(f"wan: 缺 tokenizer 目录（{WAN_CONFIG_DIR}/"
-                             f"tokenizer）——umt5 词表须从官方 Diffusers "
-                             f"仓库 copy，KB 级")
+            raise ValueError(
+                f"wan: 缺 tokenizer 目录（{WAN_CONFIG_DIR}/tokenizer）")
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(tok_src)
 
+        info = {"model": te, "tokenizer": tokenizer}
+        return {"text_encoder": _register(key, info, _size(te_path),
+                                          "UMT5EncoderModel")}
+
+    @registry.register(
+        "wan.vae_load",
+        inputs={"vae": "STRING", "device": "STRING"},
+        outputs={"vae": "VAE"},
+        description="Wan VAE 加载（**强制 fp32**——官方：fp32 解码质量更好；"
+                    "体积小 ~500MB 不构成显存压力）。")
+    def _op_vae_load(vae="wan_2.1_vae.safetensors", device="cuda"):
+        import torch
+
+        key = f"wan:vae:{vae}"
+        models = _models()
+        with models._lock:
+            if key in models._pipes:
+                models._last_used[key] = time.time()
+                return {"vae": models._pipes[key]}
+
+        vae_path = _resolve("vae", vae)
+        _require_file(vae_path, "vae")
+        vae_m = _build_vae(vae_path)
+        if device != "cpu" and torch.cuda.is_available():
+            vae_m = vae_m.to("cuda")
+        return {"vae": _register(key, {"vae": vae_m}, _size(vae_path),
+                                 "AutoencoderKLWan")}
+
+    @registry.register(
+        "wan.image_encoder_load",
+        inputs={"image_encoder": "STRING", "device": "STRING"},
+        outputs={"image_encoder": "IMAGE_ENCODER"},
+        description="Wan 图像编码器（CLIP-ViT-H，I2V/Animate 的图像条件）加载。")
+    def _op_image_encoder_load(
+            image_encoder="clip_vision_h.safetensors", device="cuda"):
+        import torch
+
+        key = f"wan:img:{image_encoder}"
+        models = _models()
+        with models._lock:
+            if key in models._pipes:
+                models._last_used[key] = time.time()
+                return {"image_encoder": models._pipes[key]}
+
+        path = _resolve("image_encoders", image_encoder)
+        _require_file(path, "image_encoder")
+        m = _build_image_encoder(path)
+        if device != "cpu" and torch.cuda.is_available():
+            m = m.to("cuda")
+        return {"image_encoder": _register(key, {"model": m}, _size(path),
+                                           "CLIPVisionModel")}
+
+    @registry.register(
+        "wan.pipe",
+        inputs={"task": "STRING", "transformer": "TRANSFORMER",
+                "text_encoder": "TEXT_ENCODER", "vae": "VAE",
+                "image_encoder": "IMAGE_ENCODER",
+                "boundary_ratio": "FLOAT", "flow_shift": "FLOAT",
+                "lora": "STRING", "lora_scale": "FLOAT",
+                "vae_tiling": "BOOLEAN", "vae_slicing": "BOOLEAN",
+                "attention": "STRING", "max_sequence_length": "INT"},
+        outputs={"model": "MODEL"},
+        description="Wan 管道组装：把 transformer/text_encoder/vae/"
+                    "image_encoder 组件装成可生成管道（task=t2v/i2v/animate）。"
+                    "换 VAE 或采样参数不必重装 28GB transformer。")
+    def _op_pipe(task="t2v", transformer=None, text_encoder=None, vae=None,
+                 image_encoder=None, boundary_ratio=0.875, flow_shift=5.0,
+                 lora="", lora_scale=1.0,
+                 vae_tiling=False, vae_slicing=False, attention="default",
+                 max_sequence_length=512):
+        if transformer is None or text_encoder is None or vae is None:
+            raise ValueError(
+                "wan.pipe: transformer / text_encoder / vae 三个组件必填")
+        task = (task or "t2v").lower()
+        if task not in ("t2v", "i2v", "animate"):
+            raise ValueError(f"wan.pipe: task 须为 t2v/i2v/animate，得 {task}")
+
+        tr_info = transformer
+        is_moe = bool(tr_info.get("is_moe"))
+        key = (f"wan:pipe:{task}:{id(tr_info.get('model')):x}|"
+               f"{id(tr_info.get('model2')) if is_moe else 0:x}|"
+               f"{id(text_encoder.get('model')):x}|"
+               f"{id(vae.get('vae')):x}|"
+               f"{id((image_encoder or {}).get('model')):x}|"
+               f"{boundary_ratio}|{flow_shift}|{vae_tiling}|{vae_slicing}|"
+               f"{attention}|{max_sequence_length}")
+        models = _models()
+        with models._lock:
+            if key in models._pipes:
+                models._last_used[key] = time.time()
+                return {"model": models._pipes[key]}
+
         sched = _build_scheduler(flow_shift)
-
-        # ⑤ 管道装配
-        from diffusers import (WanAnimatePipeline, WanImageToVideoPipeline,
-                               WanPipeline)
-        common = dict(tokenizer=tokenizer, text_encoder=te, vae=vae_m,
-                      scheduler=sched, transformer=tr)
-        if tr2 is not None:
-            common["transformer_2"] = tr2
-            common["boundary_ratio"] = float(boundary_ratio)
-
-        if task == "animate":
-            pipe = WanAnimatePipeline(**common)
-        elif task == "i2v":
-            img_enc = None
-            if image_encoder:
-                img_enc = _build_image_encoder(
-                    _resolve("image_encoders", image_encoder))
-                if device.type == "cuda":
-                    img_enc = img_enc.to(device)
-            pipe = WanImageToVideoPipeline(image_encoder=img_enc, **common)
-        else:
-            pipe = WanPipeline(**common)
-
-        # ⑥ LoRA（Wan2.2 MoE 要同时挂两个专家才有效）
+        pipe = _assemble_pipe(
+            task, tr_info, text_encoder, vae, image_encoder or {}, sched,
+            boundary_ratio,
+            extra={"vae_tiling": vae_tiling, "vae_slicing": vae_slicing,
+                   "attention": attention})
         if lora:
-            pipe = _load_lora(pipe, lora, lora_scale,
-                              into_transformer_2=is_moe)
-
-        est = _size(tr_path) + ((_size(_resolve("diffusion_models",
-                                               transformer2)))
-                                if is_moe else 0)
-        print(f"[wan] pipe assembled ({task}"
-              f"{', MoE' if is_moe else ''}, offload={offload}, "
-              f"权重 {est/1e9:.1f}GB)", flush=True)
-        # est=0：组件已各自记账（与 H3 同口径，避免 vram 闸门误判）
-        return {"model": _register(key, pipe, 0,
-                                   f"Wan{'Animate' if task == 'animate' else 'Pipeline'}")}
+            pipe = _load_lora(pipe, lora, lora_scale, into_transformer_2=is_moe)
+        pipe._wan_fps = int(getattr(pipe, "_wan_fps", WAN_FPS_DEFAULT))
+        pipe._wan_max_seq = int(max_sequence_length)
+        print(f"[wan] pipe assembled from components ({task}"
+              f"{', MoE' if is_moe else ''})", flush=True)
+        return {"model": _register(
+            key, pipe, 0,
+            f"Wan{'Animate' if task == 'animate' else 'Pipeline'}")}
 
     @registry.register(
         "wan.gen",
@@ -611,7 +860,10 @@ def register(registry):
                 "negative_prompt": "STRING", "image": "IMAGE",
                 "last_image": "IMAGE", "num_frames": "INT",
                 "height": "INT", "width": "INT", "steps": "INT",
-                "guidance_scale": "FLOAT", "seed": "INT"},
+                "guidance_scale": "FLOAT", "guidance_scale_2": "FLOAT",
+                "num_videos_per_prompt": "INT",
+                "max_sequence_length": "INT", "fps": "INT",
+                "seed": "INT"},
         outputs={"video": "VIDEO", "seed": "INT", "fps": "INT"},
         description="Wan 视频生成：无 image → T2V；给 image → I2V；"
                     "同时给 image+last_image → 首尾帧插值。**Wan 有 CFG**"
@@ -620,7 +872,9 @@ def register(registry):
                     "（Wan2.2-TI2V-5B）。无音轨。分钟级任务，请经 /jobs。")
     def _op_gen(model, prompt="", negative_prompt="", image=None,
                 last_image=None, num_frames=81, height=480, width=832,
-                steps=30, guidance_scale=5.0, seed=-1):
+                steps=30, guidance_scale=5.0, guidance_scale_2=0.0,
+                num_videos_per_prompt=1, max_sequence_length=0, fps=0,
+                seed=-1):
         import random
 
         import numpy as np
@@ -671,12 +925,20 @@ def register(registry):
         h = max(mod, round(h / mod) * mod)
         w = max(mod, round(w / mod) * mod)
 
-        fps = int(getattr(pipe, "_wan_fps", WAN_FPS_DEFAULT))
+        fps_out = int(fps) if fps and fps > 0 else int(
+            getattr(pipe, "_wan_fps", WAN_FPS_DEFAULT))
+        msl = int(max_sequence_length) or int(
+            getattr(pipe, "_wan_max_seq", 512))
         kwargs = dict(prompt=prompt, negative_prompt=negative_prompt or None,
                       num_frames=aligned, height=h, width=w,
                       num_inference_steps=int(steps),
-                      guidance_scale=float(guidance_scale), generator=gen,
-                      output_type="np")
+                      guidance_scale=float(guidance_scale),
+                      num_videos_per_prompt=max(1, int(num_videos_per_prompt)),
+                      max_sequence_length=msl,
+                      generator=gen, output_type="np")
+        # MoE 第二阶段 CFG（仅 Wan2.2 双专家生效；0=沿用 guidance_scale）
+        if guidance_scale_2 and float(guidance_scale_2) > 0:
+            kwargs["guidance_scale_2"] = float(guidance_scale_2)
         t0 = time.time()
         if img is not None:
             # I2V / 首尾帧：WanImageToVideoPipeline 认 image + last_image
@@ -690,11 +952,11 @@ def register(registry):
         frames = [Image.fromarray(
             (np.clip(f, 0, 1) * 255).round().astype("uint8"))
             for f in frames_np]
-        print(f"[wan] gen done {len(frames)}帧 {fps}fps "
+        print(f"[wan] gen done {len(frames)}帧 {fps_out}fps "
               f"{time.time()-t0:.1f}s", flush=True)
-        return {"video": {"frames": frames, "fps": fps,
+        return {"video": {"frames": frames, "fps": fps_out,
                           "num_frames": len(frames)},
-                "seed": seed, "fps": fps}
+                "seed": seed, "fps": fps_out}
 
     @registry.register(
         "wan.animate",
@@ -703,6 +965,7 @@ def register(registry):
                 "background_video": "VIDEO", "mask_video": "VIDEO",
                 "prompt": "STRING", "negative_prompt": "STRING",
                 "mode": "STRING", "segment_frame_length": "INT",
+                "prev_segment_conditioning_frames": "INT",
                 "height": "INT", "width": "INT", "steps": "INT",
                 "guidance_scale": "FLOAT", "seed": "INT"},
         outputs={"video": "VIDEO", "seed": "INT", "fps": "INT"},
@@ -714,7 +977,9 @@ def register(registry):
     def _op_animate(model, image=None, pose_video=None, face_video=None,
                     background_video=None, mask_video=None,
                     prompt="", negative_prompt="", mode="animate",
-                    segment_frame_length=77, height=0, width=0, steps=20,
+                    segment_frame_length=77,
+                    prev_segment_conditioning_frames=0,
+                    height=0, width=0, steps=20,
                     guidance_scale=1.0, seed=-1):
         import random
 
@@ -782,6 +1047,10 @@ def register(registry):
                       guidance_scale=float(guidance_scale),
                       num_inference_steps=int(steps),
                       mode=mode, generator=gen, output_type="np")
+        if int(prev_segment_conditioning_frames) > 0:
+            # 段间时序引导（官方建议 1 或 5；5 更连贯但更吃显存）
+            kwargs["prev_segment_conditioning_frames"] = int(
+                prev_segment_conditioning_frames)
         if mode == "replace":
             kwargs["background_video"] = bg
             kwargs["mask_video"] = msk

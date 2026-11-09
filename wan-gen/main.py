@@ -41,6 +41,10 @@ def main():
         "width": param("width", 832, int),
         "steps": param("steps", 30, int),
         "guidance_scale": param("guidance_scale", 5.0, float),
+        "guidance_scale_2": param("guidance_scale_2", 0.0, float),
+        "num_videos_per_prompt": param("num_videos_per_prompt", 1, int),
+        "max_sequence_length": param("max_sequence_length", 0, int),
+        "fps": param("fps", 0, int),
         "seed": param("seed", -1, int),
     }
     if image_id:

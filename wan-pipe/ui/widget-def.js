@@ -1,0 +1,23 @@
+const WIDGET_SPEC = {
+  icon: '🌊',
+  title: 'Wan 管道组装',
+  fields: [
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'task', label: '管道类型（t2v / i2v / animate）', kind: 'text', default: 't2v' },
+    { key: 'transformer', label: 'TRANSFORMER 组件（接 wan-transformer-load）', kind: 'text', mono: true },
+    { key: 'text_encoder', label: 'TEXT_ENCODER 组件（接 wan-te-load）', kind: 'text', mono: true },
+    { key: 'vae', label: 'VAE 组件（接 wan-vae-load）', kind: 'text', mono: true },
+    { key: 'image_encoder', label: 'IMAGE_ENCODER（仅 i2v/animate）', kind: 'text', mono: true, default: '' },
+    { key: 'lora', label: 'LoRA 文件名（逗号分隔，可带 @强度）', kind: 'text', mono: true, default: '' },
+    { key: 'lora_scale', label: 'LoRA 默认强度', kind: 'slider', min: 0, max: 2, step: 0.05, default: 1.0 },
+    { key: 'boundary_ratio', label: 'MoE 专家切换比例', kind: 'slider', min: 0.5, max: 1, step: 0.005, default: 0.875, advanced: true },
+    { key: 'flow_shift', label: 'flow_shift（720p=5.0 / 480p=3.0）', kind: 'slider', min: 1, max: 12, step: 0.5, default: 5.0 },
+    { key: 'attention', label: 'attention 后端（default/sdpa/flash_attention_2）', kind: 'text', default: 'default', advanced: true },
+    { key: 'max_sequence_length', label: '提示词最大 token 数', kind: 'text', default: 512, advanced: true },
+    { key: 'vae_tiling', label: 'VAE tiling（省显存）', kind: 'check', default: false, advanced: true },
+    { key: 'vae_slicing', label: 'VAE slicing（省显存）', kind: 'check', default: false, advanced: true },
+    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 1800, advanced: true },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+  ],
+  note: 'Wan 管道组装（组件复用，换 VAE/采样参数不用重装 transformer）',
+}

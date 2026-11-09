@@ -1,0 +1,96 @@
+{
+  "name": "wan-vae-load",
+  "displayName": "Wan VAE 加载",
+  "description": "Wan VAE（AutoencoderKLWan）加载，**强制 fp32**——官方明确 fp32 解码质量更好（与 MiniMax-H3 用 bf16 不同）。体积小 ~500MB，不构成显存压力，默认直接上卡。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "video",
+    "inference"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "required": false,
+      "default": "wan_2.1_vae.safetensors",
+      "description": "Wan VAE 权重文件名（/models/wan/vae 下）"
+    },
+    {
+      "name": "device",
+      "type": "string",
+      "required": false,
+      "default": "cuda",
+      "description": "加载设备：cuda（默认）/ cpu"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "Wan VAE 组件引用（fp32）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

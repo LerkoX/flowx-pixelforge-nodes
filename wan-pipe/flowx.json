@@ -1,0 +1,182 @@
+{
+  "name": "wan-pipe",
+  "displayName": "Wan 管道组装",
+  "description": "Wan 管道组装（分离式装配的最后一步）：把 transformer / text_encoder / vae / image_encoder 组件装成可生成管道。task 决定管道类型：t2v=WanPipeline / i2v=WanImageToVideoPipeline（生成时给 last_image 即首尾帧）/ animate=WanAnimatePipeline（角色动画+替换）。可挂 LoRA（Wan2.2 MoE 自动双专家挂载）、开 VAE tiling/slicing、切换 attention 后端、调 flow_shift 与提示词最大长度。组件复用模型池——换采样参数或 VAE 不必重装 28GB transformer。走异步 /jobs。自包含节点：server_op.py 运行时自注册。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "video",
+    "inference"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "task",
+      "type": "string",
+      "required": false,
+      "default": "t2v",
+      "description": "管道类型：t2v 文生视频 / i2v 图生视频（含首尾帧）/ animate 角色动画与替换"
+    },
+    {
+      "name": "transformer",
+      "type": "string",
+      "required": true,
+      "description": "TRANSFORMER 组件引用（接 wan-transformer-load 的 transformer 输出）",
+      "source": {
+        "nodeRef": "wan-transformer-load",
+        "output": "transformer"
+      }
+    },
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "required": true,
+      "description": "TEXT_ENCODER 组件引用（接 wan-te-load 的 text_encoder 输出）",
+      "source": {
+        "nodeRef": "wan-te-load",
+        "output": "text_encoder"
+      }
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "required": true,
+      "description": "VAE 组件引用（接 wan-vae-load 的 vae 输出）",
+      "source": {
+        "nodeRef": "wan-vae-load",
+        "output": "vae"
+      }
+    },
+    {
+      "name": "image_encoder",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "IMAGE_ENCODER 组件引用（仅 task=i2v/animate 需要；接 wan-image-encoder-load）"
+    },
+    {
+      "name": "boundary_ratio",
+      "type": "float",
+      "required": false,
+      "default": 0.875,
+      "description": "Wan2.2 MoE 专家切换比例（0.875=前 87.5% 时间步用高噪专家，之后切低噪专家）。仅 transformer2 非空时生效"
+    },
+    {
+      "name": "flow_shift",
+      "type": "float",
+      "required": false,
+      "default": 5.0,
+      "description": "UniPC 调度器 flow_shift：720p 用 5.0，480p 用 3.0（官方建议）"
+    },
+    {
+      "name": "lora",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "LoRA 文件名（/models/wan/loras 下；逗号分隔可带 @强度）。LightX2V 4step 加速等；Wan2.2 MoE 自动双专家挂载"
+    },
+    {
+      "name": "lora_scale",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "LoRA 默认强度"
+    },
+    {
+      "name": "vae_tiling",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "VAE tiling（大分辨率解码省显存，可能轻微影响接缝）"
+    },
+    {
+      "name": "vae_slicing",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "VAE slicing（逐帧解码省显存）"
+    },
+    {
+      "name": "attention",
+      "type": "string",
+      "required": false,
+      "default": "default",
+      "description": "attention 后端：default / sdpa / flash_attention_2（40 系建议 sdpa）"
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "integer",
+      "required": false,
+      "default": 512,
+      "description": "提示词最大 token 数（umt5 编码长度）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 1800,
+      "description": "job 超时秒数（组装比加载快，1800 足够）"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "Wan MODEL 管道引用（供 wan-gen / wan-animate 消费）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 620,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

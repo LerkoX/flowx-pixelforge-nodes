@@ -146,6 +146,13 @@
       "default": -1
     },
     {
+      "name": "prev_segment_conditioning_frames",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "段间时序引导帧数（0=不启用；官方建议 1 或 5，5 更连贯但更吃显存）"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "required": false,

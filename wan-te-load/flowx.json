@@ -1,0 +1,103 @@
+{
+  "name": "wan-te-load",
+  "displayName": "Wan 文本塔加载",
+  "description": "Wan 文本编码器组件加载：UMT5-XXL（bf16 ≈11GB，逐层 offload）+ tokenizer（umt5 词表从 WAN_DIR/config/tokenizer 读）。Comfy-Org 的 umt5_xxl_* 单文件直读，key 前缀自动剥离。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "video",
+    "inference"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "required": false,
+      "default": "umt5_xxl_bf16.safetensors",
+      "description": "UMT5-XXL 权重文件名（/models/wan/text_encoders 下）"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "required": false,
+      "default": "bf16",
+      "description": "权重精度 bf16/fp16/fp32"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "required": false,
+      "default": "sequential",
+      "description": "offload 策略（sequential 逐层 swap / none）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "description": "Wan TEXT_ENCODER 组件引用（含 tokenizer）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 340,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

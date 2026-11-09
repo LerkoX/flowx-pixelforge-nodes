@@ -118,6 +118,34 @@
       "default": -1
     },
     {
+      "name": "guidance_scale_2",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "MoE 第二阶段 CFG（仅 Wan2.2 双专家生效；0=沿用 guidance_scale）。低噪专家单独调强度"
+    },
+    {
+      "name": "num_videos_per_prompt",
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "description": "每个提示词生成几个视频（batch，显存翻倍）"
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "提示词最大 token 数（0=用管道默认 512）"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "输出 fps 覆盖（0=自动：Wan2.1=16 / Wan2.2-TI2V-5B=24）"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "required": false,

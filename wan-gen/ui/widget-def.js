@@ -16,6 +16,10 @@ const WIDGET_SPEC = {
     { key: 'seed', label: '种子（-1 随机）', kind: 'text', default: -1 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'guidance_scale_2', label: 'MoE 二阶段 CFG（0=沿用主 CFG）', kind: 'slider', min: 0, max: 15, step: 0.5, default: 0.0, advanced: true },
+    { key: 'num_videos_per_prompt', label: '每提示词视频数（batch）', kind: 'text', default: 1, advanced: true },
+    { key: 'max_sequence_length', label: '提示词最大 token（0=默认 512）', kind: 'text', default: 0, advanced: true },
+    { key: 'fps', label: '输出 fps（0=自动 16/24）', kind: 'text', default: 0, advanced: true },
   ],
   note: 'Wan 视频生成（T2V / I2V / 首尾帧）；有 CFG，帧数 4k+1',
 }

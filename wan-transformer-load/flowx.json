@@ -1,0 +1,110 @@
+{
+  "name": "wan-transformer-load",
+  "displayName": "Wan Transformer 加载",
+  "description": "Wan transformer 组件加载（分离式装配第一步）。Wan2.2 是 MoE 双专家：transformer（高噪）+ transformer2（低噪），transformer2 非空即启用双阶段去噪。14B bf16 ≈28GB 走逐层 offload（CPU 常驻，forward 逐层上卡）。Comfy-Org 单文件直读（from_single_file），config 三级兜底（WAN_DIR/config → safetensors metadata → 按文件名猜结构 14b/1.3b/5b）。组件常驻模型池，换 VAE/采样参数不必重装。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "video",
+    "inference"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "transformer",
+      "type": "string",
+      "required": false,
+      "default": "wan2.1_t2v_14B_bf16.safetensors",
+      "description": "高噪专家 transformer 权重文件名（/models/wan/diffusion_models 下）"
+    },
+    {
+      "name": "transformer2",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Wan2.2 MoE 低噪专家权重文件名（留空=单专家 Wan2.1）"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "required": false,
+      "default": "bf16",
+      "description": "权重精度 bf16/fp16/fp32"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "required": false,
+      "default": "sequential",
+      "description": "offload 策略：sequential=逐层 swap（24GB 卡跑 14B 必选）/ none"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "transformer",
+      "type": "string",
+      "description": "Wan TRANSFORMER 组件引用（含 MoE 低噪专家）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

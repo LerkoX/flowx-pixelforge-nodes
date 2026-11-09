@@ -2835,6 +2835,10 @@ const WIDGET_SPEC = {
     { key: 'flow_shift', label: 'flow_shift（720p=5.0 / 480p=3.0）', kind: 'slider', min: 1, max: 12, step: 0.5, default: 5.0, advanced: true },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'attention', label: 'attention 后端（default/sdpa/flash_attention_2）', kind: 'text', default: 'default', advanced: true },
+    { key: 'max_sequence_length', label: '提示词最大 token 数', kind: 'text', default: 512, advanced: true },
+    { key: 'vae_tiling', label: 'VAE tiling（省显存）', kind: 'check', default: false, advanced: true },
+    { key: 'vae_slicing', label: 'VAE slicing（省显存）', kind: 'check', default: false, advanced: true },
   ],
   note: 'Wan 视频模型装配（14B bf16 逐层 offload，24GB 卡可跑）',
 }

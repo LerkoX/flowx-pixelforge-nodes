@@ -1,0 +1,149 @@
+{
+  "name": "wan-animate-preprocess",
+  "displayName": "Wan 动作预处理",
+  "description": "Wan-Animate 输入预处理：原始参考视频 → 骨骼动作视频（pose_video），供 wan-animate 消费。实现：DWPose（133 关键点 wholebody）逐帧提取 + OpenPose 风格渲染，即 Wan-Animate 论文描述的空间对齐骨骼信号。纯编排节点（video.load → video.to_frames → preprocess.openpose → video.encode），无新增服务端算子。⚠ 官方预处理脚本未公开代码，本节点是最接近的公开实现；若与权重不匹配，可用官方脚本离线产出后经 load-video 直接喂 wan-animate。face_video 官方为「隐式人脸特征」，格式未公开，本节点默认用原视频占位（pass_through_face）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "animate",
+    "preprocess",
+    "video"
+  ],
+  "icon": "🎭",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "description": "原始参考视频对象 ID（接 load-video 的 video 输出）",
+      "source": {
+        "nodeRef": "load-video",
+        "output": "video"
+      }
+    },
+    {
+      "name": "detector",
+      "type": "string",
+      "required": false,
+      "default": "dwpose",
+      "description": "姿态检测器：dwpose（推荐，侧身/遮挡更准）/ openpose（经典）"
+    },
+    {
+      "name": "stride",
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "description": "抽帧步长（1=每帧；2=隔一帧，可省一半时间）"
+    },
+    {
+      "name": "max_frames",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "最大处理帧数（0=全部；调试时可设小值）"
+    },
+    {
+      "name": "include_hand",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "是否渲染手部关键点（手势丰富的素材建议开）"
+    },
+    {
+      "name": "include_face",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "是否渲染面部关键点"
+    },
+    {
+      "name": "pass_through_face",
+      "type": "boolean",
+      "required": false,
+      "default": true,
+      "description": "face_video 用原视频占位（官方隐式人脸特征格式未公开）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数（逐帧姿态提取较慢）"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "pose_video",
+      "type": "string",
+      "description": "骨骼动作视频对象 ID（供 wan-animate 的 pose_video）"
+    },
+    {
+      "name": "face_video",
+      "type": "string",
+      "description": "人脸视频对象 ID（默认原视频占位；供 wan-animate 的 face_video）"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "处理帧数"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "视频帧率"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": false
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 460,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

@@ -122,6 +122,34 @@
       "default": 5.0
     },
     {
+      "name": "vae_tiling",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "VAE tiling（大分辨率解码省显存）"
+    },
+    {
+      "name": "vae_slicing",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "VAE slicing（逐帧解码省显存）"
+    },
+    {
+      "name": "attention",
+      "type": "string",
+      "required": false,
+      "default": "default",
+      "description": "attention 后端：default / sdpa / flash_attention_2（40 系建议 sdpa）"
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "integer",
+      "required": false,
+      "default": 512,
+      "description": "提示词最大 token 数（umt5 编码长度）"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "required": false,

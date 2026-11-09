@@ -62,6 +62,8 @@ def main():
         "width": param("width", 0, int),
         "steps": param("steps", 20, int),
         "guidance_scale": param("guidance_scale", 1.0, float),
+        "prev_segment_conditioning_frames":
+            param("prev_segment_conditioning_frames", 0, int),
         "seed": param("seed", -1, int),
     }
     if bg_id:

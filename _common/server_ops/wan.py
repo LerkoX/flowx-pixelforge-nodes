@@ -60,7 +60,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "52749c821be0"
+OP_VERSION = "5e5db65d743d"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -309,21 +309,28 @@ def _build_transformer(path, dtype, which="transformer"):
     t0 = time.time()
     torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                    "fp32": torch.float32}[dtype]
-    cfg = _config_json(which)
-    kwargs = {"dtype": torch_dtype}
-    if cfg is not None:
-        print(f"[wan] {which} config 来自 {WAN_CONFIG_DIR}/{which}", flush=True)
-        kwargs["config"] = cfg
-    try:
-        model = WanTransformer3DModel.from_single_file(path, **kwargs)
-    except Exception as e:  # noqa: BLE001
-        if cfg is not None:
-            raise
+    # ⚠ diffusers 的 from_single_file(config=...) **只接受路径字符串**（repo id
+    # 或本地 Diffusers 目录），传 dict 会报 "Invalid `config` argument"
+    # （真机踩坑，和 FLUX VAE 同款）。故优先用 WAN_CONFIG_DIR/<which> 目录。
+    # config 目录优先级：
+    #   ① WAN_CONFIG_DIR/<which>（官方 Diffusers 仓库 copy，最准）
+    #   ② 内置结构表写临时目录（Comfy-Org 单文件用 cross_attn.k/q/o 命名，**必须**
+    #      走 from_single_file 的 key 转换表；而 config 参数只收路径 → 落临时盘）
+    #   ③ 都没有：报错（不许静默建空模型，否则权重语义错乱 → 解码出抽象色块）
+    cfg_dir = os.path.join(WAN_CONFIG_DIR, which)
+    if not os.path.isfile(os.path.join(cfg_dir, "config.json")):
+        import json as _json
+        import tempfile
         arch = _guess_arch(os.path.basename(path))
-        print(f"[wan] {which} 无 config，按 {arch} 结构兜底"
-              f"（{type(e).__name__}: {str(e)[:120]}）", flush=True)
-        model = WanTransformer3DModel.from_single_file(
-            path, config=dict(_TRANSFORMER_CFG[arch]), **kwargs)
+        print(f"[wan] {which} 无 config 目录，用内置 {arch} 结构写临时 config",
+              flush=True)
+        cfg_dir = tempfile.mkdtemp(prefix=f"wan_cfg_{which}_")
+        with open(os.path.join(cfg_dir, "config.json"), "w",
+                  encoding="utf-8") as f:
+            _json.dump(_TRANSFORMER_CFG[arch], f)
+    print(f"[wan] {which} config 目录 {cfg_dir}", flush=True)
+    model = WanTransformer3DModel.from_single_file(
+        path, config=cfg_dir, dtype=torch_dtype)
     n = sum(p.numel() for p in model.parameters())
     print(f"[wan] {which} ready {n/1e9:.2f}B params "
           f"{time.time()-t0:.1f}s", flush=True)
@@ -474,13 +481,24 @@ def _build_vae(path):
     from diffusers import AutoencoderKLWan
 
     t0 = time.time()
-    cfg = _config_json("vae") or dict(_VAE_CFG)
-    try:
+    # 同 transformer：config 必须是路径（dict 会被 diffusers 拒绝）
+    cfg_dir = os.path.join(WAN_CONFIG_DIR, "vae")
+    if os.path.isfile(os.path.join(cfg_dir, "config.json")):
         vae = AutoencoderKLWan.from_single_file(
-            path, config=cfg, dtype=torch.float32)
-    except Exception:  # noqa: BLE001
-        from diffusers import AutoModel
-        vae = AutoModel.from_single_file(path, dtype=torch.float32)
+            path, config=cfg_dir, dtype=torch.float32)
+    else:
+        print("[wan] vae 无 config 目录，按内置结构兜底", flush=True)
+        from safetensors.torch import load_file
+        vae = AutoencoderKLWan.from_config(dict(_VAE_CFG))
+        sd = load_file(path)
+        for pre in ("first_stage_model.", "vae.", "model."):
+            if all(k.startswith(pre) for k in sd):
+                sd = {k[len(pre):]: v for k, v in sd.items()}
+                break
+        missing, unexpected = vae.load_state_dict(sd, strict=False)
+        if missing:
+            print(f"[wan] ⚠ vae missing {len(missing)} keys"
+                  f"（样例 {missing[:3]}）", flush=True)
     vae = vae.to(torch.float32)
     print(f"[wan] vae ready fp32 {time.time()-t0:.1f}s", flush=True)
     return vae
@@ -521,9 +539,9 @@ def _build_image_encoder(path):
 # 合法集，用户按画质/速度取舍）。Wan 是 flow-matching 模型，ddim/euler_a 这类
 # 非 flow 调度器不适用，故只给 flow 兼容集：
 _SCHEDULERS = {
-    # UniPC 多步：官方默认，25~30 步出片质量最稳，支持 flow_shift
+    # UniPC 多步：**需配套 Wan2.1 自己的 scheduler config**，套 Wan2.2 的会出噪点
     "unipc": "UniPCMultistepScheduler",
-    # 一阶 Euler（flow match）：步数少时更快，细节略弱于 UniPC
+    # 一阶 Euler（flow match）：**真机验证可用的默认**，支持 flow_shift
     "euler": "FlowMatchEulerDiscreteScheduler",
     # DPM++ 2M（flow match）：中低步数画质好，支持 flow_shift
     "dpm++": "FlowMatchDPMSolverMultistepScheduler",
@@ -532,8 +550,13 @@ _SCHEDULERS = {
 }
 
 
-def _build_scheduler(flow_shift, name="unipc"):
-    """按名字构建 flow-matching 调度器（默认 unipc，官方推荐）。
+def _build_scheduler(flow_shift, name="euler"):
+    """按名字构建 flow-matching 调度器（**默认 euler**）。
+
+    ⚠ 真机教训（2026-11-11）：默认用 unipc + 共享盘 Wan2.2 的 scheduler config
+    会产出**抽象色块**（`use_flow_sigmas/time_shift_type=exponential` 与
+    Wan2.1 flow-matching 不匹配）。改成 FlowMatchEulerDiscrete + flow_shift
+    后立即出正常画面。
 
     flow_shift：720p→5.0 / 480p→3.0（官方建议）；UniPC 与 DPM++ 都吃这个参数。
     """
@@ -703,7 +726,7 @@ def register(registry):
                 "lora": "STRING", "lora_scale": "FLOAT",
                 "dtype": "STRING", "offload": "STRING",
                 "boundary_ratio": "FLOAT", "flow_shift": "FLOAT",
-                "vae_tiling": "BOOLEAN", "vae_slicing": "BOOLEAN",
+                "vae_tiling": "BOOL", "vae_slicing": "BOOL",
                 "attention": "STRING", "max_sequence_length": "INT",
                 "scheduler": "STRING"},
         outputs={"model": "MODEL"},
@@ -722,7 +745,7 @@ def register(registry):
                  offload="sequential", boundary_ratio=0.875,
                  flow_shift=5.0, vae_tiling=False, vae_slicing=False,
                  attention="default", max_sequence_length=512,
-                 scheduler="unipc"):
+                 scheduler="euler"):
         task = (task or "t2v").lower()
         if task not in ("t2v", "i2v", "animate"):
             raise ValueError(f"wan.load: task 须为 t2v/i2v/animate，得 {task}")
@@ -872,7 +895,7 @@ def register(registry):
     @registry.register(
         "wan.image_encoder_load",
         inputs={"image_encoder": "STRING", "device": "STRING"},
-        outputs={"image_encoder": "IMAGE_ENCODER"},
+        outputs={"image_encoder": "CLIP_VISION"},
         description="Wan 图像编码器（CLIP-ViT-H，I2V/Animate 的图像条件）加载。")
     def _op_image_encoder_load(
             image_encoder="clip_vision_h.safetensors", device="cuda"):
@@ -897,10 +920,10 @@ def register(registry):
         "wan.pipe",
         inputs={"task": "STRING", "transformer": "TRANSFORMER",
                 "text_encoder": "TEXT_ENCODER", "vae": "VAE",
-                "image_encoder": "IMAGE_ENCODER",
+                "image_encoder": "CLIP_VISION",
                 "boundary_ratio": "FLOAT", "flow_shift": "FLOAT",
                 "lora": "STRING", "lora_scale": "FLOAT",
-                "vae_tiling": "BOOLEAN", "vae_slicing": "BOOLEAN",
+                "vae_tiling": "BOOL", "vae_slicing": "BOOL",
                 "attention": "STRING", "max_sequence_length": "INT",
                 "scheduler": "STRING"},
         outputs={"model": "MODEL"},
@@ -909,7 +932,7 @@ def register(registry):
                     "换 VAE 或采样参数不必重装 28GB transformer。")
     def _op_pipe(task="t2v", transformer=None, text_encoder=None, vae=None,
                  image_encoder=None, boundary_ratio=0.875, flow_shift=5.0,
-                 scheduler="unipc", lora="", lora_scale=1.0,
+                 scheduler="euler", lora="", lora_scale=1.0,
                  vae_tiling=False, vae_slicing=False, attention="default",
                  max_sequence_length=512):
         if transformer is None or text_encoder is None or vae is None:
@@ -1045,9 +1068,23 @@ def register(registry):
         else:
             out = pipe(**kwargs)
         frames_np = out.frames[0]
+        # 诊断（真机排障用）：确认 pipeline 输出形状/数值范围是否如预期
+        print(f"[wan] frames_np shape={getattr(frames_np, 'shape', '?')} "
+              f"dtype={getattr(frames_np, 'dtype', '?')} "
+              f"min={float(np.min(frames_np)):.3f} "
+              f"max={float(np.max(frames_np)):.3f} "
+              f"mean={float(np.mean(frames_np)):.3f}", flush=True)
+        # diffusers 的 WanPipeline 在 output_type="np" 下返回
+        # (num_frames, height, width, channels)，范围 [0, 1]。若返回 [-1,1]
+        # 或通道在前，图像会错乱（真机：黄黑色块/横向条带），故按形状自适应。
+        arr = np.asarray(frames_np)
+        if arr.ndim == 4 and arr.shape[1] in (1, 3) and arr.shape[-1] not in (1, 3):
+            arr = np.transpose(arr, (0, 2, 3, 1))      # (T,C,H,W) → (T,H,W,C)
+        if arr.min() < -0.05:
+            arr = (arr + 1.0) / 2.0                     # [-1,1] → [0,1]
         frames = [Image.fromarray(
             (np.clip(f, 0, 1) * 255).round().astype("uint8"))
-            for f in frames_np]
+            for f in arr]
         print(f"[wan] gen done {len(frames)}帧 {fps_out}fps "
               f"{time.time()-t0:.1f}s", flush=True)
         return {"video": {"frames": frames, "fps": fps_out,

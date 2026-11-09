@@ -23,7 +23,7 @@ LATENT 为 4D 张量 (b, 4, h/8, w/8) 或 LatentBundle（samples+noise_mask）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "9e71759f257f"
+OP_VERSION = "1881fbb557c6"
 OP_FAMILY = "cond_latent"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -149,12 +149,31 @@ class ConditioningList(Conditioning):
         self.items = list(items or [])
 
     def to_segments(self):
+        """递归展开成段列表。
+
+        ⚠ 关键工程约束（真机踩坑）：**对象仓库只保留可序列化的数据**——
+        算子之间传递 COND 时，`Conditioning` 类实例会退化成 dict / list。
+        所以这里必须能处理 cond.pack 的 `{"__cond_pack__": [...]}` dict 与
+        裸 3/5 元组列表，否则多条件并列会在下游炸「段需为元组，got dict」。
+        """
         out = []
         for it in self.items:
             if isinstance(it, Conditioning):
                 out.extend(it.to_segments())
-            elif isinstance(it, list):
-                out.extend(it)
+            elif isinstance(it, dict) and "__cond_pack__" in it:
+                for seg in it["__cond_pack__"]:
+                    out.append((seg["tensor"], seg.get("area"),
+                                float(seg.get("strength", 1.0)),
+                                float(seg.get("start", 0.0)),
+                                float(seg.get("end", 1.0))))
+            elif isinstance(it, (list, tuple)):
+                # 段列表：既可能是 [段, 段] 也可能是单个 5 元组段
+                if it and isinstance(it[0], (list, tuple)):
+                    out.extend(it)
+                elif len(it) in (3, 5) and not isinstance(it[0], (list, tuple)):
+                    out.append(tuple(it))
+                else:
+                    out.extend(it)
             else:
                 out.append(it)
         return out
@@ -423,8 +442,14 @@ def cond_concat(cond_a, cond_b):
       （多区域构图、分段提示词、分阶段约束的标准做法）
     序列长不一致时用 repeat 到 lcm 填充（不改变注意力语义，优于补零）。
     """
-    a = cond_a if isinstance(cond_a, Conditioning) else ConditioningList([cond_a])
-    b = cond_b if isinstance(cond_b, Conditioning) else ConditioningList([cond_b])
+    def _wrap(c):
+        if isinstance(c, ConditioningList):
+            return c
+        if isinstance(c, Conditioning):
+            return ConditioningList([c])
+        return ConditioningList([c])          # dict/list/裸张量 都交给 to_segments
+
+    a, b = _wrap(cond_a), _wrap(cond_b)
     out = a.concat(b)
     print(f"[cond.concat] -> {len(out.to_segments())} 段", flush=True)
     return {"cond": out}

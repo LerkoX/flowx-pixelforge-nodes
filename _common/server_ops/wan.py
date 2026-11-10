@@ -60,7 +60,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "af00c1955cf0"
+OP_VERSION = "b257222fdc4f"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -434,6 +434,91 @@ def _build_transformer(path, dtype, which="transformer"):
     return model
 
 
+def _build_animate2_transformer(path, dtype, which="transformer"):
+    """Wan-Animate-2 transformer（原始 WanAnimateModel → diffusers）。
+
+    共享盘/官方发布的 `Wan2.2-Animate-14B` 是**原始格式**（config.json 的
+    `_class_name` 是 `WanAnimateModel`，含 `motion_encoder_dim`），不是 diffusers
+    结构。diffusers 0.42 提供 `convert_wan_animate_2_transformer_to_diffusers`
+    做 key 映射，我们复用它。
+
+    Animate-2 与 v1 的差别：**不需要 face_video**（只吃角色图 + 动作视频），
+    接口更简单。
+    """
+    import glob as _glob
+    import json as _json
+    import time as _time
+
+    import torch
+    from diffusers import WanAnimate2Transformer3DModel
+    from diffusers.loaders.single_file_utils import (
+        convert_wan_animate_2_transformer_to_diffusers)
+    from safetensors.torch import load_file
+
+    t0 = _time.time()
+    torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
+                   "fp32": torch.float32}[dtype]
+
+    if os.path.isdir(path):
+        cfg_p = os.path.join(path, "config.json")
+        shards = sorted(_glob.glob(os.path.join(
+            path, "diffusion_pytorch_model*.safetensors")))
+        if not shards:
+            shards = sorted(_glob.glob(os.path.join(path, "*.safetensors")))
+        if not (os.path.isfile(cfg_p) and shards):
+            raise ValueError(f"wan: animate2 目录缺 config.json 或权重分片（{path}）")
+        orig_cfg = _json.load(open(cfg_p, encoding="utf-8"))
+    else:
+        raise ValueError(
+            f"wan: animate2 需要目录（原始发布格式），got 单文件 {path}")
+
+    print(f"[wan] animate2 读 {len(shards)} 个分片（原始 WanAnimateModel 格式）",
+          flush=True)
+    sd = {}
+    for sh in shards:
+        sd.update(load_file(sh))
+    print(f"[wan] animate2 原始 keys={len(sd)}", flush=True)
+
+    # 原始 config → diffusers transformer config（字段名不同）
+    dim = orig_cfg.get("dim", 5120)
+    n_heads = orig_cfg.get("num_heads", 40)
+    dcfg = {
+        "_class_name": "WanAnimate2Transformer3DModel",
+        "added_kv_proj_dim": orig_cfg.get("added_kv_proj_dim"),
+        "attention_head_dim": dim // n_heads if n_heads else 128,
+        "cross_attn_norm": orig_cfg.get("cross_attn_norm", True),
+        "dim": dim,
+        "eps": orig_cfg.get("eps", 1e-6),
+        "ffn_dim": orig_cfg.get("ffn_dim", 13824),
+        "freq_dim": orig_cfg.get("freq_dim", 256),
+        "in_channels": orig_cfg.get("in_dim", 36),
+        "num_attention_heads": n_heads,
+        "num_layers": orig_cfg.get("num_layers", 40),
+        "out_channels": 16,
+        "patch_size": orig_cfg.get("patch_size", [1, 2, 2]),
+        "qk_norm": orig_cfg.get("qk_norm", "rms_norm_across_heads"),
+        "rope_max_seq_len": orig_cfg.get("rope_max_seq_len", 1024),
+        "text_dim": orig_cfg.get("text_dim", 4096),
+    }
+    model = WanAnimate2Transformer3DModel.from_config(dcfg)
+    try:
+        sd = convert_wan_animate_2_transformer_to_diffusers(sd)
+        print(f"[wan] animate2 转换后 keys={len(sd)}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[wan] animate2 转换函数失败（{type(e).__name__}: {str(e)[:120]}）"
+              f"，尝试直接 load", flush=True)
+    missing, unexpected = model.load_state_dict(sd, strict=False)
+    if missing:
+        print(f"[wan] ⚠ animate2 missing {len(missing)} keys"
+              f"（样例 {missing[:5]}）", flush=True)
+    if unexpected:
+        print(f"[wan] ⚠ animate2 unexpected {len(unexpected)} keys"
+              f"（样例 {unexpected[:5]}）", flush=True)
+    model = model.to(torch_dtype)
+    print(f"[wan] animate2 transformer ready {_time.time()-t0:.1f}s", flush=True)
+    return model
+
+
 def _build_vace_transformer(path, dtype, which="transformer"):
     """Wan-VACE transformer（WanVACETransformer3DModel，与普通 Wan 结构不同）。
 
@@ -758,8 +843,9 @@ def _assemble_pipe(task, tr_info, te_info, vae_info, img_enc_info,
     vae_info  {"vae": autoencoder_kl_wan}
     img_enc_info {"model": clip_vision|None}
     """
-    from diffusers import (WanAnimatePipeline, WanImageToVideoPipeline,
-                           WanPipeline, WanVACEPipeline)
+    from diffusers import (WanAnimate2ModularPipeline, WanAnimatePipeline,
+                           WanImageToVideoPipeline, WanPipeline,
+                           WanVACEPipeline)
 
     common = dict(tokenizer=te_info["tokenizer"], text_encoder=te_info["model"],
                   vae=vae_info["vae"], scheduler=scheduler,
@@ -768,7 +854,14 @@ def _assemble_pipe(task, tr_info, te_info, vae_info, img_enc_info,
         common["transformer_2"] = tr_info["model2"]
         common["boundary_ratio"] = float(boundary_ratio)
 
-    if task == "vace":
+    if task == "animate2":
+        # Animate-2 是 modular pipeline（与 H3 同架构），组件用 register 而非构造参数
+        pipe = WanAnimate2ModularPipeline()
+        pipe.register_components(
+            tokenizer=te_info["tokenizer"], text_encoder=te_info["model"],
+            vae=vae_info["vae"], scheduler=scheduler,
+            transformer=tr_info["model"])
+    elif task == "vace":
         pipe = WanVACEPipeline(**common)
     elif task == "animate":
         pipe = WanAnimatePipeline(**common)
@@ -822,8 +915,15 @@ def _load_components(transformer, transformer2, text_encoder, vae,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tr_path = _resolve("diffusion_models", transformer)
     _require_file(tr_path, "transformer")
-    is_vace = "vace" in os.path.basename(transformer).lower()
-    if is_vace:
+    low_name = transformer.lower()
+    is_animate2 = "animate" in low_name and (
+        "animate-2" in low_name or "animate2" in low_name or "animate_2" in low_name)
+    is_vace = "vace" in low_name
+    if is_animate2:
+        # Animate-2：原始 WanAnimateModel 格式 → diffusers（官方转换函数）
+        tr = _build_animate2_transformer(tr_path, dtype, "transformer")
+        print("[wan] 检测到 Animate-2 权重 → Animate-2 装配路径", flush=True)
+    elif is_vace:
         # VACE 用专用 transformer（in_channels=96 + added_kv），不能用普通类
         tr = _build_vace_transformer(tr_path, dtype, "transformer")
         print("[wan] 检测到 VACE transformer → VACE 装配路径", flush=True)
@@ -904,9 +1004,9 @@ def register(registry):
                  attention="default", max_sequence_length=512,
                  scheduler="euler"):
         task = (task or "t2v").lower()
-        if task not in ("t2v", "i2v", "animate", "vace"):
+        if task not in ("t2v", "i2v", "animate", "animate2", "vace"):
             raise ValueError(
-                f"wan.load: task 须为 t2v/i2v/animate/vace，得 {task}")
+                f"wan.load: task 须为 t2v/i2v/animate/animate2/vace，得 {task}")
         is_moe = bool(transformer2)
         key = (f"wan:{task}:{transformer}|{transformer2}|{text_encoder}|{vae}|"
                f"{image_encoder}|{lora}@{lora_scale}|{dtype}|{offload}|"
@@ -1097,9 +1197,9 @@ def register(registry):
             raise ValueError(
                 "wan.pipe: transformer / text_encoder / vae 三个组件必填")
         task = (task or "t2v").lower()
-        if task not in ("t2v", "i2v", "animate", "vace"):
+        if task not in ("t2v", "i2v", "animate", "animate2", "vace"):
             raise ValueError(
-                f"wan.pipe: task 须为 t2v/i2v/animate/vace，得 {task}")
+                f"wan.pipe: task 须为 t2v/i2v/animate/animate2/vace，得 {task}")
 
         tr_info = transformer
         is_moe = bool(tr_info.get("is_moe"))
@@ -1371,6 +1471,108 @@ def register(registry):
         frames = [_Image.fromarray(
             (np.clip(f, 0, 1) * 255).round().astype("uint8")) for f in arr]
         print(f"[wan] animate({mode}) done {len(frames)}帧 {fps}fps "
+              f"{time.time()-t0:.1f}s", flush=True)
+        return {"video": {"frames": frames, "fps": fps,
+                          "num_frames": len(frames)},
+                "seed": seed, "fps": fps}
+
+    @registry.register(
+        "wan.animate2",
+        inputs={"model": "MODEL", "image": "IMAGE", "pose_video": "VIDEO",
+                "prompt": "STRING", "negative_prompt": "STRING",
+                "pose_strength": "FLOAT", "pose_start_percent": "FLOAT",
+                "pose_end_percent": "FLOAT",
+                "reference_image_strength": "FLOAT",
+                "segment_frame_length": "INT", "height": "INT",
+                "width": "INT", "steps": "INT", "guidance_scale": "FLOAT",
+                "seed": "INT"},
+        outputs={"video": "VIDEO", "seed": "INT", "fps": "INT"},
+        description="Wan-Animate-**2**（角色动画/替换，**不需要 face_video**）："
+                    "给角色图 image + 动作视频 pose_video（建议用 "
+                    "video-control-preprocess 的 mode=pose 产出**骨架视频**，"
+                    "这是 ComfyUI WanAnimate 的核心手法：显式骨骼信号保证姿态"
+                    "准确与帧间稳定）。精细旋钮：pose_strength 姿态强度、"
+                    "pose_start/end_percent 姿态生效的采样区间（0.7 可放松细节"
+                    "保留编排）、reference_image_strength 身份约束强度。")
+    def _op_animate2(model, image=None, pose_video=None, prompt="",
+                     negative_prompt="", pose_strength=1.0,
+                     pose_start_percent=0.0, pose_end_percent=1.0,
+                     reference_image_strength=1.0, segment_frame_length=81,
+                     height=0, width=0, steps=20, guidance_scale=1.0,
+                     seed=-1):
+        import random
+
+        import numpy as np
+        import torch
+        from PIL import Image as _Image
+
+        pipe = model
+        if image is None:
+            raise ValueError("wan.animate2: image（角色参考图）必填")
+        if pose_video is None:
+            raise ValueError(
+                "wan.animate2: pose_video 必填——建议用 video-control-preprocess"
+                "（mode=pose）把原视频转成骨架视频再喂进来")
+
+        def _pils(obj):
+            if obj is None:
+                return None
+            if isinstance(obj, _Image.Image):
+                return [obj]
+            if isinstance(obj, dict):
+                if obj.get("frames"):
+                    return list(obj["frames"])
+                if obj.get("path"):
+                    from diffusers.utils import load_video
+                    return load_video(obj["path"])
+            return obj
+
+        ref = _pils(image)
+        ref = ref[0] if isinstance(ref, list) else ref
+        pose = _pils(pose_video)
+
+        seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
+        gen = torch.Generator(device="cpu").manual_seed(seed)
+
+        h, w = int(height), int(width)
+        if h <= 0 or w <= 0:
+            if isinstance(ref, _Image.Image):
+                w, h = ref.size
+            else:
+                a = np.asarray(ref)
+                h, w = a.shape[0], a.shape[1]
+        mod = 16
+        h = max(mod, round(h / mod) * mod)
+        w = max(mod, round(w / mod) * mod)
+
+        fps = int(getattr(pipe, "_wan_fps", WAN_FPS_DEFAULT))
+        kwargs = dict(image=ref, pose_video=pose, prompt=prompt,
+                      negative_prompt=negative_prompt or None,
+                      height=h, width=w,
+                      num_inference_steps=int(steps),
+                      guidance_scale=float(guidance_scale),
+                      generator=gen, output_type="np")
+        # Animate-2 的精细旋钮（diffusers 有则传，无则忽略）
+        for k, v in (("pose_strength", pose_strength),
+                     ("pose_start_percent", pose_start_percent),
+                     ("pose_end_percent", pose_end_percent),
+                     ("reference_image_strength", reference_image_strength)):
+            if float(v) != 1.0 and k != "pose_start_percent" or \
+                    k == "pose_start_percent" and float(v) != 0.0:
+                kwargs[k] = float(v)
+        t0 = time.time()
+        out = pipe(**kwargs)
+        arr = np.asarray(out.frames[0])
+        print(f"[wan] animate2 frames shape={arr.shape} "
+              f"min={float(arr.min()):.3f} max={float(arr.max()):.3f}",
+              flush=True)
+        if arr.ndim == 4 and arr.shape[1] in (1, 3) and arr.shape[-1] not in (1, 3):
+            arr = np.transpose(arr, (0, 2, 3, 1))
+        if arr.min() < -0.05:
+            arr = (arr + 1.0) / 2.0
+        frames = [_Image.fromarray((np.clip(f, 0, 1) * 255).round().astype("uint8"))
+                  for f in arr]
+        print(f"[wan] animate2 done {len(frames)}帧 {fps}fps "
               f"{time.time()-t0:.1f}s", flush=True)
         return {"video": {"frames": frames, "fps": fps,
                           "num_frames": len(frames)},

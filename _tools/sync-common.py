@@ -142,7 +142,8 @@ OP_FAMILIES = {
     "video_mask.py": ["video-person-mask"],
     # Wan 视频族（通义万相）：load 装配（t2v/i2v/animate 三管）+
     # gen 生成 + animate 角色替换。三节点共享同族文件。
-    "wan.py": ["wan-load", "wan-gen", "wan-animate", "wan-vace",
+    "wan.py": ["wan-load", "wan-gen", "wan-animate", "wan-animate2",
+               "wan-vace",
                "wan-transformer-load", "wan-te-load", "wan-vae-load",
                "wan-image-encoder-load", "wan-pipe"],
 }

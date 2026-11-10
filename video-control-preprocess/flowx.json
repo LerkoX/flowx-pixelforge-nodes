@@ -1,0 +1,166 @@
+{
+  "name": "video-control-preprocess",
+  "displayName": "视频控制信号",
+  "description": "视频 → 逐帧控制信号视频（depth / pose / canny）。用途：Wan-VACE 的 video 端口若直接喂 RGB 原视频是「软条件」，模型要自己从像素猜结构，帧间猜法不一致就会出现画面上下跳转/后期崩坏（真机复现）。改喂 depth/pose 这类**显式结构信号**（ComfyUI 的 Wan-Animate 就是用 pose 骨架做 spatially-aligned skeleton signals），让结构由控制信号决定、外观由 reference_image 决定。纯编排节点（video.load → video.to_frames → preprocess.<mode> → video.encode），无新增服务端算子。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "preprocess",
+    "depth",
+    "pose",
+    "vace"
+  ],
+  "icon": "🦴",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达地址（留空同 service_url）"
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "原视频对象 ID（接 load-video）",
+      "source": {
+        "nodeRef": "load-video",
+        "output": "video"
+      }
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": false,
+      "default": "depth",
+      "description": "控制信号类型：depth 深度（结构+远近，最通用）/ pose 骨架（人体姿态最准）/ canny 边缘"
+    },
+    {
+      "name": "detector",
+      "type": "string",
+      "required": false,
+      "default": "dwpose",
+      "description": "pose 检测器：dwpose（推荐，侧身遮挡更准）/ openpose"
+    },
+    {
+      "name": "detect_resolution",
+      "type": "integer",
+      "required": false,
+      "default": 512,
+      "description": "depth 检测分辨率（越大越细但越慢）"
+    },
+    {
+      "name": "include_hand",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "pose 渲染手部关键点"
+    },
+    {
+      "name": "include_face",
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "pose 渲染面部关键点"
+    },
+    {
+      "name": "low_threshold",
+      "type": "integer",
+      "required": false,
+      "default": 100,
+      "description": "canny 低阈值（mode=canny 时生效）"
+    },
+    {
+      "name": "high_threshold",
+      "type": "integer",
+      "required": false,
+      "default": 200,
+      "description": "canny 高阈值（mode=canny 时生效）"
+    },
+    {
+      "name": "stride",
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "description": "抽帧步长"
+    },
+    {
+      "name": "max_frames",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "最大处理帧数（0=全部）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "控制信号视频对象 ID（喂 wan-vace 的 video 或 wan-animate 的 pose_video）"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "帧数"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": false
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 480,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

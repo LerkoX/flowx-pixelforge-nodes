@@ -1,0 +1,205 @@
+{
+  "name": "wan-animate2",
+  "displayName": "Wan Animate 2",
+  "description": "Wan-Animate-**2** 角色动画/替换（**不需要 face_video**，比 v1 少一半预处理）。给角色参考图 + 骨架动作视频，让角色按骨架运动并保持身份。精细旋钮：pose_strength 姿态强度、pose_start_percent / pose_end_percent 姿态生效的采样区间（动作在早期定型，0.7 后可放松细节）、reference_image_strength 身份约束强度（<1 放松让 prompt 重绘，>1 防身份漂移）。**推荐编排**：load-video → video-control-preprocess(mode=pose) → 本节点 + load-image，这是 ComfyUI WanAnimate 的核心手法（显式骨骼信号保证姿态准确与帧间稳定，避免直接喂 RGB 时的画面跳变）。需先 wan-load（task=animate2，transformer 用 Wan2.2-Animate-14B 原始格式目录）。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "animate",
+    "character-swap",
+    "video",
+    "inference"
+  ],
+  "icon": "🕺",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达地址（留空同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": true,
+      "description": "MODEL 引用（接 wan-load，task=animate2）",
+      "source": {
+        "nodeRef": "wan-load",
+        "output": "model"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "角色参考图对象 ID（接 load-image；建议脸部/半身特写）"
+    },
+    {
+      "name": "pose_video",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "**骨架视频**对象 ID（接 video-control-preprocess，mode=pose）——不要直接喂 RGB 原视频",
+      "source": {
+        "nodeRef": "video-control-preprocess",
+        "output": "video"
+      }
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "提示词（描述角色与场景）"
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "负向提示词（CFG>1 时生效）"
+    },
+    {
+      "name": "pose_strength",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "姿态强度（1.0=训练默认；<1 弱化姿态跟随，>1 强化）"
+    },
+    {
+      "name": "reference_image_strength",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "身份约束强度（<1 放松让 prompt 重绘外观，>1 更贴参考图防漂移）"
+    },
+    {
+      "name": "pose_start_percent",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "姿态生效起始进度（0~1）"
+    },
+    {
+      "name": "pose_end_percent",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "姿态生效结束进度（0.7 = 动作定型后放松细节）"
+    },
+    {
+      "name": "segment_frame_length",
+      "type": "integer",
+      "required": false,
+      "default": 81,
+      "description": "分段帧数（长视频按段生成）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "宽（0=按参考图；16 的倍数）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "高（0=按参考图；16 的倍数）"
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "required": false,
+      "default": 20,
+      "description": "采样步数（官方 20~50）"
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "CFG 强度（Animate 默认 1.0 即关闭 CFG；要负向提示设 5~7，计算翻倍）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "required": false,
+      "default": -1,
+      "description": "随机种子，-1 为随机"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "生成视频对象 ID"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际种子"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 640,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

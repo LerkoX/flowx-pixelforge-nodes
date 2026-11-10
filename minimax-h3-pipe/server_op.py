@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "c27132abadd9"
+OP_VERSION = "4a44dff6f887"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1000,10 +1000,13 @@ def _load_projection(path):
     """读 ClipProj safetensors → {'weights','biases','mean_in','std_in',
     'mean_out','std_out','sink','tap','mlp'}。
 
-    自适应 linear / MLP 两种形态（按文件里的 2D 权重个数判断，不看文件名）：
-      linear（v3.1，26MB）：proj.weight [5120, 2560]
-      mlp  （v3.1-mlp，503MB）：mlp.0.weight [32768,2560] + mlp.2.weight [5120,32768]
-    激活函数按发布方的实现取 GELU（层间），最后一层不带激活。
+    自适应 linear / MLP 两种形态，**且自适应权重的两种内存布局**：
+      v3.1（26MB，linear）实测：`W` 是 **[d_in, d_out] = [2560, 5120]**，**无 bias**
+      v3.1-mlp（503MB）：`mlp.0.weight [32768,2560]` + `mlp.2.weight [5120,32768]`
+    两类都统一成 `F.linear` 要的 (out, in)。
+
+    维度以 `metadata.d_in/d_out` 为权威，缺失时回退到 `mean_in/mean_out`
+    的形状——比从权重形状猜可靠（权重可能是转置的）。
     """
     from safetensors.torch import load_file
 
@@ -1023,33 +1026,58 @@ def _load_projection(path):
             raise ValueError(f"投影矩阵缺 {key}（{path}）")
         return sd[key]
 
+    mean_in = _need("mean_in").float()
+    mean_out = _need("mean_out").float()
+    d_in = int(meta.get("d_in") or mean_in.shape[0])
+    d_out = int(meta.get("d_out") or mean_out.shape[0])
+
     w2d = sorted(((k, v) for k, v in sd.items() if v.ndim == 2),
                  key=lambda kv: kv[0])
     if not w2d:
         raise ValueError(f"投影矩阵里没有 2D 权重（{path}）")
+    n_layer = len(w2d)
     weights, biases = [], []
-    for k, w in w2d:
-        weights.append(w.float().contiguous())
+    for idx, (k, w) in enumerate(w2d):
+        w = w.float()
+        if n_layer == 1:
+            # 单层线性：目标 (d_out, d_in)
+            if tuple(w.shape) != (d_out, d_in):
+                w = w.t()
+        elif idx == 0:
+            # 第一层：输入维必须在第 1 维 → 目标 (hidden, d_in)
+            if w.shape[1] != d_in:
+                w = w.t()
+        elif idx == n_layer - 1:
+            # 最后一层：输出维必须在第 0 维 → 目标 (d_out, hidden)
+            if w.shape[0] != d_out:
+                w = w.t()
+        # 中间层不动（对称的 hidden→hidden）
+        weights.append(w.contiguous())
         bkey = k.rsplit(".", 1)[0] + ".bias"
         biases.append(sd[bkey].float().contiguous() if bkey in sd else None)
 
+    if tuple(weights[0].shape[1:]) != (d_in,) or \
+            tuple(weights[-1].shape[:1]) != (d_out,):
+        raise ValueError(
+            f"投影矩阵维度对不上：in={d_in} out={d_out}"
+            f" 权重={[tuple(w.shape) for w in weights]}")
+
     tap = int(meta.get("tap") or _PROJ_TAP_DEFAULT)
-    in_dim = weights[0].shape[1]
-    out_dim = weights[-1].shape[0]
     proj = {
         "weights": weights, "biases": biases,
-        "mean_in": _need("mean_in").float(), "std_in": _need("std_in").float(),
-        "mean_out": _need("mean_out").float(), "std_out": _need("std_out").float(),
+        "mean_in": mean_in, "std_in": _need("std_in").float(),
+        "mean_out": mean_out, "std_out": _need("std_out").float(),
         "sink": sd.get("sink_out") if "sink_out" in sd else None,
-        "tap": tap, "mlp": len(weights) > 1,
-        "in_dim": int(in_dim), "out_dim": int(out_dim),
+        "tap": tap, "mlp": n_layer > 1,
+        "in_dim": int(d_in), "out_dim": int(d_out),
         "meta": meta,
     }
     print(f"[minimax-h3] 投影矩阵 {os.path.basename(path)}："
           f"{'MLP' if proj['mlp'] else 'linear'} "
-          f"{in_dim}→{out_dim} tap={tap} "
+          f"{d_in}→{d_out} tap={tap} "
           f"cos_test={meta.get('cos_test', '?')} "
-          f"source={meta.get('source', '?')}", flush=True)
+          f"source={meta.get('source_model') or meta.get('source', '?')}",
+          flush=True)
     return proj
 
 
@@ -1120,9 +1148,14 @@ class _ProjectedTextEncoder(torch.nn.Module):
         """4B hidden → 归一化 → (MLP) → 反归一化 → cond。"""
         import torch.nn.functional as F
 
-        x = (h.float() - self.mean_in) / self.std_in
+        dev = h.device
+        mean_in = self.mean_in.to(dev)
+        std_in = self.std_in.to(dev)
+        x = (h.float() - mean_in) / std_in
         for i in range(self.n_proj):
-            x = F.linear(x, getattr(self, f"w{i}"), getattr(self, f"b{i}"))
+            w = getattr(self, f"w{i}").to(dev)
+            b = getattr(self, f"b{i}").to(dev)
+            x = F.linear(x, w, b)
             if i < self.n_proj - 1:
                 x = F.gelu(x)
         x = x * self.std_out + self.mean_out
@@ -1135,6 +1168,15 @@ class _ProjectedTextEncoder(torch.nn.Module):
 
     def model(self, **kwargs):
         kwargs.pop("output_hidden_states", None)
+        # 输入按基座实际所在设备搬（上层按 _execution_device 建张量，两者未必一致）
+        import torch as _t
+        try:
+            dev = next(self.base.parameters()).device
+        except StopIteration:
+            dev = None
+        if dev is not None:
+            kwargs = {k: (v.to(dev) if _t.is_tensor(v) else v)
+                      for k, v in kwargs.items()}
         out = self.base.model(output_hidden_states=True, **kwargs)
         h = out.hidden_states[self.tap]
         cond = self.project(h)
@@ -1170,6 +1212,12 @@ def _build_projected_te(proj_path, base_repo, quant="bnb-4bit", tap=0):
             bnb_4bit_compute_dtype=torch.bfloat16)
     base = Qwen3VLForConditionalGeneration.from_pretrained(base_repo, **kw)
     base.eval()
+    # 必须上卡：get_qwen3vl_prompt_embeds 按 `components._execution_device`（cuda）
+    # 建 input_ids/vision 张量，基座留 CPU 会在 index_select 报设备不一致
+    # （真机：`Expected all tensors to be on the same device, but got index is
+    #  on cuda:0, different from other tensors on cpu`）。
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    base = base.to(dev)
     # 4B 的 hidden 维度必须与投影矩阵的输入维一致（防拿错矩阵）
     hid = int(getattr(base.config, "text_config").hidden_size)
     if hid != proj["in_dim"]:
@@ -1177,6 +1225,9 @@ def _build_projected_te(proj_path, base_repo, quant="bnb-4bit", tap=0):
             f"投影矩阵输入维 {proj['in_dim']} 与基座 hidden {hid} 不符"
             f"（基座选错？4B 应与 mmh3-4b-* 矩阵配对）")
     te = _ProjectedTextEncoder(base, proj, out_layer=_PROJ_OUT_LAYER)
+    # 投影 buffer（W/mean/std/sink）默认在 CPU，必须与基座同设备，否则
+    # project() 里 `h - mean_in` 直接报 "found at least two devices"
+    te = te.to(dev)
     # 与 32B 路径一致：挂 sentinel 让 diffusers 的设备推断拿到 cuda
     class _ExecDeviceSentinel:
         execution_device = "cuda"

@@ -482,7 +482,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "bee059acd299"
+OP_VERSION = "af00c1955cf0"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -683,7 +683,12 @@ def _register(key, obj, est_bytes, arch, offload_mode="none",
         models._last_used[key] = time.time()
     return obj
 def _require_file(path, what):
-    if not os.path.isfile(path):
+    """校验路径存在（**文件或 Diffusers 目录**）。
+
+    目录 = from_pretrained 的仓库/组件目录（官方 *-Diffusers 发布格式）；
+    文件 = Comfy-Org 单文件 safetensors。两者都是合法权重来源。
+    """
+    if not os.path.exists(path):
         raise ValueError(f"wan: 缺 {what}（{path}）")
     return path
 
@@ -699,16 +704,64 @@ def _size(p):
 
 
 def _resolve(subdir, name):
-    """WAN_DIR 下解析权重路径：支持子目录、绝对路径、裸文件名。"""
+    """WAN_DIR 下解析权重路径：支持**文件与目录**、绝对路径、裸名。
+
+    目录 = Diffusers 格式（config.json + 分片权重），走 from_pretrained；
+    文件 = 单文件 safetensors，走 from_single_file。VACE 官方发布的就是
+    目录格式（ModelScope/HF 的 *-Diffusers 仓库），单文件只覆盖 Comfy 生态。
+    """
     if not name:
         return ""
+    # 本项目的目录命名（Comfy 风格）与 Diffusers 仓库的子目录名不同，做别名映射：
+    #   我们: diffusion_models / text_encoders / vae / image_encoders
+    #   Diffusers: transformer / text_encoder / vae / image_encoder
+    _ALIAS = {"diffusion_models": ("diffusion_models", "transformer",
+                                   "transformer_2"),
+              "text_encoders": ("text_encoders", "text_encoder"),
+              "vae": ("vae",),
+              "image_encoders": ("image_encoders", "image_encoder")}
+    subs = _ALIAS.get(subdir, (subdir,))
+
+    def _pick(base):
+        """base 下按别名顺序找组件子目录（必须含 config.json 或分片权重）。"""
+        for sname in subs:
+            cand = os.path.join(base, sname)
+            if os.path.isdir(cand):
+                return cand
+        return None
+
     if os.path.isabs(name):
+        if os.path.exists(name):
+            # 绝对路径可能是组件目录本身，也可能是仓库根 → 有 config.json 就用它
+            if os.path.isdir(name) and not os.path.isfile(
+                    os.path.join(name, "config.json")):
+                sub = _pick(name)
+                if sub:
+                    return sub
+            return name
         return name
-    p = os.path.join(WAN_DIR, subdir, name)
-    if os.path.exists(p):
-        return p
-    p2 = os.path.join(WAN_DIR, name)
-    return p2 if os.path.exists(p2) else p
+
+    # ① 本项目布局：WAN_DIR/<Comfy 子目录>/<name>
+    for sname in subs:
+        cand = os.path.join(WAN_DIR, sname, name)
+        if os.path.exists(cand):
+            return cand
+    # ② WAN_DIR/<name>（组件直接放根）
+    cand = os.path.join(WAN_DIR, name)
+    if os.path.exists(cand):
+        if os.path.isdir(cand) and not os.path.isfile(
+                os.path.join(cand, "config.json")):
+            sub = _pick(cand)
+            if sub:
+                return sub
+        return cand
+    # ③ 仓库布局：MODELS_DIR/<name>/<Diffusers 子目录>（如 wan-vace-1.3b/transformer）
+    root = os.path.dirname(WAN_DIR)
+    repo = os.path.join(root, name)
+    if os.path.isdir(repo):
+        sub = _pick(repo)
+        return sub or repo
+    return os.path.join(WAN_DIR, subdir, name)
 
 
 def _guess_arch(name):
@@ -820,6 +873,14 @@ def _build_vace_transformer(path, dtype, which="transformer"):
     t0 = _time.time()
     torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                    "fp32": torch.float32}[dtype]
+    if os.path.isdir(path):
+        # Diffusers 目录（官方 *-Diffusers 仓库）：config 已随目录提供
+        model = WanVACETransformer3DModel.from_pretrained(
+            path, torch_dtype=torch_dtype)
+        n = sum(p.numel() for p in model.parameters())
+        print(f"[wan] VACE {which} from_pretrained {n/1e9:.2f}B "
+              f"{_time.time()-t0:.1f}s", flush=True)
+        return model
     cfg_dir = os.path.join(WAN_CONFIG_DIR, which)
     if not os.path.isfile(os.path.join(cfg_dir, "config.json")):
         arch = "1.3b" if "1.3b" in os.path.basename(path).lower() else "14b"
@@ -932,6 +993,13 @@ def _build_text_encoder(path, dtype):
     t0 = time.time()
     torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                    "fp32": torch.float32}[dtype]
+    if os.path.isdir(path):
+        # HF/ModelScope 的 text_encoder 目录（config.json + 分片）
+        from transformers import UMT5EncoderModel
+        model = UMT5EncoderModel.from_pretrained(path, torch_dtype=torch_dtype)
+        print(f"[wan] text_encoder from_pretrained {time.time()-t0:.1f}s",
+              flush=True)
+        return model
     cfg = _config_json("text_encoder") or {
         "_name_or_path": "google/umt5-xxl",
         "architectures": ["UMT5EncoderModel"],
@@ -980,6 +1048,10 @@ def _build_vae(path):
     from diffusers import AutoencoderKLWan
 
     t0 = time.time()
+    if os.path.isdir(path):
+        vae = AutoencoderKLWan.from_pretrained(path, torch_dtype=torch.float32)
+        print(f"[wan] vae from_pretrained fp32 {time.time()-t0:.1f}s", flush=True)
+        return vae
     # 同 transformer：config 必须是路径（dict 会被 diffusers 拒绝）
     cfg_dir = os.path.join(WAN_CONFIG_DIR, "vae")
     if os.path.isfile(os.path.join(cfg_dir, "config.json")):

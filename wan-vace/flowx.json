@@ -1,7 +1,7 @@
 {
   "name": "wan-vace",
   "displayName": "Wan VACE 替换",
-  "description": "Wan-VACE 可控生成（**人物替换首选**）：给定原视频 + 遮罩（白=重绘区/黑=保留区）+ 新角色参考图，在原片的动作与构图上重绘遮罩区域。相比 Wan-Animate **不需要 pose_video/face_video 预处理**（无需骨骼+人脸提取），可直接消费 video-person-mask（SAM3）的输出，链路更短、失败点更少。conditioning_scale 控制条件强度（1.0 为训练默认值，越低越贴原片、越高越跟参考图）。需要先 wan-load（task=vace，transformer 用 VACE 专用权重）。走异步 /jobs。自包含节点：server_op.py 运行时自注册。",
+  "description": "Wan-VACE 可控生成（**人物替换首选**）：给定原视频 + 遮罩（白=重绘区/黑=保留区）+ 新角色参考图，在原片的动作与构图上重绘遮罩区域。相比 Wan-Animate **不需要 pose_video/face_video 预处理**（无需骨骼+人脸提取），可直接消费 video-person-mask（SAM3）的输出，链路更短、失败点更少。conditioning_scale 控制条件强度（1.0 为训练默认值，越低越贴原片、越高越跟参考图）。需要先 wan-pipe 装配（task=vace，transformer 用 VACE 专用权重）。走异步 /jobs。自包含节点：server_op.py 运行时自注册。",
   "version": "1.0.0",
   "author": "flowx-team",
   "tags": [
@@ -40,9 +40,9 @@
       "name": "model",
       "type": "string",
       "required": true,
-      "description": "MODEL 引用（接 wan-load，task=vace、transformer 选 VACE 权重）",
+      "description": "MODEL 引用（接 wan-pipe（task=vace，transformer 选 VACE 权重））",
       "source": {
-        "nodeRef": "wan-load",
+        "nodeRef": "wan-pipe",
         "output": "model"
       }
     },

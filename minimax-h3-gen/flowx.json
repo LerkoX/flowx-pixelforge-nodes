@@ -44,9 +44,20 @@
       "description": "MiniMax-H3 MODEL 组件引用 ID",
       "required": true,
       "source": {
-        "nodeRef": "minimax-h3-load",
+        "nodeRef": "minimax-h3-pipe",
         "output": "model",
-        "description": "由 MiniMax H3 加载节点输出提供"
+        "description": "由 组件装配（pipe）节点输出提供"
+      }
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "h3-text-encode 的 cond（推荐接线；不接则按 prompt 现场编码）",
+      "source": {
+        "nodeRef": "h3-text-encode",
+        "output": "cond"
       }
     },
     {

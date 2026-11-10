@@ -23,7 +23,7 @@ numpy/cv2/controlnet_aux 一律函数内懒加载（本地无 GPU 契约测试�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "11db1c7a57a0"
+OP_VERSION = "45e8238dbce2"
 OP_FAMILY = "preprocess"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -51,6 +51,27 @@ def _as_image(image, op_name):
         raise ValueError(
             f"{op_name}: image 需为 IMAGE 对象，got {type(image).__name__}")
     return image
+
+
+def _batch(fn):
+    """让预处理器接受**帧列表**（视频逐帧场景）。
+
+    IMAGE 对象在服务端可能解包成 list（`video.to_frames` 的输出就是
+    单对象多帧），而 ControlNet 预处理器天然是单图接口。真机报
+    "image 需为 IMAGE 对象，got list"。
+
+    这里统一包一层：list → 逐帧跑 → 返回 list。调用方（video 流程）再把
+    list 交回 `video.encode` 拼成视频。
+    """
+    def wrapper(image, **kwargs):
+        if isinstance(image, list):
+            outs = [fn(f, **kwargs)["image"] for f in image]
+            print(f"[{fn.__name__}] 批量 {len(outs)} 帧", flush=True)
+            return {"image": outs}
+        return fn(image, **kwargs)
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
 
 
 def preprocess_canny(image, low_threshold=100, high_threshold=200):
@@ -563,7 +584,7 @@ def register(registry):
         outputs={"image": "IMAGE"},
         description="Canny 边缘检测：IMAGE → 黑底白线线稿 IMAGE（ControlNet "
                     "canny 提示图）；low/high_threshold 为 cv2 双阈值 "
-                    "（默认 100/200）")(preprocess_canny)
+                    "（默认 100/200）")(_batch(preprocess_canny))
     registry.register(
         "preprocess.openpose",
         inputs={"image": "IMAGE", "include_hand": "BOOL",
@@ -572,7 +593,7 @@ def register(registry):
         description="姿态骨架检测：真人照片 → 黑底彩色骨架图（ControlNet "
                     "openpose 提示图）；detector=openpose（默认，正/背面）/"
                     "dwpose（侧身回头/遮挡更准，ONNX 后端，权重 "
-                    "/models/preprocessors/dwpose）")(preprocess_openpose)
+                    "/models/preprocessors/dwpose）")(_batch(preprocess_openpose))
     registry.register(
         "preprocess.depth",
         inputs={"image": "IMAGE", "detect_resolution": "INT",
@@ -582,4 +603,4 @@ def register(registry):
                     "ControlNet depth 提示图），输出尺寸=输入尺寸；"
                     "keep_loaded=True 保留检测器常驻（默认 False 用完即放）；"
                     "detect_resolution 默认 512，权重从 "
-                    "/models/preprocessors/midas 本地加载")(preprocess_depth)
+                    "/models/preprocessors/midas 本地加载")(_batch(preprocess_depth))

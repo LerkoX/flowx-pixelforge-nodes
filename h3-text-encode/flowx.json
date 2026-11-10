@@ -1,0 +1,132 @@
+{
+  "name": "h3-text-encode",
+  "version": "1.0.0",
+  "displayName": "H3 文本编码",
+  "description": "MiniMax-H3 文本编码：prompt → COND（与 SD 的 clip-text-encode 对齐）。按 image/last_image/references 自动分派 t2va / fl2va / ref2va 三种呈现方式；image/last_image 原样透传（gen 还要用它们做 keyframe latent）——画布上一条线进、两条线出。同一 prompt 多次生成可复用同一 cond，省掉重复编码。开投影 TE 后产出近似条件（不能用同 seed 逐字节验证）。",
+  "author": "flowx-team",
+  "icon": "📝",
+  "tags": [
+    "minimax",
+    "h3",
+    "text-encode",
+    "inference"
+  ],
+  "category": "conditioning",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "COND",
+      "description": "条件对象（prompt_embeds + text_token_tags）"
+    },
+    {
+      "name": "image",
+      "type": "IMAGE",
+      "description": "首帧透传（gen 还要用）"
+    },
+    {
+      "name": "last_image",
+      "type": "IMAGE",
+      "description": "末帧透传（gen 还要用）"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "h3-pipe 输出的 MODEL 对象 ID",
+      "required": true
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "提示词（H3 是强文本引导模型；ref2va 时用 <Picture 1> 等点名参考）",
+      "required": true
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "首帧 IMAGE 对象 ID（可选：fl2va）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "last_image",
+      "type": "string",
+      "description": "末帧 IMAGE 对象 ID（可选：fl2va）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "references",
+      "type": "string",
+      "description": "references JSON 列表（可选：ref2va，与 image/last_image 互斥）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "description": "目标高度（0=自动；与 gen 必须一致，否则 keyframe vision token 数会变）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "description": "目标宽度（0=自动）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "容器内回退地址（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "job 超时（秒）",
+      "required": false,
+      "default": 1800
+    }
+  ],
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 430,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 2100,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

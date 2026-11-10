@@ -14,7 +14,7 @@ Wan-VACE 的 `video` 参数如果直接喂 **RGB 原视频**，是「软条件�
 """
 import time
 
-from flowx_client import (emit, ensure_plugin, param, ref, submit_job,
+from flowx_client import (emit, param, ref, resolve_op, submit_job,
                           wait_job, token)
 
 _OPS = {"depth": "preprocess.depth", "pose": "preprocess.openpose",
@@ -33,8 +33,6 @@ def main():
     url = param("service_url").rstrip("/")
     tok = token()
 
-    ensure_plugin(url, "video.to_frames", tok=tok)
-    ensure_plugin(url, "video.encode", tok=tok)
 
     video_id = param("video", "")
     if not video_id:
@@ -43,14 +41,16 @@ def main():
     mode = (param("mode", "depth") or "depth").lower()
     if mode not in _OPS:
         raise RuntimeError(f"mode 需为 {list(_OPS)}，got {mode}")
-    op_name = _OPS[mode]
-    ensure_plugin(url, op_name, tok=tok)
+    # F1 之后算子名带版本戳，纯编排节点用 resolve_op 查实际名（不自注册）
+    op_tf = resolve_op(url, "video.to_frames", tok)
+    op_enc = resolve_op(url, "video.encode", tok)
+    op_name = resolve_op(url, _OPS[mode], tok)
 
     t0 = time.time()
     timeout = param("job_timeout", 3600, int)
 
     # ① 抽帧
-    tf = {"name": "video.to_frames",
+    tf = {"name": op_tf,
           "inputs": {"video": ref(video_id),
                      "stride": param("stride", 1, int)}}
     mf = param("max_frames", 0, int)
@@ -58,30 +58,32 @@ def main():
         tf["inputs"]["end"] = mf - 1
     out = _run(url, tok, tf, timeout)
     frames_id, fps, count = out["frames"], out.get("fps") or 16, out.get("count") or 0
+
     print(f"[vcpp] frames={count} fps={fps} ({time.time()-t0:.1f}s)", flush=True)
 
     # ② 逐帧预处理 → 控制信号帧
+    # ⚠ preprocess.depth/openpose/canny 只接受**单个 IMAGE**（真机：
+    # "image 需为 IMAGE 对象，got list"），而 video.to_frames 给的是帧列表。
+    # 故这里逐帧调用（串行；81 帧约 2~3 分钟），把结果帧 id 收集成新列表。
+    # preprocess 族已支持批量（list→list），一次调用处理整批帧
     if mode == "depth":
-        pp = {"name": op_name,
-              "inputs": {"image": ref(frames_id),
-                         "detect_resolution": param("detect_resolution", 512, int)}}
+        inputs = {"image": ref(frames_id),
+                  "detect_resolution": param("detect_resolution", 512, int)}
     elif mode == "pose":
-        pp = {"name": op_name,
-              "inputs": {"image": ref(frames_id),
-                         "detector": param("detector", "dwpose"),
-                         "include_hand": param("include_hand", "0") in ("1", "true", "True"),
-                         "include_face": param("include_face", "0") in ("1", "true", "True")}}
+        inputs = {"image": ref(frames_id),
+                  "detector": param("detector", "dwpose"),
+                  "include_hand": param("include_hand", "0") in ("1", "true", "True"),
+                  "include_face": param("include_face", "0") in ("1", "true", "True")}
     else:
-        pp = {"name": op_name,
-              "inputs": {"image": ref(frames_id),
-                         "low_threshold": param("low_threshold", 100, int),
-                         "high_threshold": param("high_threshold", 200, int)}}
-    out = _run(url, tok, pp, timeout)
+        inputs = {"image": ref(frames_id),
+                  "low_threshold": param("low_threshold", 100, int),
+                  "high_threshold": param("high_threshold", 200, int)}
+    out = _run(url, tok, {"name": op_name, "inputs": inputs}, timeout)
     ctrl_frames = out["image"]
-    print(f"[vcpp] {mode} 控制帧={ctrl_frames} ({time.time()-t0:.1f}s)", flush=True)
+    print(f"[vcpp] {mode} 控制帧 {ctrl_frames} ({time.time()-t0:.1f}s)", flush=True)
 
     # ③ 编码回视频（保持原 fps）
-    out = _run(url, tok, {"name": "video.encode",
+    out = _run(url, tok, {"name": op_enc,
                           "inputs": {"frames": ref(ctrl_frames), "fps": int(fps)}},
                timeout)
     print(f"[vcpp] control_video={out['video']} ({time.time()-t0:.1f}s)",

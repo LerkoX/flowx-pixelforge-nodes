@@ -47,6 +47,10 @@ def main():
         "fps": param("fps", 0, int),
         "seed": param("seed", -1, int),
     }
+    # cond：wan-text-encode 的产物（推荐接线）。接了就用预编码条件（正+负）。
+    cond_id = param("cond", "")
+    if cond_id:
+        inputs["cond"] = ref(cond_id)
     if image_id:
         inputs["image"] = ref(image_id)
     if last_id:

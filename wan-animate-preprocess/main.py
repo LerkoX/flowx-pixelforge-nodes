@@ -31,7 +31,7 @@ pose_start_percent / pose_end_percent / reference_image_strength 四个旋钮。
 
 import time
 
-from flowx_client import (emit, ensure_plugin, param, ref, submit_job,
+from flowx_client import (emit, param, ref, submit_job,
                           wait_job, token)
 
 
@@ -47,9 +47,6 @@ def main():
     url = param("service_url").rstrip("/")
     tok = token()
 
-    ensure_plugin(url, "video.to_frames", tok=tok)
-    ensure_plugin(url, "preprocess.openpose", tok=tok)
-    ensure_plugin(url, "video.encode", tok=tok)
 
     video_id = param("video", "")
     if not video_id:
@@ -65,7 +62,7 @@ def main():
     t0 = time.time()
 
     # ① 抽帧
-    tf = {"name": "video.to_frames",
+    tf = {"name": op_tf,
           "inputs": {"video": ref(video_id), "stride": stride}}
     if max_frames > 0:
         tf["inputs"]["end"] = max_frames - 1
@@ -77,7 +74,7 @@ def main():
           f"fps={fps} ({time.time()-t0:.1f}s)", flush=True)
 
     # ② 逐帧骨架提取（preprocess.openpose 收 IMAGE 批次，服务端内部遍历）
-    pp = {"name": "preprocess.openpose",
+    pp = {"name": op_pp,
           "inputs": {"image": ref(frames_id), "detector": detector,
                      "include_hand": bool(include_hand),
                      "include_face": bool(include_face)}}
@@ -87,7 +84,7 @@ def main():
           f"detector={detector} ({time.time()-t0:.1f}s)", flush=True)
 
     # ③ 编码回视频（保持原 fps）
-    enc = {"name": "video.encode",
+    enc = {"name": op_enc,
            "inputs": {"frames": ref(pose_frames_id), "fps": int(fps)}}
     out = _run(url, tok, enc, timeout)
     pose_video_id = out["video"]

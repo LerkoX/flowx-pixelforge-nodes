@@ -251,6 +251,29 @@ def _resolve_op_name(ops, op_name, digest):
     return None
 
 
+def resolve_op(base, op_name, tok=None, timeout=30):
+    """按基名解析服务端实际算子名（取版本戳最大的一个）。
+
+    为什么需要它（纯编排节点专用）：F1 之后族算子注册名是
+    `<基名>@<内容hash12>`，**裸名不存在**。纯编排节点一次调用多个族的算子
+    （如 video.to_frames / preprocess.depth / video.encode），节点包里只有
+    一个 server_op.py，无法给每个族做 ensure_plugin 自注册；直接传裸名会得到
+    `unknown op`。这里改为「查 /ops 取该基名的最新版本名」，既不依赖自注册，
+    也不需要知道具体 hash。
+
+    返回实际名；服务端完全没有该基名时报错（提示先跑对应节点完成自注册）。
+    """
+    ops = get_json(base, "/ops", tok, timeout=timeout).get("ops", [])
+    cands = [o.get("name", "") for o in ops
+             if o.get("name") == op_name
+             or o.get("name", "").startswith(op_name + "@")]
+    if not cands:
+        raise RuntimeError(
+            f"服务端缺算子 {op_name}（请先执行一次对应节点完成自注册，"
+            f"或手动 POST /admin/plugins 上传）")
+    return sorted(cands)[-1]
+
+
 def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
     """节点算子自注册：确保服务端已注册 op_name 且与本地插件文件版本一致，
     缺失或 hash 不符则经 POST /admin/plugins 上传热加载（服务端需配置

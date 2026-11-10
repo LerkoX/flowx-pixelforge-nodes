@@ -129,8 +129,8 @@ OP_FAMILIES = {
     # 人像美化族（九宫格 v2）：裁方 + 美白磨皮 + 大眼瘦脸（68 关键点 + IDW 位移场）
     "beautify.py": ["beautify-batch", "grid-picker"],
     "video_sample.py": ["video-gen", "video-sample-latent"],
-    # MiniMax-H3 联合视频+音频（load 装配 + gen 生成两节点共享同族文件）
-    "minimax_h3.py": ["minimax-h3-load", "minimax-h3-gen",
+    # MiniMax-H3 联合视频+音频：组件装配四节点 + 文本编码 + 生成，共享同族文件
+    "minimax_h3.py": ["minimax-h3-gen", "h3-text-encode",
                       "minimax-h3-transformer-load", "minimax-h3-te-load",
                       "minimax-h3-vae-load", "minimax-h3-pipe"],
     # G12 视频流（P2 视频到视频）：视频 I/O（load/to_frames/encode）+ v2v
@@ -140,9 +140,8 @@ OP_FAMILIES = {
                       "video-repaint", "video-v2v"],
     # SAM3 视频人物遮罩（文本检测+全片追踪）：人物替换 inpaint_mask 选区件
     "video_mask.py": ["video-person-mask"],
-    # Wan 视频族（通义万相）：load 装配（t2v/i2v/animate 三管）+
-    # gen 生成 + animate 角色替换。三节点共享同族文件。
-    "wan.py": ["wan-load", "wan-gen", "wan-animate", "wan-animate2",
+    # Wan 视频族（通义万相）：组件装配 + 文本编码 + 生成 + animate/vace
+    "wan.py": ["wan-gen", "wan-text-encode", "wan-animate", "wan-animate2",
                "wan-vace",
                "wan-transformer-load", "wan-te-load", "wan-vae-load",
                "wan-image-encoder-load", "wan-pipe"],

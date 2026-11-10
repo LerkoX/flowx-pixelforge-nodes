@@ -30,6 +30,11 @@ def main():
         "steps": param("steps", 5, int),
         "preview_every": 0,
     }
+    # cond：h3-text-encode 的产物（推荐接线）。接了就用预编码条件，
+    # prompt 只作日志/兜底 —— 编码不再重复做一次。
+    cond_id = param("cond", "")
+    if cond_id:
+        inputs["cond"] = ref(cond_id)
     # 画布自定义（0=官方默认 16:9 768p）
     h = param("height", 0, int)
     w = param("width", 0, int)

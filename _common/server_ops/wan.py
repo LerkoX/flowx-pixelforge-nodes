@@ -40,13 +40,15 @@
 - vae fp32 ≈ 0.5GB ⇒ 常驻上卡
 - 合计 CPU 常驻 ≈ 39GB << 64GB 内存（H3 是 58GB，Wan 宽裕得多）
 
-算子：
-- wan.load(task, transformer, transformer2, text_encoder, vae, image_encoder,
-  lora, lora_scale, dtype, offload, boundary_ratio, config_dir)
-  → MODEL（task = t2v | i2v | animate）
-- wan.gen(model, prompt, negative_prompt, image?, last_image?, num_frames,
-  height, width, steps, guidance_scale, seed, flow_shift)
-  → VIDEO（frames+fps，无音轨）+ seed；分钟级任务，请经 POST /jobs 异步执行
+算子（拆分式，对齐 SD 的 checkpoint-loader → clip-text-encode → ksampler）：
+- wan.transformer_load / te_load / vae_load / image_encoder_load → 组件对象
+- wan.pipe(task, transformer, transformer2?, text_encoder, vae, image_encoder?,
+  boundary_ratio, flow_shift, ...) → MODEL
+- wan.encode(model, prompt, negative_prompt, max_sequence_length) → COND
+  （prompt_embeds + negative_prompt_embeds；Wan 有 CFG，正负两路）
+- wan.gen(model, cond?, prompt?, negative_prompt?, image?, last_image?,
+  num_frames, height, width, steps, guidance_scale, seed, flow_shift)
+  → VIDEO（frames+fps，无音轨）+ seed；分钟级任务走 POST /jobs
 - wan.animate(model, image, pose_video, face_video, background_video?,
   mask_video?, prompt, negative_prompt, mode, segment_frame_length,
   guidance_scale, seed) → VIDEO
@@ -60,7 +62,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "b257222fdc4f"
+OP_VERSION = "ca4492ea033e"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -906,6 +908,28 @@ def _assemble_pipe(task, tr_info, te_info, vae_info, img_enc_info,
     return pipe
 
 
+def _build_transformer_dispatch(path, name, dtype, which="transformer"):
+    """按权重名分派 transformer 构建器（一体版与拆分版共用，防两份实现漂移）。
+
+    为何必须分派（真机：拆分版 `wan.transformer_load(transformer="wan-vace-1.3b")`
+    报 `Invalid pretrained_model_name_or_path`）：
+      - VACE：in_channels=96 + added_kv_proj_dim，**普通 WanTransformer3DModel
+        装不下**，必须用 WanVACETransformer3DModel
+      - Animate-2：原始 WanAnimateModel 格式，要过官方转换函数
+    一体版原先在 _load_components 里内联判断，拆分版漏了 → 补成共用 helper。
+    """
+    low = (name or "").lower()
+    is_animate2 = "animate" in low and (
+        "animate-2" in low or "animate2" in low or "animate_2" in low)
+    if is_animate2:
+        print("[wan] 检测到 Animate-2 权重 → Animate-2 装配路径", flush=True)
+        return _build_animate2_transformer(path, dtype, which)
+    if "vace" in low:
+        print("[wan] 检测到 VACE transformer → VACE 装配路径", flush=True)
+        return _build_vace_transformer(path, dtype, which)
+    return _build_transformer(path, dtype, which)
+
+
 def _load_components(transformer, transformer2, text_encoder, vae,
                      image_encoder, dtype, offload, key_prefix="wan:load"):
     """加载全部组件（一体版与拆分版共用），返回 (tr_info, te_info,
@@ -915,26 +939,14 @@ def _load_components(transformer, transformer2, text_encoder, vae,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tr_path = _resolve("diffusion_models", transformer)
     _require_file(tr_path, "transformer")
-    low_name = transformer.lower()
-    is_animate2 = "animate" in low_name and (
-        "animate-2" in low_name or "animate2" in low_name or "animate_2" in low_name)
-    is_vace = "vace" in low_name
-    if is_animate2:
-        # Animate-2：原始 WanAnimateModel 格式 → diffusers（官方转换函数）
-        tr = _build_animate2_transformer(tr_path, dtype, "transformer")
-        print("[wan] 检测到 Animate-2 权重 → Animate-2 装配路径", flush=True)
-    elif is_vace:
-        # VACE 用专用 transformer（in_channels=96 + added_kv），不能用普通类
-        tr = _build_vace_transformer(tr_path, dtype, "transformer")
-        print("[wan] 检测到 VACE transformer → VACE 装配路径", flush=True)
-    else:
-        tr = _build_transformer(tr_path, dtype, "transformer")
+    tr = _build_transformer_dispatch(tr_path, transformer, dtype, "transformer")
     tr = _offload(tr, device, offload, "transformer")
     tr2 = None
     if transformer2:
         tr2_path = _resolve("diffusion_models", transformer2)
         _require_file(tr2_path, "transformer2")
-        tr2 = _build_transformer(tr2_path, dtype, "transformer_2")
+        tr2 = _build_transformer_dispatch(tr2_path, transformer2, dtype,
+                                          "transformer_2")
         tr2 = _offload(tr2, device, offload, "transformer_2")
 
     te_path = _resolve("text_encoders", text_encoder)
@@ -975,74 +987,6 @@ def _load_components(transformer, transformer2, text_encoder, vae,
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
 
-    @registry.register(
-        "wan.load",
-        inputs={"task": "STRING", "transformer": "STRING",
-                "transformer2": "STRING", "text_encoder": "STRING",
-                "vae": "STRING", "image_encoder": "STRING",
-                "lora": "STRING", "lora_scale": "FLOAT",
-                "dtype": "STRING", "offload": "STRING",
-                "boundary_ratio": "FLOAT", "flow_shift": "FLOAT",
-                "vae_tiling": "BOOL", "vae_slicing": "BOOL",
-                "attention": "STRING", "max_sequence_length": "INT",
-                "scheduler": "STRING"},
-        outputs={"model": "MODEL"},
-        description="Wan 装配：task=t2v（WanPipeline）/ i2v（WanImageToVideo"
-                    "Pipeline，给 last_image 即首尾帧）/ animate（WanAnimate"
-                    "Pipeline 角色动画+替换）。transformer2 非空即 Wan2.2 MoE"
-                    " 双专家（boundary_ratio 处从高噪切低噪）。14B bf16 "
-                    "~28GB 走逐层 offload 在 24GB 卡上跑。")
-    def _op_load(task="t2v",
-                 transformer="wan2.1_t2v_14B_bf16.safetensors",
-                 transformer2="",
-                 text_encoder="umt5_xxl_bf16.safetensors",
-                 vae="wan_2.1_vae.safetensors",
-                 image_encoder="",
-                 lora="", lora_scale=1.0, dtype="bf16",
-                 offload="sequential", boundary_ratio=0.875,
-                 flow_shift=5.0, vae_tiling=False, vae_slicing=False,
-                 attention="default", max_sequence_length=512,
-                 scheduler="euler"):
-        task = (task or "t2v").lower()
-        if task not in ("t2v", "i2v", "animate", "animate2", "vace"):
-            raise ValueError(
-                f"wan.load: task 须为 t2v/i2v/animate/animate2/vace，得 {task}")
-        is_moe = bool(transformer2)
-        key = (f"wan:{task}:{transformer}|{transformer2}|{text_encoder}|{vae}|"
-               f"{image_encoder}|{lora}@{lora_scale}|{dtype}|{offload}|"
-               f"{boundary_ratio}|{flow_shift}|{lora}@{lora_scale}|"
-               f"{vae_tiling}|{vae_slicing}|"
-               f"{attention}|{max_sequence_length}")
-        models = _models()
-        with models._lock:
-            if key in models._pipes:
-                models._last_used[key] = time.time()
-                print(f"[wan] cache hit '{key[:40]}…'", flush=True)
-                return {"model": models._pipes[key]}
-
-        tr_info, te_info, vae_info, img_info, gb = _load_components(
-            transformer, transformer2, text_encoder, vae, image_encoder,
-            dtype, offload)
-        sched = _build_scheduler(flow_shift, scheduler)
-        pipe = _assemble_pipe(
-            task, tr_info, te_info, vae_info, img_info, sched, boundary_ratio,
-            extra={"vae_tiling": vae_tiling, "vae_slicing": vae_slicing,
-                   "attention": attention})
-
-        # LoRA（Wan2.2 MoE 要同时挂两个专家才有效）
-        if lora:
-            pipe = _load_lora(pipe, lora, lora_scale,
-                              into_transformer_2=is_moe)
-
-        pipe._wan_fps = _guess_fps(transformer)
-        pipe._wan_max_seq = int(max_sequence_length)
-        print(f"[wan] pipe assembled ({task}"
-              f"{', MoE' if is_moe else ''}, offload={offload}, "
-              f"权重 {gb/1e9:.1f}GB)", flush=True)
-        # est=0：组件已各自记账（与 H3 同口径，避免 vram 闸门误判）
-        return {"model": _register(
-            key, pipe, 0,
-            f"Wan{'Animate' if task == 'animate' else 'Pipeline'}")}
 
     # ============ 拆分装配算子（SD 风：组件各自加载/设置，pipe 组装）============
     # 缓存键带组件前缀（wan:tr:/te:/vae:/img:/pipe:），与一体版 wan:<task>: 互不
@@ -1071,13 +1015,15 @@ def register(registry):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         tr_path = _resolve("diffusion_models", transformer)
         _require_file(tr_path, "transformer")
-        tr = _build_transformer(tr_path, dtype, "transformer")
+        tr = _build_transformer_dispatch(tr_path, transformer, dtype,
+                                         "transformer")
         tr = _offload(tr, device, offload, "transformer")
         tr2 = None
         if transformer2:
             tr2_path = _resolve("diffusion_models", transformer2)
             _require_file(tr2_path, "transformer2")
-            tr2 = _build_transformer(tr2_path, dtype, "transformer_2")
+            tr2 = _build_transformer_dispatch(tr2_path, transformer2, dtype,
+                                              "transformer_2")
             tr2 = _offload(tr2, device, offload, "transformer_2")
 
         info = {"model": tr, "model2": tr2, "is_moe": bool(transformer2)}
@@ -1233,8 +1179,53 @@ def register(registry):
             f"Wan{'Animate' if task == 'animate' else 'Pipeline'}")}
 
     @registry.register(
-        "wan.gen",
+        "wan.encode",
         inputs={"model": "MODEL", "prompt": "STRING",
+                "negative_prompt": "STRING",
+                "max_sequence_length": "INT"},
+        outputs={"cond": "COND"},
+        description="Wan 文本编码（UMT5-XXL → COND）：输出 prompt_embeds + "
+                    "negative_prompt_embeds（Wan 有 CFG，正负两路）。同一 prompt "
+                    "多次生成可复用编码；max_sequence_length=0 用 pipe 装配时的值")
+    def _op_encode(model, prompt="", negative_prompt="",
+                   max_sequence_length=0):
+        import torch
+
+        pipe = model
+        if not prompt:
+            raise ValueError("wan.encode: prompt 必填（Wan 是文本引导模型）")
+        if not hasattr(pipe, "encode_prompt"):
+            raise ValueError("wan.encode: model 不是 wan.pipe 的输出")
+        msl = int(max_sequence_length) or int(
+            getattr(pipe, "_wan_max_seq", 512))
+        dev = getattr(pipe, "_execution_device", None)
+        if dev is None:
+            dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        t0 = time.time()
+        with torch.no_grad():
+            pos, neg = pipe.encode_prompt(
+                prompt=prompt,
+                negative_prompt=negative_prompt or None,
+                do_classifier_free_guidance=True,
+                num_videos_per_prompt=1,
+                max_sequence_length=msl,
+                device=dev)
+        cond = {"kind": "wan",
+                "prompt": prompt,
+                "negative_prompt": negative_prompt or "",
+                "prompt_embeds": pos.detach().to("cpu"),
+                "negative_prompt_embeds": (neg.detach().to("cpu")
+                                           if neg is not None else None),
+                "num_text_tokens": int(pos.shape[1]),
+                "max_sequence_length": msl}
+        print(f"[wan] encode tokens={cond['num_text_tokens']} "
+              f"neg={'yes' if neg is not None else 'no'} "
+              f"{time.time()-t0:.1f}s", flush=True)
+        return {"cond": cond}
+
+    @registry.register(
+        "wan.gen",
+        inputs={"model": "MODEL", "cond": "COND", "prompt": "STRING",
                 "negative_prompt": "STRING", "image": "IMAGE",
                 "last_image": "IMAGE", "num_frames": "INT",
                 "height": "INT", "width": "INT", "steps": "INT",
@@ -1246,9 +1237,10 @@ def register(registry):
         description="Wan 视频生成：无 image → T2V；给 image → I2V；"
                     "同时给 image+last_image → 首尾帧插值。**Wan 有 CFG**"
                     "（guidance_scale>1 时生效，negative_prompt 才有用），"
-                    "与 H3 不同。帧数自动对齐 4k+1，fps=16（Wan2.1）/24"
-                    "（Wan2.2-TI2V-5B）。无音轨。分钟级任务，请经 /jobs。")
-    def _op_gen(model, prompt="", negative_prompt="", image=None,
+                    "与 H3 不同。**建议接 wan-text-encode 的 cond**（复用编码）；"
+                    "不接时按 prompt 现场编码。帧数自动对齐 4k+1，fps=16"
+                    "（Wan2.1）/24（Wan2.2-TI2V-5B）。无音轨。分钟级任务，请经 /jobs。")
+    def _op_gen(model, cond=None, prompt="", negative_prompt="", image=None,
                 last_image=None, num_frames=81, height=480, width=832,
                 steps=30, guidance_scale=5.0, guidance_scale_2=0.0,
                 num_videos_per_prompt=1, max_sequence_length=0, fps=0,
@@ -1260,10 +1252,21 @@ def register(registry):
         from PIL import Image
 
         pipe = model
+        if not hasattr(pipe, "transformer"):
+            raise ValueError("wan.gen: model 不是 wan.pipe 的输出")
+        pre_cond = None
+        if cond is not None:
+            if not isinstance(cond, dict) or cond.get("kind") != "wan":
+                raise ValueError(
+                    "wan.gen: cond 不是 wan 编码产物（须来自 wan.encode）")
+            pre_cond = cond
+            prompt = prompt or cond.get("prompt") or ""
+            if not prompt:
+                raise ValueError("wan.gen: cond 缺 prompt 原文")
+            if not negative_prompt:
+                negative_prompt = cond.get("negative_prompt") or ""
         if not prompt:
             raise ValueError("wan.gen: prompt 必填（Wan 是文本引导模型）")
-        if not hasattr(pipe, "transformer"):
-            raise ValueError("wan.gen: model 不是 wan.load 的输出")
 
         def _to_pil(obj):
             """IMAGE 对象 → PIL（兼容 {'frames':[...]} / {'path':...} / PIL）。"""
@@ -1307,13 +1310,39 @@ def register(registry):
             getattr(pipe, "_wan_fps", WAN_FPS_DEFAULT))
         msl = int(max_sequence_length) or int(
             getattr(pipe, "_wan_max_seq", 512))
-        kwargs = dict(prompt=prompt, negative_prompt=negative_prompt or None,
-                      num_frames=aligned, height=h, width=w,
+        kwargs = dict(num_frames=aligned, height=h, width=w,
                       num_inference_steps=int(steps),
                       guidance_scale=float(guidance_scale),
                       num_videos_per_prompt=max(1, int(num_videos_per_prompt)),
                       max_sequence_length=msl,
                       generator=gen, output_type="np")
+        if pre_cond is not None:
+            # 预编码条件：embeds 从对象仓库取回（CPU 存的）→ 上到 pipe 设备；
+            # 批量 >1 时按 encode_prompt 的语义沿 batch 维重复。
+            _dev = getattr(pipe, "_execution_device", None)
+            if _dev is None:
+                _dev = torch.device("cuda" if torch.cuda.is_available()
+                                    else "cpu")
+            try:
+                _dt = next(pipe.transformer.parameters()).dtype
+            except Exception:  # noqa: BLE001 - 模型无参数时回退 bf16
+                _dt = torch.bfloat16
+            _n = max(1, int(num_videos_per_prompt))
+            pe = pre_cond["prompt_embeds"].to(_dev, _dt)
+            ne = pre_cond.get("negative_prompt_embeds")
+            ne = ne.to(_dev, _dt) if ne is not None else None
+            if _n > 1:
+                pe = pe.repeat(1, _n, 1)
+                ne = ne.repeat(1, _n, 1) if ne is not None else None
+            kwargs["prompt"] = prompt
+            kwargs["negative_prompt"] = None
+            kwargs["prompt_embeds"] = pe
+            kwargs["negative_prompt_embeds"] = ne
+            print(f"[wan] gen 用预编码 cond（tokens="
+                  f"{pre_cond.get('num_text_tokens')}）", flush=True)
+        else:
+            kwargs["prompt"] = prompt
+            kwargs["negative_prompt"] = negative_prompt or None
         # MoE 第二阶段 CFG（仅 Wan2.2 双专家生效；0=沿用 guidance_scale）
         if guidance_scale_2 and float(guidance_scale_2) > 0:
             kwargs["guidance_scale_2"] = float(guidance_scale_2)
@@ -1625,6 +1654,20 @@ def register(registry):
 
         vid = _frames(video)
         msk = _frames(mask)
+        # **video/mask 帧数对齐**（真机：video.to_frames 与 video.person_mask
+        # 的抽帧口径差 1 帧 → "Length of video 120 and mask 121 do not match"）。
+        # 取两者较短的长度，再向下对齐 4k+1。
+        if msk is not None and hasattr(vid, "__len__") and hasattr(msk, "__len__"):
+            n0 = min(len(vid), len(msk))
+            n_al = _align_frames(n0)
+            if n_al > n0:                      # 对齐后不能超
+                n_al = max(5, ((n0 - 1) // 4) * 4 + 1)
+            if len(vid) != n_al:
+                vid = vid[:n_al]
+            if len(msk) != n_al:
+                msk = msk[:n_al]
+            print(f"[wan] vace 对齐 video/mask -> {n_al} 帧"
+                  f"（原 {len(vid) if n_al == len(vid) else n0}）", flush=True)
         ref = reference_image
         if isinstance(ref, dict):
             fr = ref.get("frames")
@@ -1642,18 +1685,78 @@ def register(registry):
         n = _align_frames(n)
         h, w = int(height), int(width)
         if h <= 0 or w <= 0:
+            # 未指定尺寸：**按源宽高比 + 480p 像素预算**算，不能直接取源分辨率
+            # （1344×768 的源直传会在 24GB 卡上 OOM——真机记录：124帧 832×480 已
+            # 经 22.9GB 峰值）。
             first = vid[0] if hasattr(vid, "__getitem__") else None
             if first is not None:
                 if isinstance(first, Image.Image):
-                    w, h = first.size
+                    sw, sh = first.size
                 else:
                     a = np.asarray(first)
-                    h, w = (a.shape[0], a.shape[1]) if a.ndim >= 2 else (480, 832)
+                    sh, sw = (a.shape[0], a.shape[1]) if a.ndim >= 2 else (480, 832)
+                budget = 832 * 480
+                s = (budget / max(1, sw * sh)) ** 0.5
+                w = max(64, round(sw * s / 16) * 16)
+                h = max(64, round(sh * s / 16) * 16)
             else:
                 w, h = 832, 480
         mod = 16
         h = max(mod, round(h / mod) * mod)
         w = max(mod, round(w / mod) * mod)
+
+        # ---- 关键修复（真机：画面底部一条环绕带 + 尾部纯色帧）----
+        # WanVACEPipeline.preprocess_conditions 会按「等比缩到不超过 height*width
+        # 的面积」+「向下对齐 vae_scale_factor_spatial × patch_size[1]」**重新**算
+        # video 尺寸，而 latents 用的是调用方传的 height/width **原样**。
+        # 两者不等 ⇒ cond latent 与 noise latent 空间维对不上：
+        #   1344×768 源 + 320×512 目标 ⇒ pipeline 缩成 512×288 ⇒ cond 36 行
+        #   vs noise 40 行 ⇒ transformer 拼接条件后尾部被 padding ⇒ 解码出
+        #   “滚动带”（H 方向错位）+ 尾部纯色帧。
+        # 做法：先把帧**精确** resize 到 (w,h)。此时 pipeline 内部
+        # `video_h*video_w > height*width` 为 False（相等）⇒ 不再缩放 ⇒ 尺寸一致。
+        def _cover_crop(im, tw, th):
+            """等比缩放 + 居中裁剪（不拉伸变形）。"""
+            sw, sh = im.size
+            s = max(tw / sw, th / sh)
+            nw, nh = max(tw, round(sw * s)), max(th, round(sh * s))
+            im = im.resize((nw, nh), Image.LANCZOS)
+            x, y = (nw - tw) // 2, (nh - th) // 2
+            return im.crop((x, y, x + tw, y + th))
+
+        def _norm_frames(frames, tw, th):
+            out = []
+            for f in frames:
+                im = f if isinstance(f, Image.Image) else Image.fromarray(
+                    np.asarray(f).astype("uint8"))
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
+                if im.size != (tw, th):
+                    im = _cover_crop(im, tw, th)
+                out.append(im)
+            return out
+
+        if hasattr(vid, "__len__") and len(vid):
+            first = vid[0]
+            first_sz = (first.size if isinstance(first, Image.Image)
+                        else tuple(np.asarray(first).shape[1::-1]))
+            vid = _norm_frames(vid, w, h)
+            print(f"[wan] vace 帧统一 {first_sz} -> {w}x{h}（{len(vid)} 帧）",
+                  flush=True)
+        if msk is not None and hasattr(msk, "__len__"):
+            msk = _norm_frames(msk, w, h)
+        # 帧数：4k+1 对齐且**不超源**（超了会让 pipeline 自己 pad，尾部就出脏帧）
+        if hasattr(vid, "__len__") and len(vid) < n:
+            n_fix = max(5, ((len(vid) - 1) // 4) * 4 + 1)
+            print(f"[wan] vace 帧数不足（源 {len(vid)} < {n}）-> n={n_fix}",
+                  flush=True)
+            n = n_fix
+        if hasattr(vid, "__getitem__"):
+            vid = vid[:n]
+        if msk is not None and hasattr(msk, "__getitem__"):
+            msk = msk[:n]
+        print(f"[wan] vace 条件帧数 n={n} "
+              f"mask={'yes' if msk is not None else 'no'}", flush=True)
 
         fps = int(getattr(pipe, "_wan_fps", WAN_FPS_DEFAULT))
         kwargs = dict(prompt=prompt, negative_prompt=negative_prompt or None,

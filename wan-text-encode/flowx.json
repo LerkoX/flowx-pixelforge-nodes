@@ -1,0 +1,100 @@
+{
+  "name": "wan-text-encode",
+  "version": "1.0.0",
+  "displayName": "Wan 文本编码",
+  "description": "Wan 文本编码：UMT5-XXL → COND（对齐 SD 的 clip-text-encode）。输出 prompt_embeds + negative_prompt_embeds（Wan 有 CFG，正负两路）。同一 prompt 多次生成可复用编码，省掉重复编码。",
+  "author": "flowx-team",
+  "icon": "📝",
+  "tags": [
+    "wan",
+    "text-encode",
+    "inference"
+  ],
+  "category": "conditioning",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "COND",
+      "description": "条件对象（prompt_embeds + negative_prompt_embeds）"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "model_ref",
+      "type": "string",
+      "description": "wan-pipe 输出的 MODEL 对象 ID",
+      "required": true
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "正向提示词",
+      "required": true
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "description": "负向提示词（guidance_scale>1 时生效）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "integer",
+      "description": "最大 token 数（0=用 pipe 装配值）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "容器内回退地址（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "job 超时（秒）",
+      "required": false,
+      "default": 1800
+    }
+  ],
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 360,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 2100,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

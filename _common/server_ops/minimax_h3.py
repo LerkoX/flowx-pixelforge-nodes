@@ -47,16 +47,21 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 - turbo LoRA（ComfyUI 格式 bf16）经 MiniMaxH3LoraLoaderMixin.load_lora_weights
   挂到 transformer 分区，4 步出片
 
-算子：
-- minimax.h3.load(transformer, text_encoder, video_vae, audio_vae, lora,
-  lora_scale, dtype, offload) → MODEL（装配好的 MiniMaxH3ModularPipeline，
-  进 model_manager LRU，键 minimax-h3:<...>）
-- minimax.h3.gen(model, prompt, image?, last_image?, num_frames, seed, steps,
-  preview_every) → VIDEO（frames+fps+audio+sample_rate，音轨随 encode_mp4
-  mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
+算子（拆分式，对齐 SD 的 checkpoint-loader → clip-text-encode → ksampler）：
+- minimax.h3.transformer_load / te_load / vae_load → 组件对象（进 model_manager LRU）
+- minimax.h3.pipe(transformer, text_encoder, vae, shift_video, shift_audio) → MODEL
+- minimax.h3.encode(model, prompt, image?, last_image?, references?, h, w) → COND
+  （按图/参考自动分派 t2va/fl2va/ref2va；复用 diffusers 的 before_encode +
+   text_encoder block，不自己复刻 token/vision 拼接）
+- minimax.h3.gen(model, cond?, prompt?, ...) → VIDEO（frames+fps+audio，
+  音轨随 encode_mp4 mux 进 mp4）+ seed；分钟级任务走 POST /jobs
+
+投影 TE（te_load 的 te_proj 参数，默认关）：Qwen3-VL-4B + ClipProj 投影矩阵
+冒充 32B（27GB→3.6GB）。**原理性近似**（发布方 cos_test 0.81）——不能用
+同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "b74565eece63"
+OP_VERSION = "c27132abadd9"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -207,6 +212,38 @@ def _require_file(path, what):
     if not os.path.isfile(path):
         raise ValueError(f"minimax-h3: 缺 {what}（{path}）")
     return path
+
+
+def _resolve_proj(name):
+    """投影矩阵定位：绝对/相对路径 → H3_DIR 下若干约定位置。
+
+    不做运行时网络下载（装机时一次下到位）：端口填错就直接报出可读错误，
+    而不是在生产流水线里静默拉 503MB。
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("minimax-h3: te_proj 为空")
+    cands = [name, os.path.join(H3_DIR, name),
+             os.path.join(H3_DIR, "text_encoders", name),
+             os.path.join(H3_DIR, "cliproj", name)]
+    for p in cands:
+        if os.path.isfile(p):
+            return p
+    raise ValueError(
+        f"minimax-h3: 找不到投影矩阵 '{name}'（已试 {', '.join(cands)}）。"
+        f"先从 NicoLab28/ClipProj-MiniMax-H3 下 mmh3-4b-ClipProj-v3.1*.safetensors"
+        f" 放到 {os.path.join(H3_DIR, 'cliproj')}/ 或共享盘软链")
+
+
+def _resolve_base(name):
+    """4B 基座定位：目录存在就用本地，否则交给 from_pretrained 走 hub。"""
+    name = (name or "").strip()
+    cands = [name, os.path.join(H3_DIR, name),
+             os.path.join(H3_DIR, "text_encoders", name)]
+    for p in cands:
+        if p and os.path.isdir(p):
+            return p
+    return name
 
 
 def _build_transformer(path, dtype):
@@ -514,6 +551,265 @@ def _build_text_encoder(path, dtype):
     print(f"[minimax-h3] text_encoder ready（int8 动态 {n_q} 层）"
           f" {time.time()-t0:.1f}s", flush=True)
     return te
+
+
+# ---------------------------------------------------------------------------
+# 投影 TE（ClipProj）：4B 基座 + 学习到的投影矩阵，冒充 32B 文本塔
+# ---------------------------------------------------------------------------
+# 背景（NicoLab28/ClipProj-MiniMax-H3 v3.1，真机对拍 diffusers 0.42.1）：
+#   H3 的条件 = Qwen3-VL-32B 第 50 层 hidden（维度 5120）。投影 TE 用一个
+#   4B 模型的第 `tap` 层 hidden（维度 2560）+ 一个校准出来的映射，去近似它。
+#   校准目标是 **32B 的 nvfp4-awq 版**（metadata `source`），我们跑 int8_convrot
+#   —— 实测偏移量级 ≤1%%（animede 项目的 RMS 实测 0.61~0.96%%、cosine 1.0000）。
+#
+# 为什么不在算子里自己拼 token/vision：
+#   fl2va 的 `<Picture i>: ` 标签 + vision block 拼接在 diffusers 的
+#   MiniMaxH3FL2VATextEncoderStep.__call__ 里。我们只要让
+#   `get_qwen3vl_prompt_embeds` 拿到的对象"看起来像 32B"，token 拼接逻辑就
+#   完全复用官方实现，投影只在最末端发生 —— 少一份要跟着 diffusers 改的代码。
+_PROJ_OUT_LAYER = 50          # H3 读 hidden_states[50]
+_PROJ_TAP_DEFAULT = 24        # 4B 侧取值层（v3.1 metadata 默认）
+
+
+class _HiddenStatesShim:
+    """`text_encoder.model(...)` 的返回壳：只提供 .hidden_states。"""
+
+    def __init__(self, hidden_states):
+        self.hidden_states = hidden_states
+
+
+def _load_projection(path):
+    """读 ClipProj safetensors → {'weights','biases','mean_in','std_in',
+    'mean_out','std_out','sink','tap','mlp'}。
+
+    自适应 linear / MLP 两种形态（按文件里的 2D 权重个数判断，不看文件名）：
+      linear（v3.1，26MB）：proj.weight [5120, 2560]
+      mlp  （v3.1-mlp，503MB）：mlp.0.weight [32768,2560] + mlp.2.weight [5120,32768]
+    激活函数按发布方的实现取 GELU（层间），最后一层不带激活。
+    """
+    from safetensors.torch import load_file
+
+    sd = load_file(path)
+    meta = {}
+    try:  # safetensors 的 metadata 要先读 header
+        import json as _json
+        import struct
+        with open(path, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            meta = _json.loads(f.read(n)).get("__metadata__") or {}
+    except Exception:  # noqa: BLE001 - metadata 只是提示，缺了不影响主流程
+        meta = {}
+
+    def _need(key):
+        if key not in sd:
+            raise ValueError(f"投影矩阵缺 {key}（{path}）")
+        return sd[key]
+
+    w2d = sorted(((k, v) for k, v in sd.items() if v.ndim == 2),
+                 key=lambda kv: kv[0])
+    if not w2d:
+        raise ValueError(f"投影矩阵里没有 2D 权重（{path}）")
+    weights, biases = [], []
+    for k, w in w2d:
+        weights.append(w.float().contiguous())
+        bkey = k.rsplit(".", 1)[0] + ".bias"
+        biases.append(sd[bkey].float().contiguous() if bkey in sd else None)
+
+    tap = int(meta.get("tap") or _PROJ_TAP_DEFAULT)
+    in_dim = weights[0].shape[1]
+    out_dim = weights[-1].shape[0]
+    proj = {
+        "weights": weights, "biases": biases,
+        "mean_in": _need("mean_in").float(), "std_in": _need("std_in").float(),
+        "mean_out": _need("mean_out").float(), "std_out": _need("std_out").float(),
+        "sink": sd.get("sink_out") if "sink_out" in sd else None,
+        "tap": tap, "mlp": len(weights) > 1,
+        "in_dim": int(in_dim), "out_dim": int(out_dim),
+        "meta": meta,
+    }
+    print(f"[minimax-h3] 投影矩阵 {os.path.basename(path)}："
+          f"{'MLP' if proj['mlp'] else 'linear'} "
+          f"{in_dim}→{out_dim} tap={tap} "
+          f"cos_test={meta.get('cos_test', '?')} "
+          f"source={meta.get('source', '?')}", flush=True)
+    return proj
+
+
+class _PrecomputedTextEncoder(torch.nn.Module):
+    """cond 已由上游 encode 节点算好：`.model()` 直接吐出来，不跑前向。
+
+    用途：gen 收 cond 时短路编码（同一 prompt 多次生成不重复编码）。
+    仍然完整走 diffusers 的 text_encoder block（token/vision 照常拼），
+    只是最末端不调模型 —— 这样 fl2va/ref2va 的分支处理一行都不用改。
+    """
+
+    def __init__(self, embeds, out_layer=_PROJ_OUT_LAYER):
+        super().__init__()
+        self.register_buffer("_embeds", embeds.detach().clone(), persistent=False)
+        self._out_layer = int(out_layer)
+        from types import SimpleNamespace
+        self.config = SimpleNamespace(
+            text_config=SimpleNamespace(num_hidden_layers=self._out_layer + 1))
+
+    @property
+    def dtype(self):
+        return self._embeds.dtype
+
+    def model(self, **_kwargs):
+        return _HiddenStatesShim(
+            [None] * self._out_layer + [self._embeds])
+
+
+class _ProjectedTextEncoder(torch.nn.Module):
+    """Qwen3-VL-4B + 投影矩阵，对外伪装成 Qwen3-VL-32B 的 conditioner。
+
+    契约（get_qwen3vl_prompt_embeds 只看这两条）：
+      .config.text_config.num_hidden_layers > out_layer  → 通过层数校验
+      .model(...) 返回 .hidden_states，第 out_layer 项即投影后的条件
+    """
+
+    def __init__(self, base, proj, out_layer=_PROJ_OUT_LAYER):
+        super().__init__()
+        import torch.nn as nn  # noqa: F401 - 保持与其他族的 import 风格一致
+
+        self.base = base
+        self.tap = int(proj["tap"])
+        self._out_layer = int(out_layer)
+        self._mlp = bool(proj["mlp"])
+        for i, w in enumerate(proj["weights"]):
+            self.register_buffer(f"w{i}", w, persistent=False)
+            b = proj["biases"][i]
+            self.register_buffer(f"b{i}",
+                                 b if b is not None else torch.zeros(w.shape[0]),
+                                 persistent=False)
+        self.register_buffer("mean_in", proj["mean_in"], persistent=False)
+        self.register_buffer("std_in", proj["std_in"], persistent=False)
+        self.register_buffer("mean_out", proj["mean_out"], persistent=False)
+        self.register_buffer("std_out", proj["std_out"], persistent=False)
+        if proj["sink"] is not None:
+            self.register_buffer("sink_out", proj["sink"].float(), persistent=False)
+        self.n_proj = len(proj["weights"])
+        from types import SimpleNamespace
+        # 伪装成"层数足够"的 32B：out_layer+1 让官方校验放行
+        self.config = SimpleNamespace(
+            text_config=SimpleNamespace(num_hidden_layers=self._out_layer + 1))
+
+    @property
+    def dtype(self):
+        return next(self.base.parameters()).dtype
+
+    def project(self, h):
+        """4B hidden → 归一化 → (MLP) → 反归一化 → cond。"""
+        import torch.nn.functional as F
+
+        x = (h.float() - self.mean_in) / self.std_in
+        for i in range(self.n_proj):
+            x = F.linear(x, getattr(self, f"w{i}"), getattr(self, f"b{i}"))
+            if i < self.n_proj - 1:
+                x = F.gelu(x)
+        x = x * self.std_out + self.mean_out
+        if hasattr(self, "sink_out"):
+            # token 0 是 attention sink（发布方实现：单独赋常数）
+            x = torch.cat(
+                [self.sink_out.view(1, 1, -1).expand(x.shape[0], 1, -1),
+                 x[:, 1:]], dim=1)
+        return x
+
+    def model(self, **kwargs):
+        kwargs.pop("output_hidden_states", None)
+        out = self.base.model(output_hidden_states=True, **kwargs)
+        h = out.hidden_states[self.tap]
+        cond = self.project(h)
+        return _HiddenStatesShim([None] * self._out_layer + [cond])
+
+
+def _build_projected_te(proj_path, base_repo, quant="bnb-4bit", tap=0):
+    """装配投影 TE：4B 基座（可量化）+ 投影矩阵。
+
+    base_repo 可以是仓库 id 或本地目录（共享盘优先）。quant：
+      none / bnb-4bit（NF4，3.11GB）/ bnb-8bit。4B 很小，默认量化即可常驻。
+    tap>0 时覆盖矩阵自带的层号（v3.1 默认 24）。
+    """
+    import torch
+    from transformers import (Qwen3VLConfig, Qwen3VLForConditionalGeneration)
+
+    t0 = time.time()
+    if not os.path.exists(proj_path):
+        raise ValueError(f"minimax-h3: 投影矩阵不存在（{proj_path}）")
+    proj = _load_projection(proj_path)
+    if tap and int(tap) > 0:
+        proj["tap"] = int(tap)
+
+    cfg = Qwen3VLConfig.from_pretrained(base_repo)
+    quant = (quant or "none").lower()
+    kw = {"dtype": torch.bfloat16}
+    if quant.startswith("bnb"):
+        from transformers import BitsAndBytesConfig
+        kw["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=quant.endswith("4bit"),
+            load_in_8bit=quant.endswith("8bit"),
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16)
+    base = Qwen3VLForConditionalGeneration.from_pretrained(base_repo, **kw)
+    base.eval()
+    # 4B 的 hidden 维度必须与投影矩阵的输入维一致（防拿错矩阵）
+    hid = int(getattr(base.config, "text_config").hidden_size)
+    if hid != proj["in_dim"]:
+        raise ValueError(
+            f"投影矩阵输入维 {proj['in_dim']} 与基座 hidden {hid} 不符"
+            f"（基座选错？4B 应与 mmh3-4b-* 矩阵配对）")
+    te = _ProjectedTextEncoder(base, proj, out_layer=_PROJ_OUT_LAYER)
+    # 与 32B 路径一致：挂 sentinel 让 diffusers 的设备推断拿到 cuda
+    class _ExecDeviceSentinel:
+        execution_device = "cuda"
+    te._hf_hook = _ExecDeviceSentinel()
+    print(f"[minimax-h3] 投影 TE ready（4B[{quant}] + "
+          f"{'MLP' if proj['mlp'] else 'linear'} tap={proj['tap']}）"
+          f" {time.time()-t0:.1f}s", flush=True)
+    return te
+
+
+_EXEC_DEV_PATCHED = False
+
+
+def _ensure_exec_device_robust():
+    """让 `ModularPipeline._execution_device` 在本项目的自写 offload hook 下可用。
+
+    真机报错（H3 encode 首次调用，diffusers 0.42.1）：
+      AttributeError: 'MiniMaxH3ModularPipeline' object has no attribute
+      '_execution_device'
+    根因：该 property 内部走 `_get_group_onload_device()` / `self.device`，
+    在不带 accelerate group-offload hook 的模块上抛的是 AttributeError
+    （函数契约只声明 ValueError）—— 属性访问协议因此转去 `__getattr__`，
+    最终表现为“对象没这个属性”。这里只给 property 加一层兜底：group
+    offload 场景仍走官方分支，行为不变。
+    """
+    global _EXEC_DEV_PATCHED
+    if _EXEC_DEV_PATCHED:
+        return
+    try:
+        from diffusers.modular_pipelines.modular_pipeline import ModularPipeline
+    except Exception:  # noqa: BLE001 - 非 modular 栈不应阻塞调用
+        return
+    orig = ModularPipeline.__dict__.get("_execution_device")
+    if not isinstance(orig, property):
+        return
+
+    def _robust(self):
+        try:
+            return orig.fget(self)
+        except Exception:  # noqa: BLE001
+            import torch
+            for m in getattr(self, "components", {}).values():
+                if isinstance(m, torch.nn.Module):
+                    for p in m.parameters():
+                        return p.device
+            return torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu")
+
+    ModularPipeline._execution_device = property(_robust)
+    _EXEC_DEV_PATCHED = True
+    print("[minimax-h3] _execution_device 兜底已挂载", flush=True)
 
 
 def _build_tokenizer_processor():
@@ -1111,13 +1407,40 @@ def register(registry):
     @registry.register(
         "minimax.h3.te_load",
         inputs={"text_encoder": "STRING", "dtype": "STRING",
-                "offload": "STRING"},
+                "offload": "STRING", "te_proj": "STRING",
+                "te_proj_base": "STRING", "te_proj_quant": "STRING",
+                "te_proj_tap": "INT"},
         outputs={"text_encoder": "TEXT_ENCODER"},
-        description="H3 文本塔组件加载（Qwen3VL-32B int8 + tokenizer/processor "
-                    "+ 逐层 offload + sentinel）")
+        description="H3 文本塔组件加载：默认 Qwen3VL-32B int8（+逐层 offload）。"
+                    "te_proj 非空则改用**投影 TE**（Qwen3-VL-4B + ClipProj 投影"
+                    "矩阵冒充 32B）：磁盘/内存 27GB→3.6GB，代价是 prompt 细部"
+                    "指定会丢（发布方 cos_test 0.81，视频锐度实测 −2%）。"
+                    "投影 TE 是**原理性近似**，不能用同 seed 逐字节一致验证")
     def _op_te_load(text_encoder="qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
-                    dtype="bf16", offload="sequential"):
+                    dtype="bf16", offload="sequential", te_proj="",
+                    te_proj_base="Qwen/Qwen3-VL-4B-Instruct",
+                    te_proj_quant="bnb-4bit", te_proj_tap=0):
         import torch
+
+        te_proj = (te_proj or "").strip()
+        if te_proj:
+            key = (f"minimax-h3:te-proj:{te_proj}|{te_proj_base}"
+                   f"|{te_proj_quant}|{te_proj_tap}")
+            models = _models()
+            if key in models._pipes:
+                return {"text_encoder": models.get(key)}
+            proj_path = _resolve_proj(te_proj)
+            base = _resolve_base(te_proj_base)
+            t0 = time.time()
+            m = _build_projected_te(proj_path, base, te_proj_quant, te_proj_tap)
+            tok, proc = _build_tokenizer_processor()
+            est = _sz_path(proj_path) + _sz_path(base)
+            print(f"[minimax-h3] text encoder（投影）ready {time.time()-t0:.1f}s",
+                  flush=True)
+            return {"text_encoder": _register(
+                key, {"model": m, "tokenizer": tok, "processor": proc,
+                      "is_proj": True, "proj_tap": int(te_proj_tap or 0)},
+                est, "Qwen3VLProjectedTextEncoder", offload_mode="none")}
 
         key = f"minimax-h3:te:{text_encoder}|{dtype}|{offload}"
         models = _models()
@@ -1134,7 +1457,8 @@ def register(registry):
         print(f"[minimax-h3] text encoder ready {time.time()-t0:.1f}s",
               flush=True)
         return {"text_encoder": _register(
-            key, {"model": m, "tokenizer": tok, "processor": proc},
+            key, {"model": m, "tokenizer": tok, "processor": proc,
+                  "is_proj": False},
             est, "Qwen3VLTextEncoder", offload_mode=offload)}
 
     @registry.register(
@@ -1206,122 +1530,83 @@ def register(registry):
         # est=0：组件已各自记账
         return {"model": _register(key, pipe, 0, "MiniMaxH3ModularPipeline")}
 
-    # ==================== 一体便捷版（向后兼容） ====================
+    # ==================== 文本编码（独立算子：prompt → COND） ====================
+    # 与 SD 的 sd.clip.encode 对齐：把编码从 gen 里拆出来，供
+    # ①同一 prompt 多次生成复用编码 ②接 cond 类算子 ③投影 TE 走同一条路。
+    # 实现上**复用 diffusers 的 block**（before_encode + text_encoder），
+    # 不自己复刻 token/vision 拼接 —— fl2va 的 `<Picture i>: ` 标签、ref2va
+    # 的 references 归一化都在那里，复刻必然随 diffusers 版本漂移。
 
     @registry.register(
-        "minimax.h3.load",
-        inputs={"transformer": "STRING", "text_encoder": "STRING",
-                "video_vae": "STRING", "audio_vae": "STRING",
-                "lora": "STRING", "lora_scale": "FLOAT",
-                "dtype": "STRING", "offload": "STRING"},
-        outputs={"model": "MODEL"},
-        description="MiniMax-H3 装配：Comfy-Org int8 权重反量化 + 官方 config → "
-                    "MiniMaxH3ModularPipeline（transformer/TE 逐层 offload，"
-                    "VAE 随用上卡）。可选 turbo LoRA（4 步）。进 model_manager LRU")
-    def _op_load(transformer="minimax_h3_fl2va_int8_convrot.safetensors",
-                 text_encoder="qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
-                 video_vae="vae-diffusers",
-                 audio_vae="minimax_h3_audio_vae_official.safetensors",
-                 lora="", lora_scale=1.0, dtype="bf16", offload="sequential"):
-        import torch
-        from diffusers import MiniMaxH3ModularPipeline
+        "minimax.h3.encode",
+        inputs={"model": "MODEL", "prompt": "STRING",
+                "image": "IMAGE", "last_image": "IMAGE",
+                "references": "STRING", "height": "INT", "width": "INT"},
+        outputs={"cond": "COND", "image": "IMAGE", "last_image": "IMAGE"},
+        description="H3 文本编码（prompt → COND）：按 image/last_image/references "
+                    "自动分派 t2va / fl2va / ref2va 三种呈现方式，输出 "
+                    "prompt_embeds + text_token_tags。image/last_image 原样透传"
+                    "（gen 还要用它们做 latent 编码）——画布上一条线进、两条线出。"
+                    "同一 prompt 多次生成可复用同一 cond，省掉重复编码。"
+                    "开投影 TE 后本算子产出近似条件（不能逐字节验证）")
+    def _op_encode(model, prompt="", image=None, last_image=None,
+                   references="", height=0, width=0):
+        from diffusers.modular_pipelines import PipelineState
 
-        key = (f"minimax-h3:{transformer}|{text_encoder}|{lora}@{lora_scale}"
-               f"|{dtype}|{offload}")
-        models = _models()
-        if key in models._pipes:
-            return {"model": models.get(key)}
+        _ensure_exec_device_robust()
+        pipe = model
+        if not prompt:
+            raise ValueError(
+                "minimax.h3.encode: prompt 必填（H3 是强文本引导模型）")
+        refs = _build_references(references) if references else None
+        if refs and (image is not None or last_image is not None):
+            raise ValueError(
+                "minimax.h3.encode: references 与 image/last_image 互斥"
+                "（ref2va 与 fl2va 是两个 checkpoint 分区）")
+        if refs and getattr(pipe, "transformer_ref", None) is None:
+            raise ValueError(
+                "minimax.h3.encode: 当前模型不是 ref2va 装配"
+                "（load 时 transformer 需选 *_ref2va_* 权重）")
+        mode = "ref2va" if refs else (
+            "fl2va" if (image is not None or last_image is not None) else "t2va")
 
-        _require_file(os.path.join(H3_CONFIG_DIR, "model_index.json"),
-                      "官方 config 目录")
-        tr_path = _require_file(
-            os.path.join(H3_DIR, "diffusion_models", transformer), "transformer")
-        te_path = _require_file(
-            os.path.join(H3_DIR, "text_encoders", text_encoder), "text_encoder")
-        # video_vae 优先 diffusers 目录（原生权重；int8 文件是不兼容回退）
-        vae_path = os.path.join(H3_DIR, video_vae)
-        if not os.path.isdir(vae_path):
-            vae_path = _require_file(
-                os.path.join(H3_DIR, "vae", video_vae), "video_vae")
-        avae_path = _require_file(
-            os.path.join(H3_DIR, "vae", audio_vae), "audio_vae")
+        state = PipelineState()
+        state.set("prompt", prompt)
+        if image is not None:
+            state.set("image", image)
+        if last_image is not None:
+            state.set("last_image", last_image)
+        if refs:
+            state.set("references", refs)
+        if int(height) > 0:
+            state.set("height", int(height))
+        if int(width) > 0:
+            state.set("width", int(width))
 
         t0 = time.time()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        blocks = pipe.blocks.sub_blocks
+        for name in ("before_encode", "text_encoder"):
+            blk = blocks[name]
+            _, state = blk(pipe, state)
+        embeds = state.get("prompt_embeds")
+        if embeds is None:
+            raise ValueError("minimax.h3.encode: 编码未产出 prompt_embeds")
+        tags = state.get("text_token_tags")
+        cond = {"kind": "h3", "mode": mode, "prompt": prompt,
+                "prompt_embeds": embeds.detach().to("cpu"),
+                "text_token_tags": (tags.detach().to("cpu")
+                                    if tags is not None else None),
+                "num_text_tokens": int(embeds.shape[-2]),
+                "height": int(height or 0), "width": int(width or 0)}
+        print(f"[minimax-h3] encode {mode} tokens={cond['num_text_tokens']} "
+              f"{time.time()-t0:.1f}s", flush=True)
+        # image/last_image 透传：gen 还要用它们做 keyframe latent 编码
+        return {"cond": cond, "image": image, "last_image": last_image}
 
-        # ① 组件装配（transformer/TE 内存常驻 + offload hook 管上下卡；
-        # VAE 体积小直接常驻显存——留 CPU 会让 decode 慢一个数量级）
-        transformer_m = _build_transformer(tr_path, dtype)
-        text_encoder_m = _build_text_encoder(te_path, dtype)
-        video_vae_m = _build_video_vae(vae_path, dtype)
-        audio_vae_m = _build_audio_vae(avae_path, dtype)
-        tokenizer, processor = _build_tokenizer_processor()
-        scheduler, audio_scheduler = _build_schedulers()
-
-        # ② LoRA 必须在 offload arm 之前挂：buffer 注册后 hook 才能正确
-        # 统计并搬运（真机顺序坑）。
-        if lora:
-            _attach_loras(transformer_m, lora, float(lora_scale))
-
-        # ③ VAE 上卡常驻（小：video ~5GB bf16 + audio ~0.5GB）
-        if device.type == "cuda":
-            video_vae_m = video_vae_m.to(device)
-            audio_vae_m = audio_vae_m.to(device)
-
-        # ④ 管道装配（ModularPipeline API 是 register_components——
-        # DiffusionPipeline 的 register_modules 它没有，真机实测 AttributeError）
-        # ref2va 权重挂 transformer_ref 组件位（与 transformer config 同构，
-        # 官方一个仓库两个 checkpoint 分区，workflow 各载各的）
-        is_ref = "ref2va" in transformer
-        pipe = MiniMaxH3ModularPipeline()
-        pipe.register_components(
-            text_encoder=text_encoder_m,
-            vae=video_vae_m,
-            audio_vae=audio_vae_m,
-            tokenizer=tokenizer,
-            processor=processor,
-            scheduler=scheduler,
-            audio_scheduler=audio_scheduler,
-            **({"transformer_ref": transformer_m} if is_ref
-               else {"transformer": transformer_m}),
-        )
-
-        # ⑤ offload：大组件逐层 swap（24GB 卡跑 bf16 的必由之路）
-        if offload == "sequential" and device.type == "cuda":
-            comp = pipe.transformer_ref if is_ref else pipe.transformer
-            comp = _sequential_offload(comp, device, "transformer")
-            if is_ref:
-                pipe.transformer_ref = comp
-            else:
-                pipe.transformer = comp
-            pipe.text_encoder = _sequential_offload(
-                pipe.text_encoder, device, "text_encoder")
-
-        # ⑥ _execution_device sentinel：diffusers 靠组件的
-        # _hf_hook.execution_device 推断执行设备（真机读源码确认）；
-        # 没有 _hf_hook 的组件会回落 pipe.device=cpu → input_ids 留在 cpu
-        # 撞上已上卡的 embedding（index_select 设备冲突）。挂 sentinel 指明
-        # cuda；无 pre_forward 属性，encoders.py 的手动 hook 触发安全跳过。
-        if device.type == "cuda":
-            class _ExecDeviceSentinel:
-                execution_device = "cuda"
-            tr = pipe.transformer_ref if is_ref else pipe.transformer
-            tr._hf_hook = _ExecDeviceSentinel()
-            pipe.text_encoder._hf_hook = _ExecDeviceSentinel()
-
-        def _sz(p):
-            if os.path.isdir(p):
-                return sum(os.path.getsize(os.path.join(dp, f))
-                           for dp, _, fs in os.walk(p) for f in fs)
-            return os.path.getsize(p)
-        est = sum(_sz(p) for p in (tr_path, te_path, vae_path, avae_path))
-        print(f"[minimax-h3] pipeline assembled {time.time()-t0:.1f}s", flush=True)
-        return {"model": _register(key, pipe, est, "MiniMaxH3ModularPipeline",
-                                   offload_mode=offload)}
 
     @registry.register(
         "minimax.h3.gen",
-        inputs={"model": "MODEL", "prompt": "STRING",
+        inputs={"model": "MODEL", "cond": "COND", "prompt": "STRING",
                 "image": "IMAGE", "last_image": "IMAGE",
                 "references": "STRING",
                 "inpaint_video": "VIDEO", "inpaint_mask": "VIDEO",
@@ -1337,11 +1622,14 @@ def register(registry):
         description="MiniMax-H3 生成：fl2va（首/末帧）或 t2va（纯文本）或 "
                     "ref2va（references JSON：图/视频/音频参考列表，上限 "
                     "9图+3视频+3音频，prompt 里用 <Picture 1> 等点名）→ "
-                    "联合视频+音频。guidance-distilled 无负提示/cfg；24fps 固定，"
+                    "联合视频+音频。**建议接 h3-text-encode 的 cond**（同一 prompt "
+                    "多次生成可复用编码）；不接 cond 时按 prompt 现场编码（旧路径）。"
+                    "guidance-distilled 无负提示/cfg；24fps 固定，"
                     "num_frames 自动对齐 17n+5（5~15s）。输出 VIDEO 含 32kHz "
                     "立体声音轨（encode_mp4 时 mux 进 mp4）。分钟级任务，"
                     "请经 POST /jobs 异步执行")
-    def _op_gen(model, prompt="", image=None, last_image=None, num_frames=125,
+    def _op_gen(model, cond=None, prompt="", image=None, last_image=None,
+                num_frames=125,
                 seed=-1, steps=4, preview_every=0, references="",
                 height=0, width=0, inpaint_video=None, inpaint_mask=None,
                 inpaint_soft=1.0, inpaint_lock=0.0, inpaint_aug=0.999,
@@ -1354,6 +1642,38 @@ def register(registry):
             align_num_frames)
 
         pipe = model
+        # COND 优先（h3-text-encode 节点的产物）：短路编码，直接用预计算的
+        # prompt_embeds。实现上把 pipe 的 text_encoder 临时换成
+        # _PrecomputedTextEncoder —— 这样 diffusers 的 text_encoder block 照常
+        # 跑（token/vision 拼接、fl2va/ref2va 分流一行不改），只是最末端不调模型。
+        restore_te = None
+        if cond is not None:
+            if not isinstance(cond, dict) or cond.get("kind") != "h3":
+                raise ValueError(
+                    "minimax.h3.gen: cond 不是 h3 编码产物"
+                    "（须来自 minimax.h3.encode）")
+            cmode = cond.get("mode")
+            if cmode == "ref2va" and not references:
+                raise ValueError(
+                    "minimax.h3.gen: cond 是 ref2va 编码，本次未给 references")
+            if cmode == "fl2va" and image is None and last_image is None:
+                raise ValueError(
+                    "minimax.h3.gen: cond 是 fl2va 编码，本次未给 image/last_image")
+            for _k, _gv in (("height", height), ("width", width)):
+                _cv, _gv = int(cond.get(_k) or 0), int(_gv or 0)
+                if _cv and _gv and _cv != _gv:
+                    raise ValueError(
+                        f"minimax.h3.gen: cond 的 {_k}={_cv} 与本次 {_k}={_gv} "
+                        "不一致（keyframe 的 vision token 数会变，条件失效）")
+            prompt = prompt or cond.get("prompt") or ""
+            if not prompt:
+                raise ValueError("minimax.h3.gen: cond 缺 prompt 原文")
+            _ensure_exec_device_robust()
+            restore_te = pipe.text_encoder
+            pipe.text_encoder = _PrecomputedTextEncoder(cond["prompt_embeds"])
+            print(f"[minimax-h3] gen 用预编码 cond（{cmode} "
+                  f"tokens={cond.get('num_text_tokens')}）", flush=True)
+
         if not prompt:
             raise ValueError("minimax.h3.gen: prompt 必填（H3 是强文本引导模型）")
 
@@ -1421,15 +1741,21 @@ def register(registry):
         t0 = time.time()
         if execution.check_cancelled is not None:
             execution.check_cancelled()
-        if inpaint_ctx is not None:
-            hook = _InpaintHook(inpaint_ctx).install()
-            try:
-                out = pipe(output=["videos", "audio", "sampling_rate"],
-                           **kwargs)
-            finally:
-                hook.restore()
-        else:
-            out = pipe(output=["videos", "audio", "sampling_rate"], **kwargs)
+        try:
+            if inpaint_ctx is not None:
+                hook = _InpaintHook(inpaint_ctx).install()
+                try:
+                    out = pipe(output=["videos", "audio", "sampling_rate"],
+                               **kwargs)
+                finally:
+                    hook.restore()
+            else:
+                out = pipe(output=["videos", "audio", "sampling_rate"], **kwargs)
+        finally:
+            # 预编码 cond 的临时 text_encoder 必须恢复（异常也不能残留，否则
+            # 后续执行会拿上一轮的 embeds 当条件）
+            if restore_te is not None:
+                pipe.text_encoder = restore_te
         if execution.check_cancelled is not None:
             execution.check_cancelled()
 

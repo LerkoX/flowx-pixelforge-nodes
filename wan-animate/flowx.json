@@ -40,10 +40,10 @@
     {
       "name": "model",
       "type": "string",
-      "description": "Wan-Animate MODEL 引用 ID（接 wan-load task=animate 的 model 输出）",
+      "description": "Wan-Animate MODEL 引用 ID（接 wan-pipe（task=animate）的 model 输出）",
       "required": true,
       "source": {
-        "nodeRef": "wan-load",
+        "nodeRef": "wan-pipe",
         "output": "model"
       }
     },

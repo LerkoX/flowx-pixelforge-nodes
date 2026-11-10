@@ -14,7 +14,8 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py"
+    "flowx_client.py",
+    "server_op.py"
   ],
   "parameters": [
     {
@@ -137,7 +138,7 @@
       "docker"
     ],
     "preferredType": "local",
-    "bundled": false
+    "bundled": true
   },
   "ui": {
     "entry": "ui/node-widget.js",

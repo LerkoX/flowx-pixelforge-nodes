@@ -1,7 +1,7 @@
 {
   "name": "wan-animate2",
   "displayName": "Wan Animate 2",
-  "description": "Wan-Animate-**2** 角色动画/替换（**不需要 face_video**，比 v1 少一半预处理）。给角色参考图 + 骨架动作视频，让角色按骨架运动并保持身份。精细旋钮：pose_strength 姿态强度、pose_start_percent / pose_end_percent 姿态生效的采样区间（动作在早期定型，0.7 后可放松细节）、reference_image_strength 身份约束强度（<1 放松让 prompt 重绘，>1 防身份漂移）。**推荐编排**：load-video → video-control-preprocess(mode=pose) → 本节点 + load-image，这是 ComfyUI WanAnimate 的核心手法（显式骨骼信号保证姿态准确与帧间稳定，避免直接喂 RGB 时的画面跳变）。需先 wan-load（task=animate2，transformer 用 Wan2.2-Animate-14B 原始格式目录）。走异步 /jobs。",
+  "description": "Wan-Animate-**2** 角色动画/替换（**不需要 face_video**，比 v1 少一半预处理）。给角色参考图 + 骨架动作视频，让角色按骨架运动并保持身份。精细旋钮：pose_strength 姿态强度、pose_start_percent / pose_end_percent 姿态生效的采样区间（动作在早期定型，0.7 后可放松细节）、reference_image_strength 身份约束强度（<1 放松让 prompt 重绘，>1 防身份漂移）。**推荐编排**：load-video → video-control-preprocess(mode=pose) → 本节点 + load-image，这是 ComfyUI WanAnimate 的核心手法（显式骨骼信号保证姿态准确与帧间稳定，避免直接喂 RGB 时的画面跳变）。需先 wan-pipe 装配（task=animate2，transformer 用 Wan2.2-Animate-14B 原始格式目录）。走异步 /jobs。",
   "version": "1.0.0",
   "author": "flowx-team",
   "tags": [
@@ -40,9 +40,9 @@
       "name": "model",
       "type": "string",
       "required": true,
-      "description": "MODEL 引用（接 wan-load，task=animate2）",
+      "description": "MODEL 引用（接 wan-pipe（task=animate2））",
       "source": {
-        "nodeRef": "wan-load",
+        "nodeRef": "wan-pipe",
         "output": "model"
       }
     },

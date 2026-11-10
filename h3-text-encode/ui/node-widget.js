@@ -2817,21 +2817,20 @@ createNodeWidget.simplifyPoints = simplifyPoints
 
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
-  icon: '🐚',
-  title: 'MiniMax H3 加载',
+  icon: '📝',
+  title: 'H3 文本编码',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
-    { key: 'transformer', label: 'transformer int8 文件名（ref2va 文件走参考模式）', kind: 'text', mono: true, default: 'minimax_h3_fl2va_int8_convrot.safetensors' },
-    { key: 'text_encoder', label: 'Qwen3VL 文本塔 int8 文件名', kind: 'text', mono: true, default: 'qwen3vl_32b_minimax_h3_int8_convrot.safetensors' },
-    { key: 'video_vae', label: '视频 VAE（diffusers 目录名）', kind: 'text', mono: true, default: 'vae-diffusers' },
-    { key: 'audio_vae', label: '音频 VAE 官方文件名', kind: 'text', mono: true, default: 'minimax_h3_audio_vae_official.safetensors' },
-    { key: 'lora', label: 'turbo LoRA 文件名（留空不挂）', kind: 'text', mono: true, default: 'minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors' },
-    { key: 'lora_scale', label: 'LoRA 强度', kind: 'slider', min: 0, max: 2, step: 0.05, default: 1.0 },
-    { key: 'offload', label: 'offload 策略（sequential/none）', kind: 'text', default: 'sequential' },
-    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600 },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
+    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'prompt', label: '提示词', kind: 'textarea', rows: 4 },
+    { key: 'image', label: '首帧（IMAGE 对象 ID，可选）', kind: 'text', mono: true },
+    { key: 'last_image', label: '末帧（IMAGE 对象 ID，可选）', kind: 'text', mono: true },
+    { key: 'references', label: 'references JSON（ref2va，可选）', kind: 'textarea', rows: 2, mono: true },
+    { key: 'height', label: '高（0=自动，须与 gen 一致）', kind: 'text', default: 0 },
+    { key: 'width', label: '宽（0=自动）', kind: 'text', default: 0 },
+    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 1800 },
+    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  note: 'MiniMax H3 模型装配（int8 反量化 + 逐层 offload）',
+  note: 'prompt → COND。首末帧原样透传（一条线进、两条线出）→ h3-gen',
 }
 
 export default createNodeWidget(WIDGET_SPEC)

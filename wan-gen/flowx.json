@@ -40,10 +40,10 @@
     {
       "name": "model",
       "type": "string",
-      "description": "Wan MODEL 引用 ID（接 wan-load 的 model 输出）",
+      "description": "Wan MODEL 引用 ID（接 wan-pipe 的 model 输出）",
       "required": true,
       "source": {
-        "nodeRef": "wan-load",
+        "nodeRef": "wan-pipe",
         "output": "model"
       }
     },
@@ -165,6 +165,17 @@
       "required": false,
       "default": 5,
       "description": "轮询间隔秒数"
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "wan-text-encode 的 cond（推荐接线；不接则按 prompt 现场编码）",
+      "source": {
+        "nodeRef": "wan-text-encode",
+        "output": "cond"
+      }
     }
   ],
   "outputs": [

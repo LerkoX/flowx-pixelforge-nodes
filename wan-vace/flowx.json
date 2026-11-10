@@ -1,0 +1,194 @@
+{
+  "name": "wan-vace",
+  "displayName": "Wan VACE 替换",
+  "description": "Wan-VACE 可控生成（**人物替换首选**）：给定原视频 + 遮罩（白=重绘区/黑=保留区）+ 新角色参考图，在原片的动作与构图上重绘遮罩区域。相比 Wan-Animate **不需要 pose_video/face_video 预处理**（无需骨骼+人脸提取），可直接消费 video-person-mask（SAM3）的输出，链路更短、失败点更少。conditioning_scale 控制条件强度（1.0 为训练默认值，越低越贴原片、越高越跟参考图）。需要先 wan-load（task=vace，transformer 用 VACE 专用权重）。走异步 /jobs。自包含节点：server_op.py 运行时自注册。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "vace",
+    "character-swap",
+    "video",
+    "inference"
+  ],
+  "icon": "🎬",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达地址（留空同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": true,
+      "description": "MODEL 引用（接 wan-load，task=vace、transformer 选 VACE 权重）",
+      "source": {
+        "nodeRef": "wan-load",
+        "output": "model"
+      }
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "原视频对象 ID（接 load-video）"
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "遮罩对象 ID（白=重绘区/黑=保留；接 video-person-mask）"
+    },
+    {
+      "name": "reference_image",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "新角色参考图对象 ID（接 load-image；建议脸部/半身特写）"
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "提示词：描述替换后画面（人物外观 + 保留原动作/场景）"
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "负向提示词"
+    },
+    {
+      "name": "conditioning_scale",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "条件强度（1.0=训练默认；<1 更贴原片结构，>1 更贴参考图）"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "帧数（0=跟随原视频；自动对齐 4k+1）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "宽（0=跟随原视频；16 的倍数）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "高（0=跟随原视频；16 的倍数）"
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "required": false,
+      "default": 30,
+      "description": "采样步数（官方默认 50；VACE 30 步通常够）"
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "required": false,
+      "default": 5.0,
+      "description": "CFG 强度（官方 5.0~7.0）"
+    },
+    {
+      "name": "guidance_scale_2",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "MoE 二阶段 CFG（仅双专家；0=沿用 guidance_scale）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "required": false,
+      "default": -1,
+      "description": "随机种子，-1 为随机"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "生成视频对象 ID"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际种子"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 620,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

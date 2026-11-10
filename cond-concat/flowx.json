@@ -1,0 +1,94 @@
+{
+  "name": "cond-concat",
+  "displayName": "条件并列",
+  "description": "多条件并列（复杂编排的核心组合算子）。与 cond-combine 的区别：cond-combine 把两段沿序列维拼成一条**更长的提示词**（突破 77 token）；cond-concat 让多条条件**并存**，各自保留自己的区域/权重/时间窗/层区间。序列长不一致时用 repeat 到最小公倍数填充（不改变注意力语义，优于补零；长度差 >4 倍退回补零避免序列膨胀）。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "cond",
+    "conditioning",
+    "sampling"
+  ],
+  "icon": "➕",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达地址（留空同 service_url）"
+    },
+    {
+      "name": "cond_a",
+      "type": "string",
+      "required": true,
+      "description": "COND A（接 clip-text-encode 或 cond-pack）"
+    },
+    {
+      "name": "cond_b",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "COND B（可空；接另一条条件）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 300,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 2,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "并列后的 COND 引用"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 320,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

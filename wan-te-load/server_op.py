@@ -482,7 +482,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "b54859c582da"
+OP_VERSION = "bee059acd299"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -584,6 +584,50 @@ _TRANSFORMER_CFG = {    # Wan2.1 T2V/I2V/FLF2V 14B
         "text_dim": 4096,
     },
 }
+
+# Wan-VACE 专用结构（与普通 Wan transformer 的差异）：
+# - in_channels=96：VACE 把「原视频 + 遮罩 + 参考」编成条件通道拼进来
+# - added_kv_proj_dim 非空：控制信号走额外 KV 投影
+# 数值取自 Wan2.1-VACE-14B-Diffusers；1.3B 版按 dim/heads/layers 缩放。
+_VACE_CFG = {
+    "14b": {
+        "_class_name": "WanVACETransformer3DModel",
+        "added_kv_proj_dim": 1536,
+        "attention_head_dim": 128,
+        "cross_attn_norm": True,
+        "dim": 5120,
+        "eps": 1e-06,
+        "ffn_dim": 13824,
+        "freq_dim": 256,
+        "in_channels": 96,
+        "num_attention_heads": 40,
+        "num_layers": 40,
+        "out_channels": 16,
+        "patch_size": [1, 2, 2],
+        "qk_norm": "rms_norm_across_heads",
+        "rope_max_seq_len": 1024,
+        "text_dim": 4096,
+    },
+    "1.3b": {
+        "_class_name": "WanVACETransformer3DModel",
+        "added_kv_proj_dim": 1536,
+        "attention_head_dim": 128,
+        "cross_attn_norm": True,
+        "dim": 1536,
+        "eps": 1e-06,
+        "ffn_dim": 8960,
+        "freq_dim": 256,
+        "in_channels": 96,
+        "num_attention_heads": 12,
+        "num_layers": 30,
+        "out_channels": 16,
+        "patch_size": [1, 2, 2],
+        "qk_norm": "rms_norm_across_heads",
+        "rope_max_seq_len": 1024,
+        "text_dim": 4096,
+    },
+}
+
 
 _VAE_CFG = {
     "_class_name": "AutoencoderKLWan",
@@ -756,6 +800,39 @@ def _build_transformer(path, dtype, which="transformer"):
     n = sum(p.numel() for p in model.parameters())
     print(f"[wan] {which} ready {n/1e9:.2f}B params "
           f"{time.time()-t0:.1f}s", flush=True)
+    return model
+
+
+def _build_vace_transformer(path, dtype, which="transformer"):
+    """Wan-VACE transformer（WanVACETransformer3DModel，与普通 Wan 结构不同）。
+
+    差异：in_channels=96（原视频+遮罩+参考拼成条件通道）、added_kv_proj_dim
+    非空（控制信号走额外 KV）。**不能用 WanTransformer3DModel 加载**。
+    config 优先级同 _build_transformer：WAN_CONFIG_DIR/<which> → 内置表写临时目录。
+    """
+    import json as _json
+    import tempfile
+    import time as _time
+
+    import torch
+    from diffusers import WanVACETransformer3DModel
+
+    t0 = _time.time()
+    torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
+                   "fp32": torch.float32}[dtype]
+    cfg_dir = os.path.join(WAN_CONFIG_DIR, which)
+    if not os.path.isfile(os.path.join(cfg_dir, "config.json")):
+        arch = "1.3b" if "1.3b" in os.path.basename(path).lower() else "14b"
+        print(f"[wan] VACE {which} 用内置 {arch} 结构写临时 config", flush=True)
+        cfg_dir = tempfile.mkdtemp(prefix=f"wan_vace_{which}_")
+        with open(os.path.join(cfg_dir, "config.json"), "w",
+                  encoding="utf-8") as f:
+            _json.dump(_VACE_CFG[arch], f)
+    model = WanVACETransformer3DModel.from_single_file(
+        path, config=cfg_dir, dtype=torch_dtype)
+    n = sum(p.numel() for p in model.parameters())
+    print(f"[wan] VACE {which} ready {n/1e9:.2f}B params "
+          f"{_time.time()-t0:.1f}s", flush=True)
     return model
 
 
@@ -1032,7 +1109,7 @@ def _assemble_pipe(task, tr_info, te_info, vae_info, img_enc_info,
     img_enc_info {"model": clip_vision|None}
     """
     from diffusers import (WanAnimatePipeline, WanImageToVideoPipeline,
-                           WanPipeline)
+                           WanPipeline, WanVACEPipeline)
 
     common = dict(tokenizer=te_info["tokenizer"], text_encoder=te_info["model"],
                   vae=vae_info["vae"], scheduler=scheduler,
@@ -1041,7 +1118,9 @@ def _assemble_pipe(task, tr_info, te_info, vae_info, img_enc_info,
         common["transformer_2"] = tr_info["model2"]
         common["boundary_ratio"] = float(boundary_ratio)
 
-    if task == "animate":
+    if task == "vace":
+        pipe = WanVACEPipeline(**common)
+    elif task == "animate":
         pipe = WanAnimatePipeline(**common)
     elif task == "i2v":
         pipe = WanImageToVideoPipeline(
@@ -1093,7 +1172,13 @@ def _load_components(transformer, transformer2, text_encoder, vae,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tr_path = _resolve("diffusion_models", transformer)
     _require_file(tr_path, "transformer")
-    tr = _build_transformer(tr_path, dtype, "transformer")
+    is_vace = "vace" in os.path.basename(transformer).lower()
+    if is_vace:
+        # VACE 用专用 transformer（in_channels=96 + added_kv），不能用普通类
+        tr = _build_vace_transformer(tr_path, dtype, "transformer")
+        print("[wan] 检测到 VACE transformer → VACE 装配路径", flush=True)
+    else:
+        tr = _build_transformer(tr_path, dtype, "transformer")
     tr = _offload(tr, device, offload, "transformer")
     tr2 = None
     if transformer2:
@@ -1169,8 +1254,9 @@ def register(registry):
                  attention="default", max_sequence_length=512,
                  scheduler="euler"):
         task = (task or "t2v").lower()
-        if task not in ("t2v", "i2v", "animate"):
-            raise ValueError(f"wan.load: task 须为 t2v/i2v/animate，得 {task}")
+        if task not in ("t2v", "i2v", "animate", "vace"):
+            raise ValueError(
+                f"wan.load: task 须为 t2v/i2v/animate/vace，得 {task}")
         is_moe = bool(transformer2)
         key = (f"wan:{task}:{transformer}|{transformer2}|{text_encoder}|{vae}|"
                f"{image_encoder}|{lora}@{lora_scale}|{dtype}|{offload}|"
@@ -1361,8 +1447,9 @@ def register(registry):
             raise ValueError(
                 "wan.pipe: transformer / text_encoder / vae 三个组件必填")
         task = (task or "t2v").lower()
-        if task not in ("t2v", "i2v", "animate"):
-            raise ValueError(f"wan.pipe: task 须为 t2v/i2v/animate，得 {task}")
+        if task not in ("t2v", "i2v", "animate", "vace"):
+            raise ValueError(
+                f"wan.pipe: task 须为 t2v/i2v/animate/vace，得 {task}")
 
         tr_info = transformer
         is_moe = bool(tr_info.get("is_moe"))
@@ -1635,6 +1722,114 @@ def register(registry):
             (np.clip(f, 0, 1) * 255).round().astype("uint8")) for f in arr]
         print(f"[wan] animate({mode}) done {len(frames)}帧 {fps}fps "
               f"{time.time()-t0:.1f}s", flush=True)
+        return {"video": {"frames": frames, "fps": fps,
+                          "num_frames": len(frames)},
+                "seed": seed, "fps": fps}
+
+    @registry.register(
+        "wan.vace",
+        inputs={"model": "MODEL", "prompt": "STRING",
+                "negative_prompt": "STRING", "video": "VIDEO",
+                "mask": "VIDEO", "reference_image": "IMAGE",
+                "conditioning_scale": "FLOAT", "num_frames": "INT",
+                "height": "INT", "width": "INT", "steps": "INT",
+                "guidance_scale": "FLOAT", "guidance_scale_2": "FLOAT",
+                "seed": "INT"},
+        outputs={"video": "VIDEO", "seed": "INT", "fps": "INT"},
+        description="Wan-VACE 可控生成（**人物替换首选**）：给定原视频 video + "
+                    "遮罩 mask（白=重绘区/黑=保留区）+ 新角色 reference_image，"
+                    "在原片动作/构图上重绘遮罩区。相比 Wan-Animate **不需要 "
+                    "pose/face 预处理**，可直接用 video-person-mask 的产物。"
+                    "conditioning_scale 控制条件强度（1.0 为训练默认）。")
+    def _op_vace(model, prompt="", negative_prompt="", video=None, mask=None,
+                 reference_image=None, conditioning_scale=1.0,
+                 num_frames=0, height=0, width=0, steps=30,
+                 guidance_scale=5.0, guidance_scale_2=0.0, seed=-1):
+        import random
+
+        import numpy as np
+        import torch
+        from PIL import Image
+
+        pipe = model
+        if video is None:
+            raise ValueError("wan.vace: video（原视频）必填")
+        if not prompt:
+            raise ValueError("wan.vace: prompt 必填（描述替换后的画面）")
+
+        def _frames(obj):
+            """VIDEO 对象 → [PIL] 或路径（diffusers 期望 list[PIL|ndarray]）。"""
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                fr = obj.get("frames")
+                if fr:
+                    return list(fr)
+                p = obj.get("path")
+                if p:
+                    from diffusers.utils import load_video
+                    return load_video(p)          # → ndarray 列表
+            return obj
+
+        vid = _frames(video)
+        msk = _frames(mask)
+        ref = reference_image
+        if isinstance(ref, dict):
+            fr = ref.get("frames")
+            ref = (fr[0] if isinstance(fr, list) and fr else
+                   Image.open(ref["path"]).convert("RGB")
+                   if ref.get("path") else None)
+
+        seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
+        gen = torch.Generator(device="cpu").manual_seed(seed)
+
+        # 帧数/尺寸：未给则跟随原视频
+        n = int(num_frames)
+        if n <= 0:
+            n = len(vid) if hasattr(vid, "__len__") else 81
+        n = _align_frames(n)
+        h, w = int(height), int(width)
+        if h <= 0 or w <= 0:
+            first = vid[0] if hasattr(vid, "__getitem__") else None
+            if first is not None:
+                if isinstance(first, Image.Image):
+                    w, h = first.size
+                else:
+                    a = np.asarray(first)
+                    h, w = (a.shape[0], a.shape[1]) if a.ndim >= 2 else (480, 832)
+            else:
+                w, h = 832, 480
+        mod = 16
+        h = max(mod, round(h / mod) * mod)
+        w = max(mod, round(w / mod) * mod)
+
+        fps = int(getattr(pipe, "_wan_fps", WAN_FPS_DEFAULT))
+        kwargs = dict(prompt=prompt, negative_prompt=negative_prompt or None,
+                      video=vid, mask=msk,
+                      conditioning_scale=float(conditioning_scale),
+                      height=h, width=w, num_frames=n,
+                      num_inference_steps=int(steps),
+                      guidance_scale=float(guidance_scale),
+                      generator=gen, output_type="np")
+        if ref is not None:
+            kwargs["reference_images"] = [ref]
+        if guidance_scale_2 and float(guidance_scale_2) > 0:
+            kwargs["guidance_scale_2"] = float(guidance_scale_2)
+
+        t0 = time.time()
+        out = pipe(**kwargs)
+        arr = np.asarray(out.frames[0])
+        print(f"[wan] vace frames shape={arr.shape} "
+              f"min={float(arr.min()):.3f} max={float(arr.max()):.3f}",
+              flush=True)
+        if arr.ndim == 4 and arr.shape[1] in (1, 3) and arr.shape[-1] not in (1, 3):
+            arr = np.transpose(arr, (0, 2, 3, 1))
+        if arr.min() < -0.05:
+            arr = (arr + 1.0) / 2.0
+        frames = [Image.fromarray((np.clip(f, 0, 1) * 255).round().astype("uint8"))
+                  for f in arr]
+        print(f"[wan] vace done {len(frames)}帧 {fps}fps {time.time()-t0:.1f}s",
+              flush=True)
         return {"video": {"frames": frames, "fps": fps,
                           "num_frames": len(frames)},
                 "seed": seed, "fps": fps}

@@ -92,7 +92,8 @@ def targets(name, node_dir):
 OP_FAMILIES = {
     "cond_latent.py": ["cond-average", "cond-combine", "cond-set-area",
                        "latent-composite", "latent-set-noise-mask",
-                       "latent-upscale", "cond-timestep-range"],
+                       "latent-upscale", "cond-timestep-range",
+                       "cond-pack", "cond-concat"],
     # 三算子族（canny/depth/openpose）：与历史服务端已上传的 preprocess_canny.py
     # 同内容 ⇒ hash 命中不重传
     "preprocess.py": ["preprocess-canny", "preprocess-depth",
@@ -141,7 +142,7 @@ OP_FAMILIES = {
     "video_mask.py": ["video-person-mask"],
     # Wan 视频族（通义万相）：load 装配（t2v/i2v/animate 三管）+
     # gen 生成 + animate 角色替换。三节点共享同族文件。
-    "wan.py": ["wan-load", "wan-gen", "wan-animate",
+    "wan.py": ["wan-load", "wan-gen", "wan-animate", "wan-vace",
                "wan-transformer-load", "wan-te-load", "wan-vae-load",
                "wan-image-encoder-load", "wan-pipe"],
 }

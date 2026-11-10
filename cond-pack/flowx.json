@@ -1,0 +1,126 @@
+{
+  "name": "cond-pack",
+  "displayName": "条件打包",
+  "description": "把 COND 打包成结构化条件（复杂多条件编排的起点）。对标 ComfyUI 的 cond 包装链：一条裸 cond 依次可加 ① weight 整体权重 ② [start_percent,end_percent) 生效的采样进度窗口 ③ [layer_start,layer_end) 生效的 cross-attention 层区间（浅层管构图、深层管细节）。输出可继续用 cond-concat 并列，或接 cond-set-area 做区域限定。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "cond",
+    "conditioning",
+    "sampling"
+  ],
+  "icon": "🎛",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达地址（留空同 service_url）"
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "required": true,
+      "description": "COND 引用（接 clip-text-encode）",
+      "source": {
+        "nodeRef": "clip-text-encode",
+        "output": "cond"
+      }
+    },
+    {
+      "name": "weight",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "整体权重"
+    },
+    {
+      "name": "start_percent",
+      "type": "float",
+      "required": false,
+      "default": 0.0,
+      "description": "生效起始进度（0~1）"
+    },
+    {
+      "name": "end_percent",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "生效结束进度（0~1，开区间）"
+    },
+    {
+      "name": "layer_start",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "生效起始 cross-attention 层（0=首层）"
+    },
+    {
+      "name": "layer_end",
+      "type": "integer",
+      "required": false,
+      "default": -1,
+      "description": "生效结束层（-1=末层）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 300,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 2,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "cond",
+      "type": "string",
+      "description": "结构化 COND 引用"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 400,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

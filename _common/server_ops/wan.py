@@ -60,7 +60,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "5e5db65d743d"
+OP_VERSION = "b54859c582da"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1154,7 +1154,10 @@ def register(registry):
                 return arr
             if isinstance(pils, list) and pils and isinstance(
                     pils[0], _Image.Image):
-                return [np.asarray(f.convert("RGB")) for f in pils]
+                # 统一成 float32 [0,1]：diffusers 各 pipe 对 uint8/float 的
+                # 容忍度不一致，显式归一化最稳（PIL 输入内部也是这么转的）
+                return [np.asarray(f.convert("RGB"), dtype=np.float32) / 255.0
+                        for f in pils]
             return pils
 
         ref = _pils(image)
@@ -1195,8 +1198,19 @@ def register(registry):
         t0 = time.time()
         out = pipe(**kwargs)
         frames_np = out.frames[0]
+        # 与 wan.gen 同款自适应：diffusers 的 output_type="np" 一般给
+        # (T,H,W,C)/[0,1]，但版本间可能给 (T,C,H,W) 或 [-1,1]，
+        # 不处理会得到横向条带/全黑（真机在 wan.gen 上踩过）。
+        arr = np.asarray(frames_np)
+        print(f"[wan] animate frames shape={arr.shape} "
+              f"min={float(arr.min()):.3f} max={float(arr.max()):.3f}",
+              flush=True)
+        if arr.ndim == 4 and arr.shape[1] in (1, 3) and arr.shape[-1] not in (1, 3):
+            arr = np.transpose(arr, (0, 2, 3, 1))
+        if arr.min() < -0.05:
+            arr = (arr + 1.0) / 2.0
         frames = [_Image.fromarray(
-            (np.clip(f, 0, 1) * 255).round().astype("uint8")) for f in frames_np]
+            (np.clip(f, 0, 1) * 255).round().astype("uint8")) for f in arr]
         print(f"[wan] animate({mode}) done {len(frames)}帧 {fps}fps "
               f"{time.time()-t0:.1f}s", flush=True)
         return {"video": {"frames": frames, "fps": fps,

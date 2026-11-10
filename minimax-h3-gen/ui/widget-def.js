@@ -20,6 +20,9 @@ const WIDGET_SPEC = {
     { key: 'mask_schedule', label: '保留强度曲线（linear/cosine/window/const）', kind: 'text', default: 'linear', advanced: true },
     { key: 'window_start', label: 'window 起始进度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.0, advanced: true },
     { key: 'window_end', label: 'window 结束进度（0.7=定型后放松细节）', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1.0, advanced: true },
+    { key: 'mask_threshold', label: 'patch 判定阈值（0.5=多数表决 / 0=任一像素）', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, advanced: true },
+    { key: 'mask_smooth', label: '遮罩时序平滑窗口（3=消闪动 / 1=关）', kind: 'text', default: 3, advanced: true },
+    { key: 'mask_feather', label: '遮罩软边次数（0=硬边 / 1~2=消破碎感）', kind: 'text', default: 0, advanced: true },
   ],
   note: 'MiniMax H3 联合视频+音频生成（24fps 固定）',
 }

@@ -56,7 +56,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
   mux 进 mp4）+ seed；分钟级任务，请经 POST /jobs 异步执行
 """
 
-OP_VERSION = "d50ff48baccb"
+OP_VERSION = "b74565eece63"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1092,12 +1092,37 @@ def _build_references(references_json):
     return refs
 
 
-def _patchify_mask(mask_np, patch_size):
+def _smooth_mask_temporal(mask_np, window=3):
+    """遮罩时序多数表决（消 SAM3 逐帧抖动 → 消闪动）。
+
+    (T,H,W) bool → 沿时间轴滑窗，某像素在窗口内多数帧为真才保留。
+    逐帧分割模型（SAM3）在边缘/遮挡处会有 1~2 帧的翻转，反映到 patch 级
+    就是编辑区边界跳变（真机表现为「闪动色块」）。3 帧多数表决能消掉这类
+    高频抖动，同时不抹掉真实的运动（人的位移是连续多帧的）。
+    """
+    import numpy as np
+
+    if window <= 1:
+        return mask_np
+    T = mask_np.shape[0]
+    half = window // 2
+    acc = np.zeros(mask_np.shape, dtype=np.int16)
+    for off in range(-half, half + 1):
+        idx = np.clip(np.arange(T) + off, 0, T - 1)
+        acc += mask_np[idx].astype(np.int16)
+    return acc > (window // 2) + (window % 2 == 1) - 1
+
+
+def _patchify_mask(mask_np, patch_size, threshold=0.5):
     """(T, H, W) bool 遮罩 → packed (num_patches, 1) float32。
 
-    与官方 patchify_video_latents 同序（frame-major→row-major），patch 内
-    任一像素为真则该 patch 为编辑区（相当于 patch 级膨胀，边缘由节点端
-    dilate 参数控制）。
+    与官方 patchify_video_latents 同序（frame-major→row-major）。
+
+    **patch 判定用比例阈值而非 `any`**（真机修复）：旧实现「patch 内任一
+    像素为真」会让边缘 patch 的判定极度敏感——同一人物在相邻帧里某个
+    patch 命中 1 个像素就算编辑区、下一帧 0 个就不算，边界来回跳 → 画面
+    闪动。改 `mean > threshold`（默认 0.5，多数像素）后边界稳定。
+    threshold=0 等价旧的 any 行为（保留可回退）。
     """
     import numpy as np
 
@@ -1109,7 +1134,10 @@ def _patchify_mask(mask_np, patch_size):
     v = mask_np.reshape(T // pt, pt, H // ph, ph, W // pw, pw)
     v = v.transpose(0, 2, 4, 1, 3, 5)  # (T/pt, H/ph, W/pw, pt, ph, pw)
     v = v.reshape(-1, pt * ph * pw)
-    packed = v.any(axis=1)
+    if float(threshold) <= 0.0:
+        packed = v.any(axis=1)                      # 旧行为
+    else:
+        packed = v.mean(axis=1) > float(threshold)  # 多数表决
     return packed.astype(np.float32)[:, None]
 
 
@@ -1123,7 +1151,8 @@ def _memlog(tag):
 def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
                      soft_alpha=1.0, lock_ratio=0.0, num_steps=8,
                      cond_aug=0.999, mask_schedule="linear",
-                     window_start=0.0, window_end=1.0):
+                     window_start=0.0, window_end=1.0,
+                     mask_threshold=0.5, mask_smooth=3, mask_feather=0):
     """源视频 latent + 遮罩 → packed 混合上下文（人物替换等局部编辑）。
 
     机制（对齐 Relay/Comfy denoise-mask 语义）：denoise 每步后把遮罩外
@@ -1230,12 +1259,29 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
                 m_lat[i].astype(np.uint8) * 255).resize(
                     (w_lat, h_lat), resample=Image.BILINEAR)) > 127
             for i in range(t_lat)])
-    mask_packed = _patchify_mask(m_lat, patch)
+    # **时序多数表决**（消 SAM3 逐帧抖动 → 消闪动色块）
+    m_lat = _smooth_mask_temporal(m_lat, int(mask_smooth))
+    # **latent 网格软边**（消遮罩硬边导致的破碎灰块）：
+    # 对 bool 遮罩做 k 次 3×3 均值模糊再阈值化，产生 1~2 px 的过渡带，
+    # 混合时边界渐变而非硬切，视觉上不再有"贴上去"的破碎感。
+    if int(mask_feather) > 0:
+        import torch as _t
+        # (T,H,W) → (T,1,H,W)：avg_pool2d 只接受 3D/4D，把帧当 batch 维度，
+        # 每帧独立做空间模糊（只软化空间边界，不动时间轴）
+        f = _t.from_numpy(m_lat).float().unsqueeze(1)
+        for _ in range(int(mask_feather)):
+            f = _t.nn.functional.avg_pool2d(
+                f, kernel_size=3, stride=1, padding=1)
+        m_lat = (f.squeeze(1) > 0.5).numpy()
+        print(f"[minimax-h3] mask feather x{mask_feather} "
+              f"-> 覆盖率 {m_lat.mean()*100:.1f}%", flush=True)
+    mask_packed = _patchify_mask(m_lat, patch, threshold=mask_threshold)
 
     print(f"[minimax-h3] inpaint: src {tuple(src_latent.shape)} "
           f"packed={src_packed.shape[0]} rows, 编辑区 "
           f"{mask_packed.mean()*100:.1f}% patches | "
-          f"soft={soft_alpha}→1.0 升温 lock={lock_ratio} aug={cond_aug}"
+          f"soft={soft_alpha}→1.0 升温 lock={lock_ratio} aug={cond_aug} "
+          f"thr={mask_threshold} smooth={mask_smooth} feather={mask_feather}"
           f"({max(1, round(num_steps * lock_ratio))}/{num_steps}步)",
           flush=True)
     return {"src_packed": src_packed, "mask_packed": mask_packed,
@@ -1246,7 +1292,10 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
             "cond_aug": float(cond_aug),
             "mask_schedule": str(mask_schedule),
             "window_start": float(window_start),
-            "window_end": float(window_end)}
+            "window_end": float(window_end),
+            "mask_threshold": float(mask_threshold),
+            "mask_smooth": int(mask_smooth),
+            "mask_feather": int(mask_feather)}
 
 
 def _sched_value(ctx, step_i):
@@ -1697,6 +1746,8 @@ def register(registry):
                 "inpaint_soft": "FLOAT", "inpaint_lock": "FLOAT",
                 "inpaint_aug": "FLOAT", "mask_schedule": "STRING",
                 "window_start": "FLOAT", "window_end": "FLOAT",
+                "mask_threshold": "FLOAT", "mask_smooth": "INT",
+                "mask_feather": "INT",
                 "num_frames": "INT", "seed": "INT", "steps": "INT",
                 "height": "INT", "width": "INT",
                 "preview_every": "INT"},
@@ -1712,7 +1763,8 @@ def register(registry):
                 seed=-1, steps=4, preview_every=0, references="",
                 height=0, width=0, inpaint_video=None, inpaint_mask=None,
                 inpaint_soft=1.0, inpaint_lock=0.0, inpaint_aug=0.999,
-                mask_schedule="linear", window_start=0.0, window_end=1.0):
+                mask_schedule="linear", window_start=0.0, window_end=1.0,
+                mask_threshold=0.5, mask_smooth=3, mask_feather=0):
         import random
 
         import torch
@@ -1749,7 +1801,8 @@ def register(registry):
                 soft_alpha=inpaint_soft, lock_ratio=inpaint_lock,
                 num_steps=int(steps), cond_aug=inpaint_aug,
                 mask_schedule=mask_schedule, window_start=window_start,
-                window_end=window_end)
+                window_end=window_end, mask_threshold=mask_threshold,
+                mask_smooth=mask_smooth, mask_feather=mask_feather)
 
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)

@@ -138,6 +138,27 @@
       "description": "window 曲线的结束进度（0~1；0.7 即「动作定型后放松细节」）"
     },
     {
+      "name": "mask_threshold",
+      "type": "float",
+      "required": false,
+      "default": 0.5,
+      "description": "patch 判定阈值（仅 inpaint）：patch 内超过该比例的像素为编辑区才算编辑。0.5=多数表决（默认，边界稳定）；0=旧行为「任一像素」（边缘敏感、易闪动）"
+    },
+    {
+      "name": "mask_smooth",
+      "type": "integer",
+      "required": false,
+      "default": 3,
+      "description": "遮罩时序多数表决窗口（仅 inpaint）：3=取前后各1帧多数（消 SAM3 逐帧抖动导致的闪动）；1=关闭"
+    },
+    {
+      "name": "mask_feather",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "遮罩软边次数（仅 inpaint）：0=硬边；1~2=对 latent 遮罩做 3×3 均值模糊再阈值化，产生过渡带，消除硬切产生的破碎灰块（会轻微扩大编辑区）"
+    },
+    {
       "name": "num_frames",
       "type": "integer",
       "description": "帧数（24fps：125 帧≈5.2s，365 帧≈15.2s；自动对齐 17n+5）",

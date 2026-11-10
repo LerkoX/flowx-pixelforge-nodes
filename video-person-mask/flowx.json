@@ -69,9 +69,9 @@
     {
       "name": "dilate",
       "type": "integer",
-      "description": "遮罩膨胀像素（盖过发丝/边缘；0=不膨胀）",
+      "description": "遮罩膨胀像素（**人物替换建议 5**）：太大会把人物周围的能量特效/道具也包进编辑区，模型不知道画什么 → 生成「鳞片状灰块」（真机 dilate=15 复现、5 修复）；太小会切到人物边缘。原默认 12 偏大。",
       "required": false,
-      "default": 12
+      "default": 5
     },
     {
       "name": "max_frames",
@@ -102,8 +102,23 @@
     }
   ],
   "executor": {
-    "supportedTypes": ["local", "docker"],
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
     "preferredType": "local",
     "bundled": true
+  },
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 400,
+    "collapsed": false,
+    "apiVersion": 1
   }
 }

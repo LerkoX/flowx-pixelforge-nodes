@@ -162,6 +162,13 @@
       "required": false,
       "default": 5,
       "description": "轮询间隔秒数"
+    },
+    {
+      "name": "relight_lora",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Relighting LoRA 路径（replace 人物光照融合，官方配方）；空=关。如 /models/wan-animate-diffusers/relighting_lora.safetensors"
     }
   ],
   "outputs": [

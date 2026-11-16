@@ -23,7 +23,7 @@ numpy/cv2/controlnet_aux 一律函数内懒加载（本地无 GPU 契约测试�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "45e8238dbce2"
+OP_VERSION = "b2753543e78a"
 OP_FAMILY = "preprocess"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -424,12 +424,26 @@ class _OnnxWholebody:
     subset (N,134)=score。检测不到人时返回全空数组（shape 合法，
     上游解包不炸）。"""
 
+    # 模块级 session 缓存（2026-11-15）：onnx 共 ~341MB，IO 劣化期重读会
+    # 卡死数分钟；常驻后二次执行零读盘。GPU 优先（onnxruntime-gpu），
+    # CUDA 不可用时自动回退 CPU。
+    _SESSION_CACHE = {}
+
     def __init__(self, det_model_path, pose_model_path):
         import onnxruntime as ort  # 懒加载
-        self.det = ort.InferenceSession(
-            det_model_path, providers=["CPUExecutionProvider"])
-        self.pose = ort.InferenceSession(
-            pose_model_path, providers=["CPUExecutionProvider"])
+        avail = ort.get_available_providers()
+        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
+                     if "CUDAExecutionProvider" in avail
+                     else ["CPUExecutionProvider"])
+        for key, path in (("det", det_model_path), ("pose", pose_model_path)):
+            ck = (key, path)
+            if ck not in _OnnxWholebody._SESSION_CACHE:
+                _OnnxWholebody._SESSION_CACHE[ck] = ort.InferenceSession(
+                    path, providers=providers)
+                print(f"[preprocess.openpose] onnx session 加载 {key}: "
+                      f"{providers[0]}", flush=True)
+        self.det = _OnnxWholebody._SESSION_CACHE[("det", det_model_path)]
+        self.pose = _OnnxWholebody._SESSION_CACHE[("pose", pose_model_path)]
         ishape = self.pose.get_inputs()[0].shape  # (1,3,H,W)
         self.pose_input_size = (int(ishape[-1]), int(ishape[-2]))  # (W,H)
 
@@ -604,3 +618,71 @@ def register(registry):
                     "keep_loaded=True 保留检测器常驻（默认 False 用完即放）；"
                     "detect_resolution 默认 512，权重从 "
                     "/models/preprocessors/midas 本地加载")(_batch(preprocess_depth))
+
+    registry.register(
+        "preprocess.face",
+        inputs={"image": "IMAGE", "pad": "FLOAT", "out_size": "INT"},
+        outputs={"image": "IMAGE"},
+        description="人脸裁剪（Wan-Animate face_video 契约）：逐帧检测最大人脸 → "
+                    "按 pad 外扩成方形 → 裁到 out_size²（默认 512）。给 "
+                    "wan-animate2 的 face_video 用，面部身份/表情由原视频驱动；"
+                    "不给 face_video 时算子内部用全黑帧，快速扭头会糊成一片。"
+                    "权重复用 /models/insightface（antelopev2 目录）。"
+    )(_batch(preprocess_face))
+
+
+
+# ============================================================================
+# 人脸裁剪（Wan-Animate face_video 契约，2026-11-16）
+# ============================================================================
+_FACE_APP = None
+
+
+def _face_analysis():
+    """insightface 人脸检测（CPU 即可）。复用 video_enhance 那套 antelopev2
+    目录（/models/insightface/models/antelopev2，实为 buffalo_l 权重）。
+
+    为什么必须有它：Wan-Animate 是**双轨驱动**——骨骼轨给动作、面部轨给
+    身份与表情。我们此前一直给"全黑 face"，等于把面部完全交给模型自由
+    发挥，快速扭头帧必然糊成一团（真机现象）。补上真实人脸裁剪后，
+    面部身份/表情由原视频驱动，才是官方设计的行为。
+    """
+    global _FACE_APP
+    if _FACE_APP is not None:
+        return _FACE_APP
+    import os
+    from insightface.app import FaceAnalysis
+    root = os.environ.get("INSIGHTFACE_HOME",
+                          "/var/lib/flowx-inference/models/insightface")
+    app = FaceAnalysis(name="antelopev2", root=root,
+                       providers=["CPUExecutionProvider"])
+    app.prepare(ctx_id=-1, det_size=(640, 640))
+    _FACE_APP = app
+    print("[preprocess.face] insightface antelopev2 ready", flush=True)
+    return app
+
+
+def preprocess_face(image, pad=0.35, out_size=512):
+    """单帧：检测最大人脸 → 按 pad 外扩成方形 → 裁剪 → 输出 out_size²。
+
+    无脸时返回整帧缩放（不中断批次；Wan-Animate 会把无脸帧当"弱驱动"）。
+    """
+    import numpy as np
+    from PIL import Image
+
+    bgr = np.asarray(image.convert("RGB"))[:, :, ::-1].copy()
+    H, W = bgr.shape[:2]
+    app = _face_analysis()
+    faces = app.get(bgr)
+    if not faces:
+        return {"image": image.resize((out_size, out_size), Image.BILINEAR)}
+    f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+    x0, y0, x1, y1 = [float(v) for v in f.bbox]
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    half = max(x1 - x0, y1 - y0) * (1 + 2 * float(pad)) / 2
+    bx0, by0 = int(max(0, cx - half)), int(max(0, cy - half))
+    bx1, by1 = int(min(W, cx + half)), int(min(H, cy + half))
+    if bx1 - bx0 < 8 or by1 - by0 < 8:
+        return {"image": image.resize((out_size, out_size), Image.BILINEAR)}
+    return {"image": image.crop((bx0, by0, bx1, by1)).resize(
+        (out_size, out_size), Image.BILINEAR)}

@@ -14,6 +14,7 @@ const WIDGET_SPEC = {
     { key: 'flow_shift', label: 'flow_shift（720p=5.0 / 480p=3.0）', kind: 'slider', min: 1, max: 12, step: 0.5, default: 5.0 },
     { key: 'attention', label: 'attention 后端（default/sdpa/flash_attention_2）', kind: 'text', default: 'default', advanced: true },
     { key: 'max_sequence_length', label: '提示词最大 token 数', kind: 'text', default: 512, advanced: true },
+    { key: 'relight_lora', label: 'Relighting LoRA 路径（replace 光照融合）', kind: 'text', default: '', placeholder: '/models/wan-animate-diffusers/relighting_lora.safetensors' },
     { key: 'vae_tiling', label: 'VAE tiling（省显存）', kind: 'check', default: false, advanced: true },
     { key: 'vae_slicing', label: 'VAE slicing（省显存）', kind: 'check', default: false, advanced: true },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 1800, advanced: true },

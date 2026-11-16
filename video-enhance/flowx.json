@@ -1,0 +1,142 @@
+{
+  "name": "video-enhance",
+  "displayName": "Video Enhance（二次修复）",
+  "description": "视频二次修复一条龙：逐帧 **GFPGAN/RestoreFormer 面部修复**（insightface 检测→修复→椭圆羽化贴回，只改人脸不动背景）+ **RealESRGAN/SwinIR 模型超分**（倍率由模型决定，tile 分块防显存溢出）。两阶段独立开关：face_model=none 关面部、upscale_model 留空关超分。权重放推理服务 /models/facerestore 与 /models/upscale。⚠ 逐帧处理无帧间时序建模，高速运动场景可能轻微闪烁。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "enhance",
+    "face-restore",
+    "upscale",
+    "inference"
+  ],
+  "icon": "✨",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "description": "输入视频对象 ID（接 wan-animate2 / load-video 等）"
+    },
+    {
+      "name": "face_model",
+      "type": "string",
+      "required": false,
+      "default": "gfpgan",
+      "description": "面部修复模型：gfpgan / restoreformer / none（关闭）"
+    },
+    {
+      "name": "upscale_model",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "超分模型文件名（/models/upscale 下，可不带扩展名，如 RealESRGAN_x2plus）；留空关闭超分"
+    },
+    {
+      "name": "det_thresh",
+      "type": "float",
+      "required": false,
+      "default": 0.5,
+      "description": "人脸检测置信度阈值"
+    },
+    {
+      "name": "face_padding",
+      "type": "float",
+      "required": false,
+      "default": 0.3,
+      "description": "人脸裁剪框外扩比例"
+    },
+    {
+      "name": "face_feather",
+      "type": "integer",
+      "required": false,
+      "default": 16,
+      "description": "贴回羽化像素"
+    },
+    {
+      "name": "face_weight",
+      "type": "float",
+      "required": false,
+      "default": 0.5,
+      "description": "面部修复混合权重：1.0=全量修复(身份漂移+过锐)；0.3~0.4 保身份(推荐)"
+    },
+    {
+      "name": "tile",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "超分分块边长（0=整图；大分辨率设 512/256）"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "输出帧率（0=跟随输入）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "修复后视频对象 ID"
+    },
+    {
+      "name": "faces",
+      "type": "integer",
+      "description": "面部修复命中帧数"
+    },
+    {
+      "name": "scale",
+      "type": "integer",
+      "description": "实际放大倍率（无超分为 1）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 480,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

@@ -22,17 +22,35 @@ def main():
     model_id = param("model", "")
     image_id = param("image", "")
     pose_id = param("pose_video", "")
-    if not model_id:
-        raise RuntimeError("wan-animate2: model 必填（接 wan-load task=animate2）")
+    # **model 可省略（2026-11-16 简化流水线）**：独立装配模式下算子内部
+    # 自己 from_pretrained 全套组件，不再需要上游 wan-pipe。留空即走独立装配，
+    # 让整条链缩成 LoadVideo→Pose→Mask→Animate→Save 五个节点。
+    # 仍兼容旧图：给了 model 就透传（服务端 WAN_STANDALONE=0 时才会真正用到）。
     if not image_id:
         raise RuntimeError("wan-animate2: image（角色参考图）必填")
     if not pose_id:
         raise RuntimeError(
             "wan-animate2: pose_video 必填（建议 video-control-preprocess mode=pose）")
 
+    # replace 模式（人物替换）：给 background_video + mask_video 即启用，
+    # 保留原视频背景只换人（bg×(1-mask) 抹除在服务端算子里做）
+    if model_id:
+        inputs["model"] = ref(model_id)
+    bg_id = param("background_video", "")
+    mask_id = param("mask_video", "")
     inputs = {
-        "model": ref(model_id), "image": ref(image_id),
+        "image": ref(image_id),
         "pose_video": ref(pose_id),
+        "mode": param("mode", "auto"),
+        "inpaint_fill": param("inpaint_fill", "black"),
+        "inpaint_erode": param("inpaint_erode", 0, int),
+        "inpaint_expand": param("inpaint_expand", 0, int),
+        "inpaint_telea_radius": param("inpaint_telea_radius", 5, int),
+        "fps": param("fps", 0, int),
+        "composite": param("composite", "0") in ("1", "true", "True"),
+        "composite_expand": param("composite_expand", 6, int),
+        "composite_feather": param("composite_feather", 20, int),
+        "composite_gain": param("composite_gain", 1.25, float),
         "prompt": param("prompt", ""),
         "negative_prompt": param("negative_prompt", ""),
         "pose_strength": param("pose_strength", 1.0, float),
@@ -46,6 +64,20 @@ def main():
         "guidance_scale": param("guidance_scale", 1.0, float),
         "seed": param("seed", -1, int),
     }
+    _face = param("face_video", "")
+    if _face:
+        inputs["face_video"] = ref(_face)
+    # **LoRA / 打光 / 预计算文本向量（2026-11-16）**
+    for _k in ("lora", "relight_lora", "prompt_embeds_path",
+               "negative_embeds_path"):
+        _v = param(_k, "")
+        if _v:
+            inputs[_k] = _v
+    inputs["relight_scale"] = param("relight_scale", 1.0, float)
+    if bg_id:
+        inputs["background_video"] = ref(bg_id)
+    if mask_id:
+        inputs["mask_video"] = ref(mask_id)
 
     t0 = time.time()
     jid = submit_job(url, {"name": "wan.animate2", "inputs": inputs}, tok)

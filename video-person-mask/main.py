@@ -27,6 +27,9 @@ def main():
         "obj_pick": param("obj_pick", "all"),
         "dilate": param("dilate", 12, int),
         "max_frames": param("max_frames", 0, int),
+        "shape": param("shape", "contour"),
+        "bbox_smooth": param("bbox_smooth", 5, int),
+        "motion_union": param("motion_union", "0") in ("1", "true", "True"),
     }
     print(f"[video-person-mask] prompt={inputs['prompt']!r} "
           f"obj_pick={inputs['obj_pick']} dilate={inputs['dilate']}",

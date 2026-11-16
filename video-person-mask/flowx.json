@@ -99,6 +99,27 @@
       "description": "轮询间隔秒数",
       "required": false,
       "default": 5
+    },
+    {
+      "name": "shape",
+      "type": "string",
+      "required": false,
+      "default": "contour",
+      "description": "mask 形状：contour=精细轮廓(默认)；bbox=人物包围矩形(Wan2.2官方replace配方,消灭轮廓黑影)"
+    },
+    {
+      "name": "bbox_smooth",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "bbox 跨帧滑动平均窗口（防抖）；空帧自动近邻填补"
+    },
+    {
+      "name": "motion_union",
+      "type": "string",
+      "required": false,
+      "default": "0",
+      "description": "1=帧差运动兜底（薄纱裙摆/高速运动区域防漏罩，推荐 replace 场景开）"
     }
   ],
   "executor": {

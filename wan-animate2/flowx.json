@@ -1,7 +1,7 @@
 {
   "name": "wan-animate2",
   "displayName": "Wan Animate 2",
-  "description": "Wan-Animate-**2** 角色动画/替换（**不需要 face_video**，比 v1 少一半预处理）。给角色参考图 + 骨架动作视频，让角色按骨架运动并保持身份。精细旋钮：pose_strength 姿态强度、pose_start_percent / pose_end_percent 姿态生效的采样区间（动作在早期定型，0.7 后可放松细节）、reference_image_strength 身份约束强度（<1 放松让 prompt 重绘，>1 防身份漂移）。**推荐编排**：load-video → video-control-preprocess(mode=pose) → 本节点 + load-image，这是 ComfyUI WanAnimate 的核心手法（显式骨骼信号保证姿态准确与帧间稳定，避免直接喂 RGB 时的画面跳变）。需先 wan-pipe 装配（task=animate2，transformer 用 Wan2.2-Animate-14B 原始格式目录）。走异步 /jobs。",
+  "description": "Wan-Animate 角色动画/人物替换（WanAnimatePipeline）。**animate**（默认）：角色图+骨架视频→角色按骨架运动；**replace**：再接 background_video(原视频)+mask_video(SAM3遮罩)→保留原背景只替换人物（服务端 bg×(1-mask) 抹除+羽化）。需 wan-pipe task=animate2 装配。",
   "version": "1.0.0",
   "author": "flowx-team",
   "tags": [
@@ -39,8 +39,8 @@
     {
       "name": "model",
       "type": "string",
-      "required": true,
-      "description": "MODEL 引用（接 wan-pipe（task=animate2））",
+      "required": false,
+      "description": "可选。独立装配模式下算子自己加载 transformer/TE/VAE/CLIP，无需上游 wan-pipe；给值时透传（仅 WAN_STANDALONE=0 时使用）",
       "source": {
         "nodeRef": "wan-pipe",
         "output": "model"
@@ -63,6 +63,73 @@
         "nodeRef": "video-control-preprocess",
         "output": "video"
       }
+    },
+    {
+      "name": "face_video",
+      "type": "string",
+      "description": "人脸裁剪视频（video-control-preprocess mode=face）。给了则面部身份/表情由原视频驱动；留空=全黑帧，快速扭头会糊",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "background_video",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "replace 模式：原视频对象 ID（接 load-video）——给了它+mask_video 即人物替换，保留原背景只换人"
+    },
+    {
+      "name": "mask_video",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "replace 模式：人物遮罩视频对象 ID（接 video-person-mask，白=待替换人物）",
+      "source": {
+        "nodeRef": "video-person-mask",
+        "output": "mask"
+      }
+    },
+    {
+      "name": "mode",
+      "type": "string",
+      "required": false,
+      "default": "auto",
+      "description": "auto/animate/replace；auto=给了 bg+mask 自动 replace"
+    },
+    {
+      "name": "inpaint_fill",
+      "type": "string",
+      "required": false,
+      "default": "black",
+      "description": "replace 抹除填充：black=实心替换(默认)；blur=模糊背景(242实验证明人物半透明幽灵化,勿用)"
+    },
+    {
+      "name": "inpaint_erode",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "合成mask收缩像素，裁掉边缘黑描边残留（推荐6）"
+    },
+    {
+      "name": "inpaint_expand",
+      "type": "integer",
+      "description": "抹黑区额外外扩像素（与合成 mask 分离：抹黑大→模型有空间，合成精确→无黑边）。推荐 16~24",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "inpaint_telea_radius",
+      "type": "integer",
+      "description": "Telea 修复半径（inpaint_fill=telea 时生效，常用 3~5）",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "输出帧率：0=自动跟随源视频（推荐，时长/动作一致）；>0 强制指定"
     },
     {
       "name": "prompt",
@@ -168,6 +235,90 @@
       "required": false,
       "default": 5,
       "description": "轮询间隔秒数"
+    },
+    {
+      "name": "composite",
+      "type": "string",
+      "required": false,
+      "default": "0",
+      "description": "1=输出端像素级合成（gen×softmask+原始背景，治人物边缘暗晕）"
+    },
+    {
+      "name": "composite_expand",
+      "type": "integer",
+      "required": false,
+      "default": 6,
+      "description": "合成软 mask 外扩 px（混合带推到干净背景区防原人物残影）"
+    },
+    {
+      "name": "composite_feather",
+      "type": "integer",
+      "required": false,
+      "default": 20,
+      "description": "合成软 mask 羽化 px"
+    },
+    {
+      "name": "composite_gain",
+      "type": "float",
+      "required": false,
+      "default": 1.25,
+      "description": "混合带亮度对齐增益上限（0=关闭；带内背景亮/生成暗的亮度台阶补偿）"
+    },
+    {
+      "name": "lora",
+      "type": "string",
+      "description": "LoRA 配置串（接 wan-lora-load 的 lora_config）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "relight_lora",
+      "type": "string",
+      "description": "打光 LoRA 路径（直接写，人物替换建议必开；接 lora_load 时留空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "relight_scale",
+      "type": "float",
+      "description": "打光强度",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "prompt_embeds_path",
+      "type": "string",
+      "description": "预计算正向向量（接 wan-te-cache；给了就跳过 UMT5 加载）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "negative_embeds_path",
+      "type": "string",
+      "description": "预计算负向向量",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "composite_dehaze",
+      "type": "boolean",
+      "description": "暗晕抑制：混合带内明显比背景暗的像素向背景亮度提拉（治人物一圈黑影）",
+      "required": false,
+      "default": true
+    },
+    {
+      "name": "composite_dehaze_strength",
+      "type": "float",
+      "description": "暗晕抑制强度目标（背景亮度的倍数，0.9~1.0）",
+      "required": false,
+      "default": 0.95
+    },
+    {
+      "name": "composite_fill_black",
+      "type": "float",
+      "description": "mask 内近黑空白回填阈值（RGB 三通道都低于此值的像素换回背景，治硬黑边；0=关闭，推荐 20~30）",
+      "required": false,
+      "default": 25.0
     }
   ],
   "outputs": [

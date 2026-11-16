@@ -1,0 +1,102 @@
+{
+  "name": "wan-lora-load",
+  "version": "1.0.0",
+  "displayName": "Wan LoRA / 打光",
+  "description": "Wan LoRA 统一入口：加速 LoRA 与官方打光 LoRA（人物替换必开，让光照匹配背景）。输出配置串给 wan-animate2。",
+  "author": "flowx-team",
+  "icon": "🎨",
+  "tags": [
+    "wan",
+    "lora",
+    "relight"
+  ],
+  "category": "model",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "lora_config",
+      "type": "STRING",
+      "description": "归一化配置串（传给 wan-animate2 的 lora）"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "lora",
+      "type": "string",
+      "description": "LoRA 列表，逗号分隔，可带强度：a.safetensors:1.0,b.safetensors:0.8（相对路径按 models/loras 解析）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "lora_scale",
+      "type": "float",
+      "description": "默认强度（项内未写强度时用）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "relight_lora",
+      "type": "string",
+      "description": "打光 LoRA 路径（人物替换建议必开）",
+      "required": false,
+      "default": "/models/wan-animate-diffusers/relighting_lora.safetensors"
+    },
+    {
+      "name": "relight_scale",
+      "type": "float",
+      "description": "打光强度",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "容器内回退地址（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "job 超时（秒）",
+      "required": false,
+      "default": 1800
+    }
+  ],
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 360,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 2100,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

@@ -18,7 +18,7 @@ from flowx_client import (emit, param, ref, resolve_op, submit_job,
                           wait_job, token)
 
 _OPS = {"depth": "preprocess.depth", "pose": "preprocess.openpose",
-        "canny": "preprocess.canny"}
+        "canny": "preprocess.canny", "face": "preprocess.face"}
 
 
 def _run(url, tok, payload, timeout):
@@ -74,6 +74,11 @@ def main():
                   "detector": param("detector", "dwpose"),
                   "include_hand": param("include_hand", "0") in ("1", "true", "True"),
                   "include_face": param("include_face", "0") in ("1", "true", "True")}
+    elif mode == "face":
+        # Wan-Animate face_video：人脸裁剪序列（面部身份/表情驱动）
+        inputs = {"image": ref(frames_id),
+                  "pad": param("face_pad", 0.35, float),
+                  "out_size": param("face_size", 512, int)}
     else:
         inputs = {"image": ref(frames_id),
                   "low_threshold": param("low_threshold", 100, int),

@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "fa1102ad3e36"
+OP_VERSION = "f840da1974f0"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -445,10 +445,29 @@ def _t5_block_device_fn(k):
     return fn
 
 
+# FLUX 官方 FlowMatch 调度器参数（schnell/dev 通用；无本地 scheduler 目录时兜底）
+_FLUX_SCHED_DEFAULTS = dict(
+    base_image_seq_len=256, base_shift=0.5, max_image_seq_len=4096,
+    max_shift=1.15, num_train_timesteps=1000, shift=1.0, shift_terminal=None,
+    use_dynamic_shifting=False, use_karras_sigmas=False,
+    use_exponential_sigmas=False, use_beta_sigmas=False, invert_sigmas=False)
+
+
 def _fresh_scheduler():
+    """新建 FLUX 调度器。
+
+    优先读 `/models/flux/scheduler/scheduler_config.json`；**缺失时直接按官方
+    默认参数构造**——原先无条件 `from_pretrained` 会在没有该目录时转而联网
+    拉 HuggingFace（云机无外网 ⇒ 报 "couldn't connect to huggingface.co /
+    /models/flux/scheduler is not the path to a directory..."），
+    真机实测（2026-11-12 4090）卡在这一步。
+    """
     from diffusers import FlowMatchEulerDiscreteScheduler
-    return FlowMatchEulerDiscreteScheduler.from_pretrained(
-        os.path.join(FLUX_DIR, "scheduler"))
+    d = os.path.join(FLUX_DIR, "scheduler")
+    if os.path.isfile(os.path.join(d, "scheduler_config.json")):
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(d)
+    print("[flux] 无 scheduler 目录，用官方默认参数构造 FlowMatch", flush=True)
+    return FlowMatchEulerDiscreteScheduler(**_FLUX_SCHED_DEFAULTS)
 
 
 def _assemble_txt2img(unet):
@@ -597,6 +616,12 @@ def register(registry):
         tr_cfg_dir = _unet_config_dir(transformer)
         t0 = time.time()
         quant = GGUFQuantizationConfig(compute_dtype=_FLUX_DTYPES[dt])
+        # 注意：量化加载**必须**保持 low_cpu_mem_usage=True（diffusers 会抛
+        # "low_cpu_mem_usage cannot be False when using quantization"）。
+        # 之前报的 "Cannot copy out of meta tensor" 根因不在加载参数，
+        # 而是 **transformer/config.json 多了 axes_dims_rope / out_channels
+        # 两个字段**，导致结构不匹配、GGUF 权重没灌进去、参数留在 meta。
+        # 现改用官方 config（从已验证可用的 1080 机器同步，见 AGENTS.md）。
         tr = FluxTransformer2DModel.from_single_file(
             tr_path, config=tr_cfg_dir,
             quantization_config=quant, torch_dtype=_FLUX_DTYPES[dt])
@@ -656,7 +681,27 @@ def register(registry):
         if not os.path.isdir(path):
             raise ValueError(f"flux: 缺 VAE 目录（{path}）")
         t0 = time.time()
-        vae = AutoencoderKL.from_pretrained(path, torch_dtype=_FLUX_DTYPES[dt])
+        # **VAE 权重格式判别（真机根因，2026-11-12）**：
+        # 共享盘的 ae.safetensors 是 **original LDM 格式**（键名
+        # `decoder.mid.attn_1.k.bias`），而 `from_pretrained` 只认 diffusers
+        # 格式（`decoder.mid_block.attentions.0.to_k.bias`）——244 个权重一个
+        # 都匹配不上，AutoencoderKL 参数全部**新初始化在 meta 设备**；
+        # 随后 `_move_vaes("cpu")` 调 `.to("cpu")` 就抛
+        # "Cannot copy out of meta tensor"，被误当成 transformer 的问题查了很久。
+        # 正解：original 格式必须走 `from_single_file`（diffusers 内置转换）。
+        ckpt = os.path.join(path, "diffusion_pytorch_model.safetensors")
+        orig = os.path.join(FLUX_DIR, "ae.safetensors")
+        src = ckpt if os.path.isfile(ckpt) else (orig if os.path.isfile(orig) else None)
+        if src and not os.path.isdir(os.path.join(path, "vae")):
+            vae = AutoencoderKL.from_single_file(
+                src, config=os.path.join(path, "config.json"),
+                torch_dtype=_FLUX_DTYPES[dt])
+            print(f"[flux] vae {name} (from_single_file, "
+                  f"original-LDM→diffusers 转换) dtype={dt} "
+                  f"{time.time()-t0:.1f}s", flush=True)
+        else:
+            vae = AutoencoderKL.from_pretrained(
+                path, torch_dtype=_FLUX_DTYPES[dt])
         print(f"[flux] vae {name} dtype={dt} {time.time()-t0:.1f}s", flush=True)
         return {"vae": _register(key, vae, int(0.4e9), "AutoencoderKL(FLUX)")}
 
@@ -720,22 +765,25 @@ def register(registry):
             # T5 分层直载——前 k 层逐张量直载 GPU（不占 RAM），其余驻 CPU，
             # 避免「全量进 RAM 再分发」把 WSL 内存盒撑爆（OOM Kill）；
             # CLIP-L 回 CPU，编码入口改走 CPU
-            print(f"[flux.encode] T5 上卡 OOM，降级 GPU/CPU 分层直载: {e}", flush=True)
+            print(f"[flux.encode] T5 上卡 OOM，降级 **全程 CPU 编码**: {e}",
+                  flush=True)
             import gc
-            # 关键：清掉异常 traceback——它钉住加载帧里的半成品 GPU 张量，
-            # 不清则 allocated 虚高 7.5GB，分层计划会被算成 0 层
+            # 真机教训（2026-11-12，1080 与 4090 双机复现）：
+            # 原先走「T5 分层直载（部分层驻 GPU）」会在 release 时触发
+            # `!handles_.at(i) INTERNAL ASSERT FAILED` @CUDACachingAllocator.cpp:418
+            # ——expandable_segments 下跨设备 dispatched 张量的乱序释放会
+            # **弄坏整个进程的分配器**，之后任何 CUDA 调用都崩。
+            # 改为：T5 全量在 CPU 编码（4.7B bf16 ≈9.4GB 内存，1080 的 13GB
+            # 内存刚好够），慢（3~5 分钟）但绝对不碰 GPU 分配器。
             e.__traceback__ = None
-            if clip.t5 is not None:
-                clip.t5.to("cpu")
+            clip.t5 = None            # 丢掉半成品 GPU 张量
             gc.collect()
             torch.cuda.empty_cache()
-            k, _n = _t5_split_k(clip.t5_cfg)
-            if clip.t5 is None:
-                clip.t5 = load_t5_gguf(clip.t5_gguf, clip.t5_cfg,
-                                       device_fn=_t5_block_device_fn(k))
-            _dispatch_t5_split(clip.t5, k)
+            clip.t5 = load_t5_gguf(clip.t5_gguf, clip.t5_cfg, device="cpu")
             clip.clip_l.to("cpu")
             enc_dev = torch.device("cpu")
+            print(f"[flux.encode] T5 已全量驻 CPU，开始 CPU 编码（预计 3~5 分钟）",
+                  flush=True)
         pipe = FluxPipeline(scheduler=None, vae=None,
                             text_encoder=clip.clip_l, tokenizer=clip.tokenizer,
                             text_encoder_2=clip.t5,
@@ -841,9 +889,14 @@ def register(registry):
         import gc
         gc.collect()
         torch.cuda.empty_cache()
-        model.to("cuda")
-        torch.cuda.empty_cache()
         pipe = _assemble_txt2img(model)
+        # **量化权重必须用 pipeline 级移卡**（真机双机复现，2026-11-12）：
+        # GGUF/量化 transformer 的参数在加载后是 meta 设备占位，靠
+        # `pipe.to(device)` 里 accelerate 的 _hf_hook 才会 materialize；
+        # 直接 `model.to("cuda")` 会抛
+        # "Cannot copy out of meta tensor; no data!"（1080 与 4090 均复现）。
+        pipe.to("cuda")
+        torch.cuda.empty_cache()
         # embeds 按 transformer 实际 compute dtype 转换（dtype 旋钮联动；
         # 默认 fp16 与历史硬编码一致）
         pe = cond["prompt_embeds"].to("cuda", model.dtype)

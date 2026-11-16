@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "48899affaaeb"
+OP_VERSION = "3036e237c1e3"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -112,6 +112,99 @@ def _video_to_frames(video_data, max_frames=0):
     return frames, fps
 
 
+def _motion_union(masks, frames, thresh=25, near_px=30):
+    """帧差运动区 ∪ 分割 mask（薄纱裙摆等高速运动区域的分割漏网兜底）。
+
+    根因（成片 248 复盘）：SAM3 对快速运动的半透明薄纱裙摆追踪失败，
+    mask 只罩躯干 → 裙摆区被 bg 抹黑 → diffusers replace 无语义合成
+    （mask 仅作条件信号）→ 模型忠实保留黑色区 = 黑色裙摆残留。
+    帧差与分割模型无关，运动必捕获。邻域约束防止远处运动物（窗帘摆动等）
+    被误吞：只保留与人物 mask 膨胀 near_px 邻域相交的运动区。
+    """
+    import numpy as np
+    import cv2
+    T, H, W = masks.shape
+    out = masks.copy()
+    n_add = 0
+    for t in range(T):
+        t0 = max(0, t - 1)
+        t1 = min(T - 1, t + 1)
+        a = cv2.cvtColor(np.asarray(frames[t0]), cv2.COLOR_RGB2GRAY)
+        b = cv2.cvtColor(np.asarray(frames[t1]), cv2.COLOR_RGB2GRAY)
+        diff = cv2.absdiff(a, b)
+        motion = diff > int(thresh)
+        if not motion.any():
+            continue
+        # 邻域约束：运动区必须接触（膨胀后的）人物 mask
+        near = cv2.dilate(masks[t].astype(np.uint8),
+                          np.ones((int(near_px) * 2 + 1,) * 2, np.uint8)) > 0
+        extra = motion & near & ~masks[t]
+        if extra.any():
+            # 运动区本身毛糙：闭运算填洞 + 轻微膨胀连成整片
+            e = extra.astype(np.uint8)
+            e = cv2.morphologyEx(e, cv2.MORPH_CLOSE,
+                                 np.ones((9, 9), np.uint8))
+            e = cv2.dilate(e, np.ones((5, 5), np.uint8))
+            # **边缘平滑链（tapered_corners 等效，2026-11-15 裙摆暗带修复）**：
+            # 帧差补丁的方形角/毛刺边缘会让模型在粗糙边界生成暗过渡带。
+            # 开运算去毛刺 → 大椭圆核闭运算平滑拐角 → 小高斯软化边缘。
+            e = cv2.morphologyEx(e, cv2.MORPH_OPEN,
+                                 np.ones((7, 7), np.uint8))
+            e = cv2.morphologyEx(e, cv2.MORPH_CLOSE,
+                                 cv2.getStructuringElement(
+                                     cv2.MORPH_ELLIPSE, (31, 31)))
+            e = cv2.GaussianBlur(e, (0, 0), 2.0)
+            e = (e > 0.5).astype(np.uint8)
+            out[t] |= e > 0
+            n_add += int((e > 0).sum())
+    print(f"[video-mask] 帧差运动兜底: 补 {n_add} px", flush=True)
+    return out
+
+
+def _bbox_rectify(masks, smooth=5):
+    """(T,H,W) bool → **矩形包围盒 mask**（Wan2.2 官方 get_aug_mask
+    w_len=1/h_len=1 等价物）+ bbox 跨帧滑动平均防抖 + 空帧近邻填补。
+
+    官方 replace 配方用矩形而非精细轮廓（arxiv 2502.06145）：模型在矩形
+    黑洞里生成人物连同身边环境，边缘过渡远离人体轮廓 → 天然无轮廓黑影、
+    光照一致。精细轮廓 mask 逼迫模型贴轮廓画人 → 轮廓黑影+图层感。
+    """
+    import numpy as np
+    T, H, W = masks.shape
+    boxes = np.zeros((T, 4), dtype=np.float32)
+    valid = np.zeros(T, dtype=bool)
+    for t in range(T):
+        ys, xs = np.nonzero(masks[t])
+        if len(xs):
+            boxes[t] = [xs.min(), ys.min(), xs.max(), ys.max()]
+            valid[t] = True
+    if not valid.any():
+        return masks  # 全空：原样返回（上层有告警）
+    # 空帧近邻填补（前向优先）
+    for t in range(T):
+        if not valid[t]:
+            for d in range(1, T):
+                if t - d >= 0 and valid[t - d]:
+                    boxes[t] = boxes[t - d]
+                    break
+                if t + d < T and valid[t + d]:
+                    boxes[t] = boxes[t + d]
+                    break
+    # bbox 坐标滑动平均防抖（矩形逐帧跳动会产生边缘闪烁）
+    if int(smooth) > 1:
+        k = np.ones(int(smooth)) / int(smooth)
+        for c in range(4):
+            boxes[:, c] = np.convolve(boxes[:, c], k, mode="same")
+    out = np.zeros_like(masks)
+    for t in range(T):
+        x0, y0, x1, y1 = boxes[t].astype(int)
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(W - 1, x1), min(H - 1, y1)
+        if x1 > x0 and y1 > y0:
+            out[t, y0:y1 + 1, x0:x1 + 1] = True
+    return out
+
+
 def _dilate_masks(masks, px):
     """(T, H, W) bool → maxpool 膨胀（无边距核近似，代替 cv2.dilate）。"""
     if px <= 0:
@@ -130,14 +223,17 @@ def register(registry):
     @registry.register(
         "video.person_mask",
         inputs={"video": "VIDEO", "prompt": "STRING", "obj_pick": "STRING",
-                "dilate": "INT", "max_frames": "INT"},
+                "dilate": "INT", "max_frames": "INT",
+                "shape": "STRING", "bbox_smooth": "INT",
+                "motion_union": "BOOL"},
         outputs={"mask": "VIDEO", "fps": "INT", "num_frames": "INT",
                  "width": "INT", "height": "INT", "objects": "INT"},
         description="SAM3 视频人物遮罩：文本提示（如 'the woman in white'）"
                     "检测目标并全片追踪，输出逐帧灰度遮罩（255=选中）。"
                     "obj_pick: all=该提示命中的全部目标合并 / best=仅最高分")
     def _op_person_mask(video, prompt="person", obj_pick="all", dilate=12,
-                        max_frames=0):
+                        max_frames=0, shape="contour", bbox_smooth=5,
+                        motion_union=False):
         import numpy as np
         import torch
         from PIL import Image
@@ -189,14 +285,31 @@ def register(registry):
                           f"obj={masks.shape[0]} cover={cover:.1f}%",
                           flush=True)
 
+        # **主轮廓平滑（2026-11-15）**：SAM3 锯齿边缘平滑（椭圆核闭运算），
+        # 减少 mask 边界粗糙导致的生成暗过渡。
+        import cv2 as _cv2m
+        for _t in range(len(merged)):
+            _m = merged[_t].astype("uint8")
+            _m = _cv2m.morphologyEx(_m, _cv2m.MORPH_CLOSE,
+                                    _cv2m.getStructuringElement(
+                                        _cv2m.MORPH_ELLIPSE, (15, 15)))
+            merged[_t] = _m > 0
+        # **帧差运动兜底（2026-11-15 裙摆漏罩根因修复，在 dilate 前）**
+        if motion_union in (True, "1", "true", "True", 1):
+            merged = _motion_union(merged, frames)
         merged = _dilate_masks(merged, int(dilate))
+        # **矩形化（2026-11-15 官方配方对齐）**：Wan2.2 replace 官方 mask
+        # 是人物 bbox 矩形（get_aug_mask w1h1），不是精细轮廓——消灭轮廓
+        # 黑影与"人物图层感"的关键。shape=bbox 时启用。
+        if str(shape).lower() == "bbox":
+            merged = _bbox_rectify(merged, smooth=int(bbox_smooth))
         empty = int((~merged.any(axis=(1, 2))).sum())
         if empty:
             print(f"[video-mask] 警告：{empty}/{n} 帧无遮罩（目标未检出/跟丢）",
                   flush=True)
         mask_frames = [Image.fromarray(merged[i].astype(np.uint8) * 255)
                        for i in range(n)]
-        print(f"[video-mask] done {time.time()-t0:.1f}s "
+        print(f"[video-mask] done {time.time()-t0:.1f}s shape={shape} "
               f"objects_peak={objects_seen}", flush=True)
         return {"mask": {"frames": mask_frames, "fps": fps},
                 "fps": int(round(fps)), "num_frames": n,

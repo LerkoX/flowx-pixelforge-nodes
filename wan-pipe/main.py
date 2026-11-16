@@ -47,6 +47,7 @@ def main():
         "vae_slicing": _bool("vae_slicing"),
         "attention": param("attention", "default"),
         "max_sequence_length": param("max_sequence_length", 512, int),
+        "relight_lora": param("relight_lora", ""),
     }
     ie = param("image_encoder", "")
     if ie:

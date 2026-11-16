@@ -52,7 +52,7 @@
       "type": "string",
       "required": false,
       "default": "depth",
-      "description": "控制信号类型：depth 深度（结构+远近，最通用）/ pose 骨架（人体姿态最准）/ canny 边缘"
+      "description": "预处理模式：depth / pose / canny / face（人脸裁剪，给 wan-animate2 的 face_video）"
     },
     {
       "name": "detector",
@@ -130,6 +130,20 @@
       "required": false,
       "default": 5,
       "description": "轮询间隔秒数"
+    },
+    {
+      "name": "face_pad",
+      "type": "float",
+      "description": "人脸裁剪外扩比例（face 模式）",
+      "required": false,
+      "default": 0.35
+    },
+    {
+      "name": "face_size",
+      "type": "integer",
+      "description": "人脸输出边长（face 模式）",
+      "required": false,
+      "default": 512
     }
   ],
   "outputs": [

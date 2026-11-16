@@ -341,6 +341,18 @@ def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
                     f"（INFERENCE_TOKEN 未配置）。请在服务端配置 token 并在节点"
                     f" service_token 参数填入同一值后重试") from e
             if "-> HTTP 409" in msg or "-> HTTP 400" in msg:
+                # **版本兜底（2026-11-16）**：服务端已存在同族文件（如 wan.py）
+                # 且内容与我们一致时，/ops 里的 plugin_hash 可能为 None（重启后
+                # 扫描路径不回填），导致上面的幂等预检没命中 → 上传触发跨文件
+                # 409。此时只要 /ops 上已有 `<op>@<本地OP_VERSION>`，就等价就绪。
+                if family and version:
+                    _want = f"{op_name}@{version}"
+                    _names = [o.get("name") for o in
+                              get_json(base, "/ops", tok, timeout=30).get("ops", [])]
+                    if _want in _names:
+                        print(f"[ensure_plugin] {op_name} 已注册为 {_want}"
+                              f"（同族文件已存在，跳过重复上传）", flush=True)
+                        return _done(_want)
                 if attempt == 1:
                     time.sleep(1.5)   # 等同族并发上传落地
                     ready = _op_ready()
@@ -375,6 +387,43 @@ def ensure_plugin(base, op_name, plugin_path=None, tok=None, timeout=120):
         else:
             print(f"[ensure_plugin] {op_name} 自注册成功"
                   f"（{resp.get('plugin')}）", flush=True)
+
+        # ---------- 加固 ③：最终生效版本自证（2026-11-16 雪花事故） ----------
+        # 事故复盘：plugins.d 里残留 wan_<旧hash>.py 时，服务端按文件名排序
+        # 依次加载、**后加载覆盖先加载**；同时**别的节点**（同族、Studio 里还是
+        # 旧副本）执行自己的 ensure_plugin 会把旧版重新注册回来 → 本次上传的
+        # 新版被静默顶掉，节点拿着旧算子跑出雪花视频，日志里只有一行
+        # `[op] wan.animate2@<旧hash>` 极易被当成"旧日志残留"忽略。
+        # 这里在上传成功后**回查 /ops 的真实注册版本**，与本地插件声明的
+        # OP_VERSION 比对，不一致立即失败——宁可报错，不出废片。
+        if family and version:
+            expect = f"{op_name}@{version}"
+            if actual != expect:
+                raise RuntimeError(
+                    f"插件版本自证失败：期望 '{expect}'，服务端实际生效 "
+                    f"'{actual}'。插件被同族旧副本覆盖（另有节点仍在注册旧版，"
+                    f"或 plugins.d 残留旧族文件）。处理：删掉服务端 "
+                    f"plugins.d/{family}_*.py 与 {family}.py 后重启服务，"
+                    f"并把**所有**用到本族的节点重新 node import。")
+
+        # ---------- 加固 ②：上传后清理同族旧文件（2026-11-16） ----------
+        # 旧族文件残留是"旧版覆盖新版"的温床（文件名排序靠后者生效）。
+        # 新内容已注册成功，同族的其它文件即可删除（同内容会再生成，幂等）。
+        try:
+            files = get_json(base, "/admin/plugins", tok,
+                             timeout=30).get("plugins") or []
+            names = [f if isinstance(f, str) else f.get("filename") or f.get("name")
+                     for f in files]
+            stale = [n for n in names if n and n != filename
+                     and (n == f"{family}.py" or n.startswith(f"{family}_"))]
+            for n in stale:
+                try:
+                    delete_json(base, f"/admin/plugins/{n}", tok, timeout=30)
+                    print(f"[ensure_plugin] 清理同族旧插件 {n}", flush=True)
+                except Exception:      # noqa: BLE001
+                    pass
+        except Exception:              # noqa: BLE001
+            pass
         return _done(actual)
     raise last_err
 

@@ -110,6 +110,7 @@ OP_FAMILIES = {
     "instantid.py": ["instantid-apply", "instantid-face-analyze",
                      "face-mask", "face-similarity"],
     "upscale.py": ["upscale-model-load", "upscale-model-apply"],
+    "video_enhance.py": ["video-enhance"],
     # G1 抠图族（B2，dev-plan §48）：BiRefNet 抠图（变换沿 refine/composite 走节点侧 PIL）
     "matting.py": ["matting-birefnet"],
     # G6 人脸修复族（B2，dev-plan §48）：spandrel GFPGAN/RestoreFormer + insightface 检测

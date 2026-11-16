@@ -1,0 +1,111 @@
+{
+  "name": "wan-te-cache",
+  "version": "1.0.0",
+  "displayName": "Wan 文本向量缓存",
+  "description": "UMT5-XXL 向量缓存：首次编码后落盘，后续同 prompt 直接复用，完全跳过 11GB 文本模型加载。",
+  "author": "flowx-team",
+  "icon": "⚡",
+  "tags": [
+    "wan",
+    "text-encode",
+    "cache"
+  ],
+  "category": "conditioning",
+  "language": "python",
+  "entry": "main.py",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "embeds_path",
+      "type": "STRING",
+      "description": "正向向量缓存文件路径"
+    },
+    {
+      "name": "negative_embeds_path",
+      "type": "STRING",
+      "description": "负向向量缓存文件路径"
+    },
+    {
+      "name": "cache_hit",
+      "type": "STRING",
+      "description": "是否命中缓存（1/0）"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "正向提示词",
+      "required": true
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "description": "负向提示词",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "integer",
+      "description": "最大 token 数（512 为 Wan 默认）",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "description": "文本编码器目录（空=默认 /models/wan/config/text_encoder）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "容器内回退地址（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "job 超时（秒）",
+      "required": false,
+      "default": 1800
+    }
+  ],
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 360,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 2100,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

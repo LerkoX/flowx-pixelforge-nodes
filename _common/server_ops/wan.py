@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "477659bedc3c"
+OP_VERSION = "6556d3559f78"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2499,9 +2499,21 @@ def register(registry):
                 import torch as _tj
                 _vae = getattr(pipe, "vae", None)
                 if _vae is not None:
+                    # **拉回源=填充版背景（2026-11-18 v29，治半透明幽灵）**：
+                    # 原用 _bg_orig_frames（原视频，含原人）→ 软 alpha 边缘/低置信
+                    # 区的拉回权重把**原人 latent** 混进生成 → 人物半透明（v28
+                    # 实证）。改用 bg_masked（inpaint_fill 填充后的干净背景）：
+                    # ① 人物边缘拉回的是窗帘/填充纹理，无原人幽灵；
+                    # ② 条件与拉回源一致（都在 bg_masked 上），生成与拉回不打架；
+                    # ③ mask 外区域 bg_masked==原视频，背景照旧像素级保真。
+                    _src_frames = (bg_masked if isinstance(bg_masked, list)
+                                   and len(bg_masked) == len(_bg_orig_frames)
+                                   else _bg_orig_frames)
                     _bt = _tj.stack([_tj.from_numpy(
-                        (f / 127.5 - 1.0).transpose(2, 0, 1)
-                    ) for f in _bg_orig_frames]).permute(1, 0, 2, 3)[None]
+                        (np.asarray(f if isinstance(f, np.ndarray) else
+                                    np.asarray(f), dtype=np.float32)
+                         / 127.5 - 1.0).transpose(2, 0, 1)
+                    ) for f in _src_frames]).permute(1, 0, 2, 3)[None]
                     _bt = _bt.to("cuda", _vae.dtype)
                     with _tj.no_grad():
                         _enc = _vae.encode(_bt)

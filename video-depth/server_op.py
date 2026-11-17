@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "573f88b651a7"
+OP_VERSION = "480f2b2e593d"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -746,59 +746,71 @@ def _matting_rvm(frames, weights=None, dsr=0.25):
 
 
 
-_BIREF_SESSION = {}
+_BIREF_CACHE = {}
 
 
-def _matting_birefnet(frames, weights=None, size=1024, smooth=3):
-    """BiRefNet 单帧高精度抠图（SOTA 边缘，双分辨率全局参考）。
+def _matting_birefnet(frames, weights=None, smooth=3):
+    """BiRefNet / RMBG-2.0 单帧高精度抠图（SOTA 边缘，双分辨率全局参考）。
 
-    - onnx 路线（session 模块级缓存，同 DWPose 模式：GPU 优先自动回退）；
+    - **torch 直载**（共享盘 RMBG-2.0 目录自带自包含 birefnet.py 网络定义
+      2244 行：PVT+Swin backbone 全内联，仅依赖 timm）+ safetensors 全量灌入；
+    - RMBG-2.0 = BiRefNet 架构的**人像/前景特化版**（BRIA 官方免费非商用），
+      人物场景首选；
     - 输入 1024² ImageNet 归一化，输出 sigmoid 前景 alpha；
-    - **单帧无记忆** → 软 alpha 用中心加权滑动平均做时序平滑（无滞后，
-      区别于硬 mask 的多数表决）；
-    - 权重优先 portrait 版（人物特化），缺失时 general 版兜底。
+    - **单帧无记忆** → 软 alpha 中心加权滑动平均时序平滑（无滞后）。
     """
     import cv2
     import numpy as np
+    import torch
     from pathlib import Path
     cands = [str(weights)] if weights else []
     cands += [
-        "/var/lib/flowx-inference/models/birefnet/birefnet-portrait.onnx",
-        "/var/lib/flowx-inference/models/birefnet/BiRefNet-portrait.onnx",
-        "/var/lib/flowx-inference/models/birefnet/birefnet-general.onnx",
-        "/var/lib/flowx-inference/models/birefnet/BiRefNet-general.onnx",
-        "/models/birefnet/birefnet-portrait.onnx",
+        "/var/lib/flowx-inference/models/birefnet/RMBG-2.0",
+        "/models/birefnet/RMBG-2.0",
+        "/model/HuggingFace/chflame163/ComfyUI_LayerStyle/"
+        "ComfyUI/models/BiRefNet/RMBG-2.0",
     ]
-    path = next((c for c in cands if c and Path(c).is_file()), None)
-    if path is None:
+    rdir = next((c for c in cands
+                 if c and (Path(c) / "birefnet.py").is_file()
+                 and (Path(c) / "model.safetensors").is_file()), None)
+    if rdir is None:
         raise RuntimeError(
-            "BiRefNet onnx 未找到（人物场景推荐 birefnet-portrait.onnx，"
-            "general 版为通用二分。ComfyUI 生态/zhengpeng7 onnx 导出）。"
-            "请放到 /var/lib/flowx-inference/models/birefnet/")
-    if path not in _BIREF_SESSION:
-        import onnxruntime as ort
-        avail = ort.get_available_providers()
-        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
-                     if "CUDAExecutionProvider" in avail
-                     else ["CPUExecutionProvider"])
-        _BIREF_SESSION[path] = ort.InferenceSession(path,
-                                                    providers=providers)
-        print(f"[video-mask] birefnet onnx session 加载: {providers[0]}",
-              flush=True)
-    sess = _BIREF_SESSION[path]
-    iname = sess.get_inputs()[0].name
+            "BiRefNet/RMBG-2.0 模型目录未找到（需含 birefnet.py + "
+            "model.safetensors；共享盘 /model/HuggingFace/chflame163/"
+            "ComfyUI_LayerStyle/ComfyUI/models/BiRefNet/RMBG-2.0 可软链）")
+    global _BIREF_CACHE
+    if rdir not in _BIREF_CACHE:
+        import sys
+        if rdir not in sys.path:
+            sys.path.insert(0, rdir)
+        from birefnet import BiRefNet          # noqa: PLC0415 自包含网络定义
+        from safetensors.torch import load_file
+        net = BiRefNet(bb_pretrained=False).cuda().eval()
+        sd = load_file(str(Path(rdir) / "model.safetensors"))
+        miss, unexp = net.load_state_dict(sd, strict=False)
+        miss = [k for k in miss if "bb." not in k]
+        if miss or len(unexp) > 0:
+            print(f"[video-mask] birefnet 权重匹配 missing={len(miss)} "
+                  f"unexpected={len(unexp)}", flush=True)
+        _BIREF_CACHE[rdir] = net
+        print(f"[video-mask] birefnet torch 加载: {rdir} "
+              f"missing={len(miss)} unexpected={len(unexp)}", flush=True)
+    net = _BIREF_CACHE[rdir]
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
     w0, h0 = frames[0].size
     alphas = []
-    for f in frames:
-        img = cv2.resize(np.asarray(f.convert("RGB")), (size, size),
-                         interpolation=cv2.INTER_AREA)
-        x = (img.astype(np.float32) / 255.0 - mean) / std
-        x = x.transpose(2, 0, 1)[None].astype(np.float32)
-        out = sess.run(None, {iname: x})[0]
-        a = cv2.resize(out[0, 0], (w0, h0), interpolation=cv2.INTER_LINEAR)
-        alphas.append(np.clip(a, 0, 1).astype(np.float32))
+    with torch.no_grad():
+        for f in frames:
+            img = cv2.resize(np.asarray(f.convert("RGB")), (1024, 1024),
+                             interpolation=cv2.INTER_AREA)
+            x = (img.astype(np.float32) / 255.0 - mean) / std
+            x = torch.from_numpy(x.transpose(2, 0, 1))[None].cuda()
+            preds = net(x)
+            a = preds[-1].sigmoid()[0, 0].float().cpu().numpy()
+            alphas.append(np.clip(
+                cv2.resize(a, (w0, h0), interpolation=cv2.INTER_LINEAR),
+                0, 1).astype(np.float32))
     A = np.stack(alphas)
     k = max(1, int(smooth)) | 1
     if k >= 3:
@@ -810,7 +822,7 @@ def _matting_birefnet(frames, weights=None, size=1024, smooth=3):
         ker /= ker.sum()
         A = np.stack([(pad[i:i + k] * ker[:, None, None]).sum(0)
                       for i in range(len(A))]).astype(np.float32)
-    return A, path
+    return A, rdir
 
 
 def _emit_soft_mask(alpha, dilate, fps, n, w, h, tag, t0):

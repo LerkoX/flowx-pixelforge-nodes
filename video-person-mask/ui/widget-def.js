@@ -13,5 +13,5 @@ const WIDGET_SPEC = {
     { key: 'max_frames', label: '最多帧数（0=全片）', kind: 'number', default: 0, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  note: 'mask_model=sam3 文本分割(1/8) | sam2=SAM3首帧+SAM2追踪(256网格) | depth=深度Otsu二值化(拓扑干净,人物须为最近前景) | rvm=专用抠人(软alpha发丝边,免prompt,抠全部前景人) | depth_refine>0 深度精修(仅sam系)。输出灰度遮罩(rvm为软alpha)',
+  note: 'mask_model=sam3 文本分割(1/8) | sam2=SAM3首帧+SAM2追踪(256网格) | depth=深度Otsu二值化(拓扑干净,人物须为最近前景) | rvm=视频抠人(循环记忆,时序最稳,软alpha) | birefnet=单帧SOTA(边缘最锐,人物用portrait版) | depth_refine>0 深度精修(仅sam系)。输出灰度遮罩(rvm/birefnet为软alpha)',
 }

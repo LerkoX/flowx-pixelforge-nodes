@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "5af6ea88e482"
+OP_VERSION = "573f88b651a7"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -745,6 +745,98 @@ def _matting_rvm(frames, weights=None, dsr=0.25):
     return np.stack(alphas), path
 
 
+
+_BIREF_SESSION = {}
+
+
+def _matting_birefnet(frames, weights=None, size=1024, smooth=3):
+    """BiRefNet 单帧高精度抠图（SOTA 边缘，双分辨率全局参考）。
+
+    - onnx 路线（session 模块级缓存，同 DWPose 模式：GPU 优先自动回退）；
+    - 输入 1024² ImageNet 归一化，输出 sigmoid 前景 alpha；
+    - **单帧无记忆** → 软 alpha 用中心加权滑动平均做时序平滑（无滞后，
+      区别于硬 mask 的多数表决）；
+    - 权重优先 portrait 版（人物特化），缺失时 general 版兜底。
+    """
+    import cv2
+    import numpy as np
+    from pathlib import Path
+    cands = [str(weights)] if weights else []
+    cands += [
+        "/var/lib/flowx-inference/models/birefnet/birefnet-portrait.onnx",
+        "/var/lib/flowx-inference/models/birefnet/BiRefNet-portrait.onnx",
+        "/var/lib/flowx-inference/models/birefnet/birefnet-general.onnx",
+        "/var/lib/flowx-inference/models/birefnet/BiRefNet-general.onnx",
+        "/models/birefnet/birefnet-portrait.onnx",
+    ]
+    path = next((c for c in cands if c and Path(c).is_file()), None)
+    if path is None:
+        raise RuntimeError(
+            "BiRefNet onnx 未找到（人物场景推荐 birefnet-portrait.onnx，"
+            "general 版为通用二分。ComfyUI 生态/zhengpeng7 onnx 导出）。"
+            "请放到 /var/lib/flowx-inference/models/birefnet/")
+    if path not in _BIREF_SESSION:
+        import onnxruntime as ort
+        avail = ort.get_available_providers()
+        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
+                     if "CUDAExecutionProvider" in avail
+                     else ["CPUExecutionProvider"])
+        _BIREF_SESSION[path] = ort.InferenceSession(path,
+                                                    providers=providers)
+        print(f"[video-mask] birefnet onnx session 加载: {providers[0]}",
+              flush=True)
+    sess = _BIREF_SESSION[path]
+    iname = sess.get_inputs()[0].name
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    w0, h0 = frames[0].size
+    alphas = []
+    for f in frames:
+        img = cv2.resize(np.asarray(f.convert("RGB")), (size, size),
+                         interpolation=cv2.INTER_AREA)
+        x = (img.astype(np.float32) / 255.0 - mean) / std
+        x = x.transpose(2, 0, 1)[None].astype(np.float32)
+        out = sess.run(None, {iname: x})[0]
+        a = cv2.resize(out[0, 0], (w0, h0), interpolation=cv2.INTER_LINEAR)
+        alphas.append(np.clip(a, 0, 1).astype(np.float32))
+    A = np.stack(alphas)
+    k = max(1, int(smooth)) | 1
+    if k >= 3:
+        half = k // 2
+        pad = np.concatenate([np.repeat(A[:1], half, 0), A,
+                              np.repeat(A[-1:], half, 0)], axis=0)
+        ker = np.ones(k, dtype=np.float32)
+        ker[half] = float(k)          # 中心帧权重最高（无滞后）
+        ker /= ker.sum()
+        A = np.stack([(pad[i:i + k] * ker[:, None, None]).sum(0)
+                      for i in range(len(A))]).astype(np.float32)
+    return A, path
+
+
+def _emit_soft_mask(alpha, dilate, fps, n, w, h, tag, t0):
+    """软 alpha mask 的公共收尾（rvm / birefnet 共用）：
+
+    dilate>0 时做**软膨胀**（对连续 alpha 是 max 滤波，边缘向外渐开），
+    然后直出 0~255 灰度帧——不做二值化/轮廓平滑（软 alpha 无锯齿语义）。
+    """
+    import numpy as np
+    from PIL import Image
+    if int(dilate) > 0:
+        import cv2
+        _k = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (int(dilate) * 2 + 1, int(dilate) * 2 + 1))
+        alpha = np.stack([
+            cv2.dilate((np.clip(a, 0, 1) * 255).astype(np.uint8), _k
+                       ).astype(np.float32) / 255.0 for a in alpha])
+        print(f"[video-mask] {tag} 软膨胀 dilate={dilate}", flush=True)
+    out_frames = [Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8))
+                  for a in alpha]
+    print(f"[video-mask] done({tag}) {time.time() - t0:.1f}s", flush=True)
+    return {"mask": {"frames": out_frames, "fps": fps},
+            "fps": int(round(fps)), "num_frames": n,
+            "width": w, "height": h, "objects": 1}
+
+
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
 
@@ -785,11 +877,13 @@ def register(registry):
                 "motion_union": "BOOL"},
         outputs={"mask": "VIDEO", "fps": "INT", "num_frames": "INT",
                  "width": "INT", "height": "INT", "objects": "INT"},
-        description="视频人物遮罩（mask_model 四选一）：sam3=文本直接分割"
+        description="视频人物遮罩（mask_model 五选一）：sam3=文本直接分割"
                     "（1/8 网格）/ sam2=SAM3 首帧出框+SAM2 追踪（256 网格）/"
                     "depth=深度 Otsu 二值化（拓扑干净、无记忆毒素，要求人物"
-                    "是最近前景）/ rvm=专用抠人模型（循环记忆，天然软 alpha，"
-                    "发丝级边缘，免 prompt；抠全部前景人物）。输出逐帧灰度遮罩"
+                    "是最近前景）/ rvm=专用抠人模型（循环记忆，时序最稳，天然"
+                    "软 alpha，免 prompt；抠全部前景人物）/ birefnet=单帧 SOTA"
+                    "精修（边缘最锐，onnx 1024²，人物场景用 portrait 版）。"
+                    "输出逐帧灰度遮罩"
                     "（255=选中；rvm 为连续软 alpha）。obj_pick: all=全部目标"
                     "合并 / best=仅最高分（仅 sam3/sam2 生效）")
     def _op_person_mask(video, prompt="person", obj_pick="all", dilate=12,
@@ -918,23 +1012,19 @@ def register(registry):
             print(f"[video-mask] RVM 抠像 {_alpha.shape} "
                   f"软alpha mean={float(_alpha.mean()):.3f} 权重={_wp}",
                   flush=True)
-            if int(dilate) > 0:
-                import cv2 as _cv2m
-                _km = _cv2m.getStructuringElement(
-                    _cv2m.MORPH_ELLIPSE,
-                    (int(dilate) * 2 + 1, int(dilate) * 2 + 1))
-                _alpha = np.stack([
-                    _cv2m.dilate((np.clip(a, 0, 1) * 255).astype(np.uint8),
-                                 _km).astype(np.float32) / 255.0
-                    for a in _alpha])
-                print(f"[video-mask] RVM 软膨胀 dilate={dilate}", flush=True)
-            mask_frames = [
-                Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8))
-                for a in _alpha]
-            print(f"[video-mask] done(rvm) {time.time()-t0:.1f}s", flush=True)
-            return {"mask": {"frames": mask_frames, "fps": fps},
-                    "fps": int(round(fps)), "num_frames": n,
-                    "width": w, "height": h, "objects": 1}
+            return _emit_soft_mask(_alpha, dilate, fps, n, w, h,
+                                   "rvm", t0)
+        if _mm_choice == "birefnet":
+            # **BiRefNet 分支（2026-11-17）**：单帧 SOTA 高精度抠图（双分辨率
+            # 全局参考，边缘质量远超 SAM 系），1024² onnx 逐帧推理 + 中心
+            # 加权时序平滑。与 RVM 分工：RVM=时序最稳（记忆）、BiRefNet=
+            # 边缘最锐（单帧精修）；人物场景优先 portrait 版权重。
+            _alpha, _wp = _matting_birefnet(frames)
+            print(f"[video-mask] BiRefNet 抠图 {_alpha.shape} "
+                  f"软alpha mean={float(_alpha.mean()):.3f} 权重={_wp}",
+                  flush=True)
+            return _emit_soft_mask(_alpha, dilate, fps, n, w, h,
+                                   "birefnet", t0)
         bundle = _load_sam3()
         model, processor = bundle["model"], bundle["processor"]
 

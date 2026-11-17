@@ -50,7 +50,7 @@
       "name": "mask_model",
       "type": "string",
       "default": "sam3",
-      "description": "分割后端：sam3（文本直接分割，1/8 网格有 8px 阶梯）/ sam2（SAM3 首帧出框+SAM2 全片追踪，256 网格更平滑）/ depth（深度 Otsu 二值化：拓扑干净无记忆毒素，要求人物是最近前景）/ rvm（**推荐**：专用视频抠人模型，循环记忆时序稳，天然软 alpha 发丝级边缘，免 prompt；抠全部前景人物）"
+      "description": "分割后端：sam3（文本直接分割，1/8 网格有 8px 阶梯）/ sam2（SAM3 首帧出框+SAM2 全片追踪，256 网格更平滑）/ depth（深度 Otsu 二值化：拓扑干净无记忆毒素，要求人物是最近前景）/ rvm（专用视频抠人：循环记忆时序最稳，天然软 alpha，免 prompt；抠全部前景人物）/ birefnet（**推荐**：单帧 SOTA 边缘最锐，onnx 1024²+时序平滑，人物场景用 portrait 版）"
     },
     {
       "name": "depth_refine",

@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "b802c4fdc613"
+OP_VERSION = "f7af6892412b"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -591,20 +591,21 @@ _TRANSFORMER_CFG = {    # Wan2.1 T2V/I2V/FLF2V 14B
 # - in_channels=96：VACE 把「原视频 + 遮罩 + 参考」编成条件通道拼进来
 # - added_kv_proj_dim 非空：控制信号走额外 KV 投影
 # 数值取自 Wan2.1-VACE-14B-Diffusers；1.3B 版按 dim/heads/layers 缩放。
-_VACE_CFG = {
-    "14b": {
+_VACE_CFG = {"14b": {
         "_class_name": "WanVACETransformer3DModel",
-        "added_kv_proj_dim": 1536,
+        "added_kv_proj_dim": None,
         "attention_head_dim": 128,
         "cross_attn_norm": True,
         "dim": 5120,
         "eps": 1e-06,
         "ffn_dim": 13824,
         "freq_dim": 256,
-        "in_channels": 96,
+        "in_channels": 16,
         "num_attention_heads": 40,
         "num_layers": 40,
         "out_channels": 16,
+        "vace_in_channels": 96,
+        "vace_layers": [0, 5, 10, 15, 20, 25, 30, 35],
         "patch_size": [1, 2, 2],
         "qk_norm": "rms_norm_across_heads",
         "rope_max_seq_len": 1024,
@@ -612,17 +613,19 @@ _VACE_CFG = {
     },
     "1.3b": {
         "_class_name": "WanVACETransformer3DModel",
-        "added_kv_proj_dim": 1536,
+        "added_kv_proj_dim": None,
         "attention_head_dim": 128,
         "cross_attn_norm": True,
         "dim": 1536,
         "eps": 1e-06,
         "ffn_dim": 8960,
         "freq_dim": 256,
-        "in_channels": 96,
+        "in_channels": 16,
         "num_attention_heads": 12,
         "num_layers": 30,
         "out_channels": 16,
+        "vace_in_channels": 96,
+        "vace_layers": [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28],
         "patch_size": [1, 2, 2],
         "qk_norm": "rms_norm_across_heads",
         "rope_max_seq_len": 1024,
@@ -810,6 +813,19 @@ def _offload(module, device, offload, name, est_gb=None):
     权重（index_select 设备冲突）。无 pre_forward 属性，安全跳过。
     """
     if device.type != "cuda":
+        return module
+    # **offload="cuda" = 全量常驻 GPU（2026-11-16 真机）**：官方 VACE 示例
+    # 就是 `pipe.to("cuda")`，1.3B(6.7GB) 在 24G 卡上完全放得下，且**只有
+    # 这条路能保证数值正确**（挂 sequential hook 时 vace_blocks 的流式搬运
+    # 会让输出退化成彩色噪声）。放不下时自动退回 sequential。
+    if str(offload).lower() in ("cuda", "full"):
+        try:
+            module.to(device)
+            print(f"[wan] {name} 全量上卡（offload=cuda）", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[wan] {name} 全量上卡失败({type(e).__name__}) → 退回"
+                  f" sequential", flush=True)
+            module = _sequential_offload(module, device, name)
         return module
     if offload != "sequential":
         # **offload=none 时不要挂假 `_hf_hook`**（2026-11-13 真机）：
@@ -1044,7 +1060,89 @@ def _build_vace_transformer(path, dtype, which="transformer"):
     torch_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                    "fp32": torch.float32}[dtype]
     if os.path.isdir(path):
-        # Diffusers 目录（官方 *-Diffusers 仓库）：config 已随目录提供
+        # Diffusers 目录：先校验 config 是不是真 VACE（2026-11-16 真机坑）
+        # ModelScope 上 Wan2.1-VACE-1.3B-Diffusers 的 transformer/config.json
+        # 被落成了普通 Wan 结构（in_channels=16 / added_kv_proj_dim=None），
+        # 照它装配 → 条件通道全废 → 出雪花。这里比对 in_channels，
+        # 不合格就用内置 _VACE_CFG 表（按 dim 判 1.3b/14b）。
+        # **VACE config 修正（2026-11-16 真机根因）**：ModelScope 的
+        # Wan2.1-VACE-*-Diffusers 的 transformer/config.json 里
+        # `added_kv_proj_dim = None`，而 diffusers 的 WanVACETransformer3DModel
+        # 只有在 added_kv_proj_dim 非空时才构造 `vace_patch_embedding`
+        # （96 通道）与 `vace_blocks`。为 None ⇒ 这些模块根本不建 ⇒ 权重全是
+        # unexpected keys ⇒ 模型退化成普通 T2V（丢掉全部控制条件）⇒ 输出雪花。
+        # 注意：`in_channels` 应保持 16（视频通道），VACE 条件走独立分支，
+        # 不要再改成 96（那是早期误判）。
+        _cfg_p = os.path.join(path, "config.json")
+        if os.path.isfile(_cfg_p):
+            try:
+                _c = _json.load(open(_cfg_p, encoding="utf-8"))
+                # **VACE 结构的正确字段（2026-11-16 真机实证）**：
+                #   added_kv_proj_dim 必须保持 **None**（它控制 attn2 内的
+                #     add_k_proj/add_v_proj；该 checkpoint 没有这些权重，
+                #     设成 1536 会造出 225 个随机初始化参数 → 雪花）
+                #   vace_layers      = 挂 vace_blocks 的主层索引（权重实测
+                #     vace_blocks 0..14 + 主 blocks 30 ⇒ 每 2 层一个）
+                #   vace_in_channels = 96（VACE 条件通道）
+                #   注意 in_channels 保持 16（视频通道，双 patch_embedding）
+                _nl = int(_c.get("num_layers") or 30)
+                _missing_cfg = (
+                    _c.get("added_kv_proj_dim") is not None
+                    or not _c.get("vace_layers")
+                    or not _c.get("vace_in_channels"))
+                if _missing_cfg:
+                    _c["added_kv_proj_dim"] = None
+                    _c["vace_in_channels"] = 96
+                    _c["vace_layers"] = list(range(0, _nl, 2))
+                    cfg_dir = tempfile.mkdtemp(prefix="wan_vace_fix_")
+                    with open(os.path.join(cfg_dir, "config.json"), "w",
+                              encoding="utf-8") as f:
+                        _json.dump(_c, f)
+                    # 让它能从 cfg_dir 读到 config、从原目录读到权重：
+                    # 用 from_pretrained(config=cfg_dir) 等价物 —— 直接把
+                    # 校正后的 config 写进模型构造，权重仍从 path 加载。
+                    print(f"[wan] VACE config 修正：vace_layers="
+                          f"{_c['vace_layers'][:4]}...({len(_c['vace_layers'])}层) "
+                          f"vace_in=96 added_kv=None", flush=True)
+                    import torch as _t2
+                    from safetensors.torch import load_file as _lf2
+                    _m = WanVACETransformer3DModel.from_config(
+                        _c, torch_dtype=torch_dtype)
+                    _sd = {}
+                    _idx_p = os.path.join(
+                        path, "diffusion_pytorch_model.safetensors.index.json")
+                    if os.path.isfile(_idx_p):
+                        _idx = _json.load(open(_idx_p, encoding="utf-8"))
+                        for _sh in sorted(set(_idx["weight_map"].values())):
+                            _sd.update(_lf2(os.path.join(path, _sh)))
+                    else:
+                        for _fn in os.listdir(path):
+                            if _fn.endswith(".safetensors"):
+                                _sd.update(_lf2(os.path.join(path, _fn)))
+                    _miss, _unexp = _m.load_state_dict(
+                        _sd, strict=False, assign=True)
+                    print(f"[wan] VACE 内置 config 装配："
+                          f"missing={len(_miss)} unexpected={len(_unexp)}",
+                          flush=True)
+                    if _miss:
+                        print(f"[wan] ⚠ missing 样例 {_miss[:6]}", flush=True)
+                    if _unexp:
+                        print(f"[wan] ⚠ unexpected 样例 {_unexp[:6]}",
+                              flush=True)
+                    del _sd
+                    # **精度统一（2026-11-16）**：该 checkpoint 90% 是 F32，
+                    # assign=True 会保留原 dtype → 与 pipeline 的 bf16 输入
+                    # 冲突（Input type (float) and bias type (c10::BFloat16)
+                    # should be the same）。统一转到目标 dtype，顺带省一半内存。
+                    _m = _m.to(torch_dtype)
+                    _n = sum(pp.numel() for pp in _m.parameters()) / 1e9
+                    print(f"[wan] VACE {which} ready {_n:.2f}B "
+                          f"{_time.time()-t0:.1f}s", flush=True)
+                    return _m
+            except Exception as _ce:       # noqa: BLE001
+                print(f"[wan] ⚠ VACE config 修正失败"
+                      f"（{type(_ce).__name__}: {str(_ce)[:100]}），"
+                      f"回退 from_pretrained", flush=True)
         model = WanVACETransformer3DModel.from_pretrained(
             path, torch_dtype=torch_dtype)
         n = sum(p.numel() for p in model.parameters())
@@ -1061,6 +1159,25 @@ def _build_vace_transformer(path, dtype, which="transformer"):
             _json.dump(_VACE_CFG[arch], f)
     model = WanVACETransformer3DModel.from_single_file(
         path, config=cfg_dir, torch_dtype=torch_dtype)
+    # **必须把 keep-in-fp32 模块转回 fp32（2026-11-16 真机定位）**：
+    # from_single_file 走的是 `model.to(dtype)` 式的整体 cast，diffusers 会
+    # 警告 "Casting directly with to() can lead to inconsistent results"。
+    # rope / time_embedder / scale_shift_table / norm1..3 在 fp16-bf16 下会
+    # 溢出或精度失真（time_embedder 的 sinusoidal 频率、norm 的统计量），
+    # 后果就是**整幅画面变成彩色噪声**（看起来像雪花，其实数值全错）。
+    # from_pretrained 路径由 _keep_in_fp32_modules 自动处理，单文件路径没有。
+    _KF = ("rope", "time_embedder", "scale_shift_table",
+           "norm1", "norm2", "norm3")
+    _n32 = 0
+    for _name, _mod in model.named_modules():
+        if _name.split(".")[-1] in _KF:
+            _mod.to(torch.float32)
+            _n32 += 1
+    for _pn, _pp in model.named_parameters():
+        if _pn.split(".")[-2:-1] and _pn.split(".")[-2] in _KF:
+            _pp.data = _pp.data.float()
+    print(f"[wan] VACE {which} keep-fp32 模块已恢复 {_n32} 个",
+          flush=True)
     n = sum(p.numel() for p in model.parameters())
     print(f"[wan] VACE {which} ready {n/1e9:.2f}B params "
           f"{_time.time()-t0:.1f}s", flush=True)
@@ -1299,6 +1416,92 @@ _SCHEDULERS = {
     # 二阶 Heun：质量略高于 Euler，步数翻倍（慢）
     "heun": "FlowMatchHeunDiscreteScheduler",
 }
+
+
+def _is_vace_pipe(pipe):
+    """判断 pipe 是否为 VACE（按类名 + transformer 结构双重判断）。"""
+    try:
+        if "vace" in type(pipe).__name__.lower():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    tr = getattr(pipe, "transformer", None)
+    cfg = getattr(tr, "config", None)
+    if cfg is not None and getattr(cfg, "vace_in_channels", None):
+        return True
+    return False
+
+
+    @registry.register(
+        "wan.vace_standalone",
+        inputs={"transformer": "TRANSFORMER", "text_encoder": "TEXT_ENCODER",
+                "vae": "VAE", "video": "VIDEO", "mask": "VIDEO",
+                "reference_image": "IMAGE", "prompt": "STRING",
+                "negative_prompt": "STRING", "steps": "INT",
+                "guidance_scale": "FLOAT", "flow_shift": "FLOAT",
+                "scheduler": "STRING", "conditioning_scale": "FLOAT",
+                "height": "INT", "width": "INT", "num_frames": "INT",
+                "seed": "INT"},
+        outputs={"video": "VIDEO", "seed": "INT", "fps": "INT"},
+        description="Wan VACE 视频重绘/人物替换（**独立装配**）。直接接 "
+                    "transformer / text_encoder / vae 三个组件句柄，内部按"
+                    "diffusers 官方示例 `WanVACEPipeline(...) + pipe.to(cuda)` "
+                    "装配，**不经过 wan.pipe**（绕开组件缓存与 offload hook）。")
+    def _op_vace_standalone(transformer, text_encoder, vae, video=None,
+                            mask=None, reference_image=None, prompt="",
+                            negative_prompt="", steps=20,
+                            guidance_scale=5.0, flow_shift=5.0,
+                            scheduler="euler", conditioning_scale=1.0,
+                            height=0, width=0, num_frames=0, seed=0):
+        import torch
+        from diffusers import WanVACEPipeline
+        from transformers import AutoTokenizer
+
+        if transformer is None or text_encoder is None or vae is None:
+            raise ValueError("wan.vace_standalone: transformer / "
+                             "text_encoder / vae 三者都必填")
+        tok_src = os.path.join(WAN_CONFIG_DIR, "tokenizer")
+        if not os.path.isdir(tok_src):
+            tok_src = os.path.join(WAN_CONFIG_DIR, "tokenizer_2")
+        if not os.path.isdir(tok_src):
+            raise ValueError(f"wan: 缺 tokenizer 目录（{tok_src}）")
+        tokenizer = AutoTokenizer.from_pretrained(tok_src)
+        sch = _build_scheduler(flow_shift, scheduler)
+
+        print("[wan] vace_standalone 独立装配（官方路径）", flush=True)
+        pipe = WanVACEPipeline(tokenizer=tokenizer,
+                               text_encoder=text_encoder, vae=vae,
+                               transformer=transformer, scheduler=sch)
+        # 官方示例就是 pipe.to("cuda")。1.3B(6.7G) + UMT5(11G) ≈ 18G 放得下；
+        # 放不下（14B/32G）时交给 group offloading 兜底。
+        try:
+            pipe.to("cuda")
+            print("[wan] vace_standalone 全量上卡完成", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[wan] vace_standalone 全量上卡失败"
+                  f"({type(e).__name__}) → group offloading", flush=True)
+            try:
+                from diffusers.hooks import apply_group_offloading
+                for _m in (transformer, text_encoder):
+                    apply_group_offloading(
+                        _m, onload_device=torch.device("cuda"),
+                        offload_device=torch.device("cpu"),
+                        offload_type="block_level",
+                        num_blocks_per_group=1, use_stream=True,
+                        low_cpu_mem_usage=True)
+                vae.to("cuda")
+            except Exception as e2:  # noqa: BLE001
+                raise RuntimeError(
+                    f"wan.vace_standalone 显存不足：{type(e2).__name__}: {e2}"
+                ) from e2
+        pipe._flowx_clean = True
+        return _op_vace(pipe, prompt=prompt,
+                        negative_prompt=negative_prompt, video=video,
+                        mask=mask, reference_image=reference_image,
+                        conditioning_scale=conditioning_scale,
+                        guidance_scale=guidance_scale, steps=steps,
+                        height=height, width=width, num_frames=num_frames,
+                        seed=seed)
 
 
 def _build_scheduler(flow_shift, name="euler"):
@@ -2295,10 +2498,15 @@ def register(registry):
                 "seed": "INT", "fps": "INT",
                 "inpaint_fill": "STRING", "inpaint_erode": "INT",
                 "inpaint_expand": "INT", "inpaint_telea_radius": "INT",
+                "inpaint_ring_width": "INT",
                 "composite": "BOOL", "composite_expand": "INT",
                 "composite_feather": "INT", "composite_gain": "FLOAT",
                 "composite_dehaze": "BOOL",
                 "composite_fill_black": "FLOAT",
+                "composite_edge_clean": "INT",
+                "composite_unpremul": "FLOAT",
+                "mask_invert": "INT",
+                "latent_inpaint": "INT",
                 "composite_dehaze_strength": "FLOAT",
                 "lora": "STRING", "relight_lora": "STRING",
                 "relight_scale": "FLOAT",
@@ -2317,6 +2525,7 @@ def register(registry):
                      background_video=None, mask_video=None, mode="auto",
                      inpaint_fill="black", inpaint_erode=0,
                      inpaint_expand=0, inpaint_telea_radius=5,
+                     inpaint_ring_width=10,
                      prompt="", negative_prompt="", pose_strength=1.0,
                      pose_start_percent=0.0, pose_end_percent=1.0,
                      reference_image_strength=1.0, segment_frame_length=81,
@@ -2325,6 +2534,9 @@ def register(registry):
                      composite=False, composite_expand=8, composite_feather=32,
                      composite_gain=1.0, composite_dehaze=True,
                      composite_dehaze_strength=0.95,
+                     composite_fill_black=0.0, composite_edge_clean=0,
+                     composite_unpremul=0.0, mask_invert=0,
+                     latent_inpaint=0,
                      lora="", relight_lora="",
                      relight_scale=1.0, prompt_embeds_path="",
                      negative_embeds_path=""):
@@ -2476,11 +2688,57 @@ def register(registry):
             _job.set_progress(0, int(steps))
         _last_pct = [-1]
 
+        # **latent inpainting 上下文（2026-11-17，diffusers 官方 callback 扩展点）**
+        # 只重绘 mask 内，mask 外每步拉回「原视频 latent + 当前 σ 的噪声」——
+        # 这样背景像素级保留（不靠涂黑、不靠输出端合成），人物区自由生成。
+        # 这正是 H3 inpaint 用的技术，但 Wan 侧走官方的
+        # `callback_on_step_end`（pipeline 会把返回的 latents 替换进循环），
+        # **完全不绕开 diffusers**（不自己写采样循环）。
+        _li_ctx = {}
+
         def _nan_cb(pipe_, step_idx, timestep, cb_kwargs):
             lat = cb_kwargs.get("latents")
             if lat is not None and bool(torch.isnan(lat).any()):
                 print(f"[wan][nan] ⚠ step {step_idx} latents 出现 NaN "
                       f"(t={float(timestep):.1f})", flush=True)
+            # ---- latent inpainting ----
+            if step_idx == 0:
+                print(f"[wan][latent-inpaint] cb 第0步 lat="
+                      f"{None if lat is None else tuple(lat.shape)} "
+                      f"ctx={'有' if _li_ctx else '空'}", flush=True)
+            if _li_ctx and lat is not None:
+                try:
+                    # σ 用 scheduler 真实值（UniPC/FlowMatch 有 shift，t/1000
+                    # 在低步段偏差大 → 拉回的噪声水平不匹配会产生不一致）
+                    try:
+                        _sig = float(pipe_.scheduler.sigmas[int(step_idx)])
+                    except Exception:  # noqa: BLE001
+                        _sig = float(timestep) / 1000.0
+                    _src = _li_ctx["src"]        # 原视频 latent（未加噪）
+                    _nz = _li_ctx["noise"]       # 固定初始噪声
+                    _mk = _li_ctx["mask"]        # 人物=1 / 背景=0
+                    # **时间维动态对齐（2026-11-17 实测）**：armed 时按
+                    # (T_px-1)/4+1 估的 latent 帧数（21帧→6），但 pipeline 内部
+                    # 会把视频 pad 到 25 帧（latent=7）——src/noise/mask 按
+                    # pipeline 实际 T 最近邻重采样（误差≤1 帧，背景拉回够用）
+                    _t = int(lat.shape[2])
+                    if int(_src.shape[2]) != _t:
+                        _idx = torch.linspace(
+                            0, int(_src.shape[2]) - 1, _t).long().to(_src.device)
+                        _src = _src[:, :, _idx]
+                        _nz = _nz[:, :, _idx]
+                        _idxm = torch.linspace(
+                            0, int(_mk.shape[2]) - 1, _t).long().to(_mk.device)
+                        _mk = _mk[:, :, _idxm]
+                    _mix = _src * (1.0 - _sig) + _nz * _sig
+                    lat = lat * _mk + _mix * (1.0 - _mk)
+                    cb_kwargs["latents"] = lat
+                    if step_idx == 0 or step_idx % 4 == 0:
+                        print(f"[wan][latent-inpaint] step {step_idx} "
+                              f"σ={_sig:.3f} 背景已拉回", flush=True)
+                except Exception as _el:  # noqa: BLE001
+                    print(f"[wan][latent-inpaint] 跳过（{type(_el).__name__}: "
+                          f"{_el}）", flush=True)
             # **画布步数进度**（2026-11-15 用户反馈节点不显示步数）：
             # 经 job.set_progress 推到 wait_job 的 progress 事件流
             if _job is not None:
@@ -2561,6 +2819,27 @@ def register(registry):
                     wiped = np.clip(orig * (1.0 - _mnp_wide[..., None])
                                     + _fc[None, None, :] * _mnp_wide[..., None],
                                     0, 255)
+                elif _fill == "telea_ring":
+                    # **边缘环带纹理引导（2026-11-16 VAE bleed 最终方案）**：
+                    # 纯黑抹除 → 模型参考周围黑色，在人物身上画出深色衣物
+                    # （bleed 表现为"内容染色"）；Telea 全量填充 → 模型看到
+                    # 一片幕布纹理、失去"这里要画人"的结构锚点 → 生成崩坏。
+                    # 折中：**只把 mask 边缘一圈（ring_width px）换成背景纹理**，
+                    # 中心保持黑洞。模型边缘接壤的是幕布/桌面纹理（不再被黑
+                    # 染色），中心仍有明确"待生成"信号。
+                    import cv2 as _cv2r
+                    _m = (_mnp_wide > 0.5).astype(np.uint8)
+                    _rw = max(1, int(inpaint_ring_width or 10))
+                    _ker = _cv2r.getStructuringElement(
+                        _cv2r.MORPH_ELLIPSE, (_rw * 2 + 1, _rw * 2 + 1))
+                    _inner = _cv2r.erode(_m, _ker)
+                    _ring = _m - _inner
+                    _black = np.clip(orig * (1.0 - _mnp_wide[..., None]), 0, 255)
+                    _tex = _cv2r.inpaint(
+                        orig.astype(np.uint8), _m * 255,
+                        max(1, int(inpaint_telea_radius or 5)),
+                        _cv2r.INPAINT_TELEA).astype(np.float32)
+                    wiped = np.where(_ring[..., None] > 0, _tex, _black)
                 elif _fill == "telea":
                     # **Telea 纹理延展（2026-11-16 VAE bleed 治法）**：
                     # 黑色抹除会在潜空间边缘产生 bleed（黑边污染的物理源头），
@@ -2574,11 +2853,44 @@ def register(registry):
                     wiped = _cv2t.inpaint(orig.astype(np.uint8), _m255,
                                           max(1, _r), _cv2t.INPAINT_TELEA
                                           ).astype(np.float32)
+                elif _fill == "orig":
+                    # **原样背景（2026-11-17 决定性发现）**：diffusers 的
+                    # `prepare_prev_segment_cond_latents` 在 task=replace 时直接
+                    # `prev_segment_cond_video = background_video[...]`（原样，
+                    # 不涂黑），ComfyUI 也是 `image[...] = background_video`
+                    # 原样。二者都把**完整背景**作为条件 latent 交给模型，
+                    # 配合 4 通道 concat mask 告诉模型「哪里保留」——这才是
+                    # 标准 inpainting 语义。我们此前把背景**涂黑**再传，模型
+                    # 根本看不到背景，只能在边缘"延续黑洞的暗调" → 黑边。
+                    # 本模式直接传原帧，由 mask 通道负责"保留/重绘"的分工。
+                    wiped = orig.copy()
                 else:  # black（默认，实心替换；用外扩后的宽 mask）
                     wiped = np.clip(orig * (1.0 - _mnp_wide[..., None]), 0, 255)
                 bg_masked.append(_Image.fromarray(wiped.astype("uint8")))
                 mk_out.append(m)
                 _bg_orig_frames.append(np.asarray(b, dtype=np.float32))
+            # **mask 极性（2026-11-17 实测）**：diffusers 在 task=replace 里
+            # 先做 `mask_video = 1 - mask_video`，再 `get_i2v_mask` 里把
+            # 「条件帧」置 1（1=保留原 latent / 0=重绘）。实测传「人物=1」时
+            # 成片把原人物原样保留（说明该路径下 1 被当成"保留"），需要反转。
+            # mask_invert=1 → 传「人物=0 / 背景=1」。
+            if int(mask_invert or 0) > 0:
+                from PIL import ImageOps as _IO
+                mk_out = [_IO.invert(_m.convert("L")) for _m in mk_out]
+                print("[wan] mask 已反相（人物=0 / 背景=1）", flush=True)
+            # **诊断打印（2026-11-17）**：确认实际喂给 pipeline 的 bg/mask 是什么
+            # （黑边根因排查收敛到"bg 该原样还是涂黑 + mask 极性"两点，必须看得见）
+            try:
+                _m0 = np.asarray(mk_out[0], dtype=np.float32) / 255.0
+                _b0 = np.asarray(bg_masked[0], dtype=np.float32)
+                _orig0 = np.asarray(bg_frames[0] if 'bg_frames' in dir() else bg_masked[0],
+                                    dtype=np.float32)
+                print(f"[wan] 传给 pipeline: mask(第0帧) mean={_m0.mean():.3f} "
+                      f"人物像素={float((_m0 > 0.5).mean()) * 100:.1f}% | "
+                      f"bg(第0帧) mean={_b0.mean():.1f} min={_b0.min():.0f} "
+                      f"max={_b0.max():.0f}", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
             extra = dict(background_video=bg_masked, mask_video=mk_out)
             print(f"[wan] animate2 replace: fill={inpaint_fill} "
                   f"erode={inpaint_erode}px 羽化8px ({len(bg_masked)}帧)",
@@ -2596,6 +2908,59 @@ def register(registry):
                   f"（跳过 UMT5 编码）", flush=True)
         else:
             _pb = _nb = None
+
+        # **准备 latent inpainting 上下文（原视频 latent + mask latent + 固定噪声）**
+        print(f"[wan][li-diag] latent_inpaint={latent_inpaint!r} "
+              f"bg_orig={'None' if _bg_orig_frames is None else len(_bg_orig_frames)} "
+              f"mk={'None' if mk_out is None else len(mk_out)}", flush=True)
+        if int(latent_inpaint or 0) > 0 and _bg_orig_frames is not None \
+                and mk_out is not None:
+            try:
+                import cv2 as _cv2li
+                import torch as _tj
+                _vae = getattr(pipe, "vae", None)
+                if _vae is not None:
+                    _bt = _tj.stack([_tj.from_numpy(
+                        (f / 127.5 - 1.0).transpose(2, 0, 1)
+                    ) for f in _bg_orig_frames]).permute(1, 0, 2, 3)[None]
+                    _bt = _bt.to("cuda", _vae.dtype)
+                    with _tj.no_grad():
+                        _enc = _vae.encode(_bt)
+                        _src = (_enc.latent_dist.mode()
+                                if hasattr(_enc, "latent_dist") else _enc[0])
+                        _mean = _tj.tensor(
+                            _vae.config.latents_mean, device=_src.device,
+                            dtype=_src.dtype).view(1, -1, 1, 1, 1)
+                        _std = 1.0 / _tj.tensor(
+                            _vae.config.latents_std, device=_src.device,
+                            dtype=_src.dtype).view(1, -1, 1, 1, 1)
+                        _src = (_src - _mean) * _std
+                    _lm = []
+                    for _im in mk_out:
+                        _a = np.asarray(_im.convert("L"), dtype=np.float32) / 255.0
+                        _a = _cv2li.resize(
+                            _a, (_src.shape[-1], _src.shape[-2]),
+                            interpolation=_cv2li.INTER_NEAREST)
+                        _lm.append(_a)
+                    _li_t = _src.shape[2]
+                    _lm2 = [_lm[min(i * 4, len(_lm) - 1)] for i in range(_li_t)]
+                    _mask_lat = _tj.from_numpy(
+                        np.stack(_lm2)[None, None]).to(_src.device, _src.dtype)
+                    _g = _tj.Generator("cpu").manual_seed(
+                        int(seed) if seed >= 0 else 0)
+                    _noise = _tj.randn(_src.shape, generator=_g,
+                                       dtype=_tj.float32).to(_src.device,
+                                                             _src.dtype)
+                    _li_ctx.update({"src": _src, "mask": _mask_lat,
+                                    "noise": _noise})
+                    print(f"[wan][latent-inpaint] armed src={tuple(_src.shape)} "
+                          f"mask人物={float(_mask_lat.mean())*100:.1f}%",
+                          flush=True)
+            except Exception as _eli:  # noqa: BLE001
+                print(f"[wan][latent-inpaint] 准备失败（{type(_eli).__name__}: "
+                      f"{_eli}），本次关闭", flush=True)
+                _li_ctx.clear()
+
 
         kwargs = dict(image=ref, pose_video=pose, face_video=face,
                       prompt=prompt, negative_prompt=negative_prompt or None,
@@ -2616,9 +2981,16 @@ def register(registry):
         # 官方最小脚本（不带 callback）在 3090 上能正常出片，带 callback
         # 的调用在同样环境出雪花 → callback 机制是唯一剩余差异，故支持
         # WAN_CALLBACK=0 完全绕过（不传任何 callback 参数，与官方示例一致）。
-        if os.environ.get("WAN_CALLBACK", "1") != "0":
+        # **latent inpainting 必须走 callback**（2026-11-17）：supervisor 里
+        # 曾为规避雪花设 WAN_CALLBACK=0；但 latent-inpaint 的每步拉回依赖
+        # 官方 callback_on_step_end，故 **开启 latent_inpaint 时强制启用**，
+        # 其他情况仍尊重 WAN_CALLBACK 开关。
+        _need_cb = bool(_li_ctx) or os.environ.get("WAN_CALLBACK", "1") != "0"
+        if _need_cb:
             kwargs["callback_on_step_end"] = _nan_cb
             kwargs["callback_on_step_end_tensor_inputs"] = ["latents"]
+            print(f"[wan] callback 已启用（latent_inpaint="
+              f"{bool(_li_ctx)}）pipe={type(pipe).__name__}", flush=True)
         print(f"[wan] animate2(WanAnimatePipeline/{_mode}) {w}x{h} "
               f"pose={len(pose)}帧 seg={segment_frame_length} "
               f"steps={steps} seed={seed}", flush=True)
@@ -2653,15 +3025,42 @@ def register(registry):
         # 暗色光晕（dilate 越大越重）。输出端自行合成：softmask 外扩
         # composite_expand px（混合带推到 mask 外的干净背景区，避免原人物
         # 残影）+ 羽化 → final = gen×soft + 原始背景×(1-soft)。
+        print(f"[wan] composite 参数: fill_black={composite_fill_black:g} "
+              f"dehaze={composite_dehaze} expand={composite_expand} "
+              f"feather={composite_feather} gain={composite_gain:g} "
+              f"inpaint_expand={inpaint_expand} "
+              f"edge_clean={composite_edge_clean}", flush=True)
         if composite in (True, "1", "true", "True", 1) and mk_out is not None:
             import cv2 as _cv2
             _ce = int(composite_expand); _cf = int(composite_feather)
             _soft = []
             for _m_pil in mk_out:
-                _m = (np.asarray(_m_pil, dtype=np.float32) / 255.0 > 0.5
-                      ).astype(np.uint8)
-                if _ce > 0:
+                # **软 alpha 兼容（2026-11-17 trimap）**：video-person-mask 开了
+                # mask_matting 时输出的是**连续 alpha**（0~255 渐变，发丝级边缘）。
+                # 这里若仍然 `>0.5` 二值化，软边会被重新砍成硬边，trimap 白做。
+                # 判定：如果该帧灰度同时存在 0 和 255 之间的中间值（>2%），
+                # 视为软 alpha 直接保留；否则按原二值流程走（兼容旧行为）。
+                _raw = np.asarray(_m_pil, dtype=np.float32) / 255.0
+                _mid = ((_raw > 0.05) & (_raw < 0.95)).mean()
+                if _mid > 0.02:
+                    _m = np.clip(_raw, 0.0, 1.0)
+                    _is_soft = True
+                else:
+                    _m = (_raw > 0.5).astype(np.uint8)
+                    _is_soft = False
+                # **负值 = 腐蚀收缩（2026-11-16 用户方案 2）**：SAM3 轮廓与
+                # 新角色轮廓不重合时，mask 边界外一圈被模型画暗；把合成边界
+                # **内缩**到人物干净内部即可完全避开污染带（比颜色修补可靠）。
+                if _is_soft:
+                    # 软 alpha：不做形态学外扩（会破坏发丝级渐变），
+                    # 只用 composite_expand 的方向感做轻度偏移
+                    if _ce != 0:
+                        print(f"[wan] 软 alpha 输入：跳过 expand={_ce} 的"
+                              f"形态学处理（保留 trimap 软边）", flush=True)
+                elif _ce > 0:
                     _m = _cv2.dilate(_m, np.ones((_ce * 2 + 1,) * 2, np.uint8))
+                elif _ce < 0:
+                    _m = _cv2.erode(_m, np.ones((-2 * _ce + 1,) * 2, np.uint8))
                 _sv = _m.astype(np.float32)
                 if _cf > 0:
                     _sv = _cv2.GaussianBlur(_sv, (0, 0), _cf / 2.0)
@@ -2700,6 +3099,25 @@ def register(registry):
                 _genf = _genf * _gain_map
                 print(f"[wan] composite 增益对齐: g∈[{_gs.min():.2f},"
                       f"{_gs.max():.2f}]（混合带亮度台阶补偿）", flush=True)
+            # **边缘反预乘（2026-11-17，用户方案③的严格形式）**
+            # 模型在 mask 边界生成的是「半透明前景叠在黑抹除层上」的结果：
+            #   I = a·F + (1-a)·0    （B 被抹成纯黑）
+            # 直接合成 `I·a + bg·(1-a)` 会把已经衰减过的 I 再乘一次 a ⇒ 边界
+            # 系统性偏暗（这就是黑边的数学成因）。正解先反预乘还原 F = I/a：
+            #   F = I / max(a, a_min)
+            # 再正常合成 `F·a + bg·(1-a)` = I + bg·(1-a) ⇒ 边界亮度回到背景水平。
+            # a_min 限制除法增益（a→0 时噪声会被放大），只在过渡带生效。
+            _up = float(composite_unpremul or 0)
+            if _up > 0:
+                # _soft 已经是 (T,H,W,1)，别再升维（否则与 (T,H,W,3) 广播失败）
+                _a = _soft
+                _a_c = np.clip(_a, 1.0 / max(_up, 1.0), 1.0)
+                _band3 = (_a[..., 0] > 0.02) & (_a[..., 0] < 0.98)
+                _f = np.where(_band3[..., None],
+                              np.clip(_genf / _a_c, 0, 255), _genf)
+                print(f"[wan] 边缘反预乘: gain≤{_up:g}x，"
+                      f"过渡带 {int(_band3.sum())} 像素", flush=True)
+                _genf = _f
             _mixed = np.clip(_genf * _soft + _bgf * (1.0 - _soft), 0, 255)
             # **暗晕抑制（2026-11-16「人物一圈黑影」根治）**：模型在黑抹除
             # 区生成时，人物外轮廓天然带一圈比背景暗的边缘；composite 的
@@ -2729,11 +3147,88 @@ def register(registry):
             if _bf > 0:
                 _d0 = _soft[..., 0]
                 _dkm = (_genf.max(-1) < _bf) & (_d0 > 0.25)
+                # **只在 mask 边界带回填（2026-11-16 真机）**：纯阈值回填会
+                # 误伤人物**内部**的深色区域（黑发、深色衣物）——实测阈值
+                # 提到 55 时头顶被填成白斑。黑边残渣只出现在 mask **边界**
+                # 附近（原片人物轮廓与新角色轮廓不重合处），故限制在
+                # mask 腐蚀 30px 的环带内，内部深色一律不动。
+                try:
+                    import cv2 as _cv2b
+                    # _d0 可能是 (H,W) 或 (H,W,1)/(H,W,3) → 先压成 2D 且连续
+                    # （cv2.erode 只吃 CV_8UC1/CV_8UC3，非连续/多余维度会抛
+                    #  Errno "error"）
+                    _vis = np.asarray(_d0)
+                    if _vis.ndim == 3:
+                        _vis = _vis[..., 0]
+                    _vis = np.ascontiguousarray(
+                        (_vis > 0.5).astype(np.uint8))
+                    _k = np.ones((31, 31), np.uint8)
+                    _er = _cv2b.erode(_vis, _k)
+                    _band = (_vis.astype(bool) & ~_er.astype(bool))
+                    if _dkm.ndim == 3:
+                        _band = _band[..., None]
+                    _n_before = int(_dkm.sum())
+                    _dkm = _dkm & _band
+                    print(f"[wan] 黑边回填限界: {_n_before} -> "
+                          f"{int(_dkm.sum())} 像素（仅边界带）", flush=True)
+                except Exception as _eb:  # noqa: BLE001
+                    print(f"[wan] 边界带限界跳过（{type(_eb).__name__}: "
+                          f"{_eb}）", flush=True)
                 if _dkm.any():
                     _mixed = np.where(_dkm[..., None], _bgf, _mixed)
                     print(f"[wan] 黑边回填: {int(_dkm.sum())} 像素 "
                           f"({100.0*_dkm.sum()/_d0.size:.2f}%) 阈值<{_bf:g}",
                           flush=True)
+            # **边缘颜色去污（2026-11-16，用户方案落地）**：黑边的真正成因是
+            # **边缘像素颜色被污染** —— 抹黑（bg×(1-mask)）后模型在 mask 边界
+            # 把人物画暗（保留黑洞的暗调），合成时 softmask 在边界是半透明，
+            # 半暗的前景叠在原背景上 ⇒ 肉眼可见的一圈黑边/黑雾。
+            # 按 alpha 合成公式 F = (I - (1-a)B)/a 的思路，工程上用
+            # **人物内部颜色重建边界带**：
+            #   1) core  = erode(mask, d)          —— 干净内部（未被抹黑影响）
+            #   2) band  = mask - core             —— 污染环带
+            #   3) inpaint(gen, band)              —— 用内部/周围像素填补环带
+            #   4) 只在 band 内替换                     —— 内部细节一律不动
+            # 相比 fill_black（按亮度阈值猜哪些是黑边，会误伤黑发/黑手套），
+            # 这是**几何确定性**的：环带内的暗调一律由内部亮色外推。
+            _ec = int(composite_edge_clean or 0)
+            if _ec > 0:
+                try:
+                    import cv2 as _cv2c
+                    _kb = np.ones((_ec * 2 + 1, _ec * 2 + 1), np.uint8)
+                    _tot_band = _tot_fix = 0
+                    # **必须逐帧**：_soft/_genf 是 (T,H,W,·) 全帧数组，
+                    # cv2.erode/inpaint 只吃 2D 单图（把 3D 当多通道会
+                    # 把整幅腐蚀成空 → 之前日志"core/band 为空"）。
+                    for _t in range(_soft.shape[0]):
+                        _m8 = np.ascontiguousarray(
+                            (_soft[_t, ..., 0] > 0.5).astype(np.uint8))
+                        if not _m8.any():
+                            continue
+                        _core = _cv2c.erode(_m8, _kb)
+                        _band = (_m8.astype(bool) & ~_core.astype(bool))
+                        if not (_band.any() and _core.any()):
+                            continue
+                        _gf8 = np.clip(_genf[_t], 0, 255).astype(np.uint8)
+                        _fixed = _cv2c.inpaint(
+                            _gf8, (_band.astype(np.uint8)) * 255, 7,
+                            _cv2c.INPAINT_TELEA)
+                        # **只修"暗"的边缘**：亮边（白衣服）本来就干净，
+                        # 强行 inpaint 会抹掉真实布料边缘细节。
+                        _lum_g = _gf8.astype(np.float32).mean(-1)
+                        _lum_f = _fixed.astype(np.float32).mean(-1)
+                        _need = _band & (_lum_f > _lum_g + 2.0)
+                        _tot_band += int(_band.sum())
+                        if _need.any():
+                            _tot_fix += int(_need.sum())
+                            _mixed[_t] = np.where(
+                                _need[..., None],
+                                _fixed.astype(np.float32), _mixed[_t])
+                    print(f"[wan] 边缘去污: 环带 {_ec}px 累计 {_tot_band} 像素，"
+                          f"实际修正 {_tot_fix}（仅补亮）", flush=True)
+                except Exception as _eec:  # noqa: BLE001
+                    print(f"[wan] 边缘去污失败（{type(_eec).__name__}: "
+                          f"{_eec}）", flush=True)
             _mixed = np.clip(_mixed, 0, 255)
             frames = [_Image.fromarray(f.astype("uint8")) for f in _mixed]
             print(f"[wan] composite 合成: expand={_ce} feather={_cf}"
@@ -3034,6 +3529,53 @@ def register(registry):
             kwargs["reference_images"] = [ref]
         if guidance_scale_2 and float(guidance_scale_2) > 0:
             kwargs["guidance_scale_2"] = float(guidance_scale_2)
+
+        # **VACE 干净 pipeline 重建（2026-11-16 真机决定性对照）**：
+        # 同一份 1.3B 权重，**diffusers 官方脚本**（直接
+        # `WanVACEPipeline(...) + pipe.to("cuda")`）出片完全正常；
+        # 而经 `wan.pipe` 装配的 pipeline 无论怎么调参都是彩色噪声。
+        # Animate 当初也是同一现象（独立装配解决）。故这里用组件重建一个
+        # **不带任何 offload hook / 哨兵 / 缓存状态**的 pipeline，等价官方路径。
+        if _is_vace_pipe(pipe) and not getattr(pipe, "_flowx_clean", False):
+            try:
+                from diffusers import WanVACEPipeline as _WVP
+                _tf = pipe.transformer
+                for _m in (getattr(pipe, "transformer", None),
+                           getattr(pipe, "text_encoder", None),
+                           getattr(pipe, "vae", None)):
+                    if _m is not None and hasattr(_m, "_hf_hook"):
+                        try:
+                            del _m._hf_hook
+                        except Exception:  # noqa: BLE001
+                            pass
+                _clean = _WVP(
+                    tokenizer=pipe.tokenizer,
+                    text_encoder=pipe.text_encoder,
+                    vae=pipe.vae,
+                    transformer=_tf,
+                    scheduler=pipe.scheduler,
+                )
+                # 组件已在卡上时**不要再 to("cuda")**（会复制一份 → 24G
+                # 卡上 1.3B+TE 共 18G 直接 OOM）
+                _need = [m for m in (_clean.transformer, _clean.text_encoder,
+                                     _clean.vae)
+                         if m is not None
+                         and getattr(m, "device", None) is not None
+                         and m.device.type != "cuda"]
+                if _need:
+                    for _m in _need:
+                        _m.to("cuda")
+                    print(f"[wan] vace 重建后搬到 GPU 的组件 {len(_need)} 个",
+                          flush=True)
+                else:
+                    print("[wan] vace 组件已全在 GPU，跳过搬运", flush=True)
+                _clean._flowx_clean = True
+                pipe = _clean
+                print("[wan] vace 干净 pipeline 重建完成（官方路径，无 hook）",
+                      flush=True)
+            except Exception as _e:  # noqa: BLE001
+                print(f"[wan] vace 重建失败，沿用原 pipe："
+                      f"{type(_e).__name__}: {_e}", flush=True)
 
         t0 = time.time()
         out = pipe(**kwargs)

@@ -1,6 +1,6 @@
 const WIDGET_SPEC = {
   icon: '🎭',
-  title: '人物遮罩（SAM3）',
+  title: '人物遮罩（SAM3 / SAM2+深度）',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
     { key: 'video', label: '源视频对象 ID', kind: 'text', mono: true },
@@ -13,5 +13,5 @@ const WIDGET_SPEC = {
     { key: 'max_frames', label: '最多帧数（0=全片）', kind: 'number', default: 0, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  note: 'SAM3 检测+全片追踪 → 灰度遮罩视频（255=选中人物），接 H3Gen.inpaint_mask',
+  note: 'mask_model=sam3 文本分割(1/8) | sam2=SAM3首帧+SAM2追踪(256网格) | depth=深度Otsu二值化(拓扑干净,人物须为最近前景) | rvm=专用抠人(软alpha发丝边,免prompt,抠全部前景人) | depth_refine>0 深度精修(仅sam系)。输出灰度遮罩(rvm为软alpha)',
 }

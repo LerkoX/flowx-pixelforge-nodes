@@ -25,14 +25,25 @@ def main():
         "video": ref(param("video")),
         "prompt": param("prompt", "person"),
         "obj_pick": param("obj_pick", "all"),
+        "mask_refine_radius": param("mask_refine_radius", 8, int),
+        "mask_model": param("mask_model", "sam3"),
+        "depth_refine": param("depth_refine", 0, int),
+        "mask_matting": param("mask_matting", 0, int),
+        "contour_smooth": param("contour_smooth", 0, int),
         "dilate": param("dilate", 12, int),
         "max_frames": param("max_frames", 0, int),
         "shape": param("shape", "contour"),
         "bbox_smooth": param("bbox_smooth", 5, int),
         "motion_union": param("motion_union", "0") in ("1", "true", "True"),
     }
+    # 外部深度视频（可选，接 video-depth）：省一次推理 + 深度可视化
+    _dv = param("depth_video", "")
+    if _dv and not _dv.startswith("{{"):
+        inputs["depth_video"] = ref(_dv)
     print(f"[video-person-mask] prompt={inputs['prompt']!r} "
-          f"obj_pick={inputs['obj_pick']} dilate={inputs['dilate']}",
+          f"obj_pick={inputs['obj_pick']} dilate={inputs['dilate']} "
+          f"mask_model={inputs.get('mask_model')} "
+          f"depth_refine={inputs.get('depth_refine')}",
           flush=True)
 
     t0 = time.time()

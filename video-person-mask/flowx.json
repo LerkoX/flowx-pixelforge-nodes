@@ -47,6 +47,36 @@
       "required": false
     },
     {
+      "name": "mask_model",
+      "type": "string",
+      "default": "sam3",
+      "description": "分割后端：sam3（文本直接分割，1/8 网格有 8px 阶梯）/ sam2（SAM3 首帧出框+SAM2 全片追踪，256 网格更平滑）/ depth（深度 Otsu 二值化：拓扑干净无记忆毒素，要求人物是最近前景）/ rvm（**推荐**：专用视频抠人模型，循环记忆时序稳，天然软 alpha 发丝级边缘，免 prompt；抠全部前景人物）"
+    },
+    {
+      "name": "depth_refine",
+      "type": "integer",
+      "default": 0,
+      "description": "深度辅助边界精修（px，0=关，推荐 12~16）。用 Depth-Anything-V2 在 mask 边界带内按**空间前后关系**判定像素归属：人物明显比背景近（实测 0.573 vs 0.130），带内深度够近的归人物、更远的剔除 → 精确剔除 mask 突出部分，从根源减少替换后的黑边/黑雾"
+    },
+    {
+      "name": "contour_smooth",
+      "type": "integer",
+      "default": 0,
+      "description": "轮廓级平滑窗口（0=关，推荐 15~25）：在**轮廓参数化空间**做循环滑动平均，彻底消除 mask 边缘的方块状凹凸（像素级开闭运算治不了）。窗口越大越平滑，过大（>35）会削掉手指等细结构"
+    },
+    {
+      "name": "mask_matting",
+      "type": "integer",
+      "default": 0,
+      "description": "Trimap 抠图（px，0=关，推荐 8~12）：把硬二值 mask 变成**发丝级软 alpha**。构造 trimap（确定前景=腐蚀 mask / 确定背景=外扩 mask 之外 / 未知带=其余），未知带内按深度线性解 + 原图灰度引导滤波求 alpha → 消除硬边和黑描边（CPA Final 思路）"
+    },
+    {
+      "name": "depth_video",
+      "type": "string",
+      "default": "",
+      "description": "外部深度视频对象 ID（可选，接 video-depth）。给了就用它做depth_refine / mask_matting，省一次推理且深度可单独预览"
+    },
+    {
       "name": "video",
       "type": "string",
       "description": "源视频对象 ID（load-video 输出；多人视频）",
@@ -120,6 +150,12 @@
       "required": false,
       "default": "0",
       "description": "1=帧差运动兜底（薄纱裙摆/高速运动区域防漏罩，推荐 replace 场景开）"
+    },
+    {
+      "name": "mask_refine_radius",
+      "type": "integer",
+      "default": 8,
+      "description": "原图引导精修半径（px，0=关闭）。SAM3 mask 原始分辨率只有 1/8，放大后是 8px 方块阶梯；用原视频灰度做引导滤波把边界吸附到真实轮廓。8~12 平滑且保边，16+ 更平滑但可能糊掉手指/发丝"
     }
   ],
   "executor": {

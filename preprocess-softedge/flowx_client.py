@@ -822,12 +822,88 @@ def yaml_scalar(v):
     return json.dumps(str(v), ensure_ascii=False)
 
 
+# 媒体输出字段名 → 期望的对象类别（None = 自动探测）。
+# **统一预览（2026-11-16 用户要求）**：以往每个节点要**手动**调
+# emit_result_preview，漏掉的节点（video-person-mask 的 mask、colorize、
+# face-restore、flux 采样/解码…）在画布上就没有预览。这里在 emit() 里
+# 统一兜底：凡是输出值长得像对象 ID 的字符串，就去服务端探一下
+# /images/{id} 或 /videos/{id}，命中即上报预览帧。
+_MEDIA_KIND_HINTS = {
+    "video": "videos", "mask": "videos", "pose_video": "videos",
+    "face_video": "videos", "background_video": "videos",
+    "control_video": "videos", "depth_video": "videos",
+    "image": "images", "img": "images", "result": "images",
+    "output": "images", "last_image": "images",
+}
+
+
+def _probe_media(base, kind, oid, tok, timeout=6):
+    """HEAD/GET 探测对象是否存在（返回 True/False，不抛异常）。"""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(f"{base}/{kind}/{oid}", method="GET")
+    if tok:
+        req.add_header("Authorization", f"Bearer {tok}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            _ = r.read(64)          # 只读头部若干字节即断开
+            return 200 <= r.status < 300
+    except urllib.error.HTTPError:
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _auto_media_preview(fields):
+    """emit() 的统一媒体预览兜底（见 _MEDIA_KIND_HINTS 注释）。
+
+    只处理「像对象 ID」的值（无空格/无斜杠、长度 8~64），按字段名提示的
+    类别优先探测，未命中再换另一个类别。所有异常静默（预览失败绝不能
+    影响节点结果）。
+    """
+    base = (os.environ.get("FLOWX_PARAM_SERVICE_URL")
+            or os.environ.get("SERVICE_URL") or "").rstrip("/")
+    if not base:
+        return
+    tok = (os.environ.get("FLOWX_PARAM_SERVICE_TOKEN")
+           or os.environ.get("SERVICE_TOKEN") or "")
+    done = set()
+    for k, v in fields.items():
+        if not isinstance(v, str):
+            continue
+        oid = v.strip()
+        if not (8 <= len(oid) <= 64) or "/" in oid or " " in oid:
+            continue
+        if oid in done:
+            continue
+        hint = _MEDIA_KIND_HINTS.get(k)
+        cands = [hint] if hint else []
+        for c in ("images", "videos"):
+            if c not in cands:
+                cands.append(c)
+        for kind in cands:
+            if _probe_media(base, kind, oid, tok):
+                emit_result_preview(base, oid, tok, kind=kind)
+                done.add(oid)
+                print(f"[preview] {k}={oid} -> /{kind}/ 预览已上报",
+                      flush=True)
+                break
+
+
 def emit(**fields):
-    """以 flowx-yaml 代码块输出结果字段，供 FlowX 提取为 Metadata。"""
+    """以 flowx-yaml 代码块输出结果字段，供 FlowX 提取为 Metadata。
+
+    此外**自动为媒体输出上报预览帧**（节点不必再逐个手写
+    emit_result_preview；手写过的仍生效，二者幂等覆盖）。
+    """
     print("```flowx-yaml")
     for k, v in fields.items():
         print(f"{k}: {yaml_scalar(v)}")
     print("```")
+    try:
+        _auto_media_preview(fields)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[preview] 自动预览跳过（{type(_e).__name__}）", flush=True)
 
 
 def host_base(url):

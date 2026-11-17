@@ -651,8 +651,10 @@ function createNodeWidget(spec) {
       if (f.accept) picker.accept = f.accept
       bar.append(pick, status)
 
-      const img = h('img', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;cursor:zoom-in;background:rgba(0,0,0,0.3)')
-      const vid = h('video', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;background:#000')
+      // 预览高度：原来写死 max-height:120px，竖屏视频只剩一条窄缝（用户反馈
+      // 2026-11-17）。放宽到 340px；点开仍可全屏查看。
+      const img = h('img', 'display:none;margin-top:4px;max-width:100%;max-height:340px;border-radius:6px;cursor:zoom-in;background:rgba(0,0,0,0.3)')
+      const vid = h('video', 'display:none;margin-top:4px;max-width:100%;max-height:340px;border-radius:6px;background:#000')
       vid.controls = true
       vid.muted = true
       vid.playsInline = true
@@ -2733,7 +2735,13 @@ function createNodeWidget(spec) {
       if (pv && pv.url) {
         prevWrap.style.display = 'block'
         const effective = pv.url
-        const isVid = /\/videos\//.test(effective)
+        // **媒体类型判断（2026-11-16 修复"刷新后预览消失"）**：实时预览
+        // 走 `{base}/videos/{oid}` 能命中 /videos/，但**刷新/切执行后**前端
+        // 从媒体清单恢复预览用的是 `/api/v1/media/file?path=...frame.mp4`，
+        // URL 里没有 /videos/ → 原来会被判成图片、用 <img> 加载 mp4、
+        // onerror 把整个预览块 display:none（事故现场：跑完刷新就看不到预览）。
+        // 改为「路径含 /videos/ **或** 扩展名是视频容器」双判据。
+        const isVid = /\/videos\//.test(effective) || /\.(mp4|webm|mov|mkv|avi|m4v)(\?|&|#|$)/i.test(effective)
         prevImg.style.display = isVid ? 'none' : 'block'
         prevVideo.style.display = isVid ? 'block' : 'none'
         if (effective !== lastPreviewUrl) {

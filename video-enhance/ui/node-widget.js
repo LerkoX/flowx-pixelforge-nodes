@@ -651,8 +651,10 @@ function createNodeWidget(spec) {
       if (f.accept) picker.accept = f.accept
       bar.append(pick, status)
 
-      const img = h('img', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;cursor:zoom-in;background:rgba(0,0,0,0.3)')
-      const vid = h('video', 'display:none;margin-top:4px;max-width:100%;max-height:120px;border-radius:6px;background:#000')
+      // 预览高度：原来写死 max-height:120px，竖屏视频只剩一条窄缝（用户反馈
+      // 2026-11-17）。放宽到 340px；点开仍可全屏查看。
+      const img = h('img', 'display:none;margin-top:4px;max-width:100%;max-height:340px;border-radius:6px;cursor:zoom-in;background:rgba(0,0,0,0.3)')
+      const vid = h('video', 'display:none;margin-top:4px;max-width:100%;max-height:340px;border-radius:6px;background:#000')
       vid.controls = true
       vid.muted = true
       vid.playsInline = true
@@ -2733,7 +2735,13 @@ function createNodeWidget(spec) {
       if (pv && pv.url) {
         prevWrap.style.display = 'block'
         const effective = pv.url
-        const isVid = /\/videos\//.test(effective)
+        // **媒体类型判断（2026-11-16 修复"刷新后预览消失"）**：实时预览
+        // 走 `{base}/videos/{oid}` 能命中 /videos/，但**刷新/切执行后**前端
+        // 从媒体清单恢复预览用的是 `/api/v1/media/file?path=...frame.mp4`，
+        // URL 里没有 /videos/ → 原来会被判成图片、用 <img> 加载 mp4、
+        // onerror 把整个预览块 display:none（事故现场：跑完刷新就看不到预览）。
+        // 改为「路径含 /videos/ **或** 扩展名是视频容器」双判据。
+        const isVid = /\/videos\//.test(effective) || /\.(mp4|webm|mov|mkv|avi|m4v)(\?|&|#|$)/i.test(effective)
         prevImg.style.display = isVid ? 'none' : 'block'
         prevVideo.style.display = isVid ? 'block' : 'none'
         if (effective !== lastPreviewUrl) {
@@ -2817,28 +2825,23 @@ createNodeWidget.simplifyPoints = simplifyPoints
 
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
-  icon: '🕺',
-  title: 'Wan Animate 2',
+  icon: '✨',
+  title: 'Video Enhance（二次修复）',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
-    { key: 'model', label: 'MODEL（接 wan-load task=animate2）', kind: 'text', mono: true },
-    { key: 'image', label: '角色参考图（接 load-image）', kind: 'text', mono: true },
-    { key: 'pose_video', label: '骨架视频（接 video-control-preprocess mode=pose）', kind: 'text', mono: true },
-    { key: 'prompt', label: '提示词', kind: 'textarea', rows: 3, default: '' },
-    { key: 'negative_prompt', label: '负向提示词', kind: 'textarea', rows: 2, default: '', advanced: true },
-    { key: 'pose_strength', label: '姿态强度（1.0=训练默认）', kind: 'slider', min: 0, max: 3, step: 0.05, default: 1.0 },
-    { key: 'reference_image_strength', label: '身份约束强度（<1 放松，>1 防漂移）', kind: 'slider', min: 0, max: 3, step: 0.05, default: 1.0 },
-    { key: 'pose_start_percent', label: '姿态起始进度', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.0, advanced: true },
-    { key: 'pose_end_percent', label: '姿态结束进度（0.7=放松细节）', kind: 'slider', min: 0, max: 1, step: 0.05, default: 1.0, advanced: true },
-    { key: 'width', label: '宽（0=按参考图）', kind: 'text', default: 0, advanced: true },
-    { key: 'height', label: '高（0=按参考图）', kind: 'text', default: 0, advanced: true },
-    { key: 'steps', label: '采样步数', kind: 'slider', min: 1, max: 60, step: 1, default: 20 },
-    { key: 'guidance_scale', label: 'CFG 强度（Animate 默认 1.0 关 CFG）', kind: 'slider', min: 0, max: 10, step: 0.5, default: 1.0 },
-    { key: 'seed', label: '种子（-1 随机）', kind: 'text', default: -1 },
+    { key: 'video', label: '输入视频（接 wan-animate2 / load-video）', kind: 'text', mono: true },
+    { key: 'face_model', label: '面部修复模型', kind: 'select', options: ['gfpgan', 'restoreformer', 'none'], default: 'gfpgan' },
+    { key: 'upscale_model', label: '超分模型（/models/upscale 下文件名，空=关）', kind: 'text', default: '' },
+    { key: 'det_thresh', label: '人脸检测阈值', kind: 'slider', min: 0.1, max: 0.9, step: 0.05, default: 0.5, advanced: true },
+    { key: 'face_padding', label: '人脸框外扩', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.3, advanced: true },
+    { key: 'face_feather', label: '贴回羽化 px', kind: 'slider', min: 0, max: 48, step: 2, default: 16, advanced: true },
+    { key: 'face_weight', label: '修复混合权重（低保身份高修得狠）', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5 },
+    { key: 'tile', label: '超分分块（0=整图）', kind: 'text', default: 0, advanced: true },
+    { key: 'fps', label: '输出帧率（0=跟随输入）', kind: 'text', default: 0, advanced: true },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 3600, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  note: 'Wan-Animate-2（角色图 + 骨架视频，无需 face_video）',
+  note: '逐帧 GFPGAN 面部修复 + RealESRGAN 超分；高速运动场景可能轻微闪烁',
 }
 
 export default createNodeWidget(WIDGET_SPEC)

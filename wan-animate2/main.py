@@ -17,7 +17,10 @@ def main():
     url = param("service_url").rstrip("/")
     pbase = host_base(url)
     tok = token()
-    ensure_plugin(url, "wan.animate2", tok=tok)
+    # F1 设计：返回实际算子名（<基名>@<内容hash>）——必须用它提交 job，
+    # 否则裸名会被服务端解析到旧版本注册（2026-11-17 latent_inpaint 丢失
+    # 根因：裸名解析到 9a21bcec 旧版，新参数被当未声明丢弃）
+    actual_op = ensure_plugin(url, "wan.animate2", tok=tok)
 
     model_id = param("model", "")
     image_id = param("image", "")
@@ -46,11 +49,19 @@ def main():
         "inpaint_erode": param("inpaint_erode", 0, int),
         "inpaint_expand": param("inpaint_expand", 0, int),
         "inpaint_telea_radius": param("inpaint_telea_radius", 5, int),
+        "inpaint_ring_width": param("inpaint_ring_width", 10, int),
         "fps": param("fps", 0, int),
         "composite": param("composite", "0") in ("1", "true", "True"),
         "composite_expand": param("composite_expand", 6, int),
         "composite_feather": param("composite_feather", 20, int),
         "composite_gain": param("composite_gain", 1.25, float),
+        "composite_dehaze": param("composite_dehaze", "0") in ("1", "true", "True"),
+        "composite_dehaze_strength": param("composite_dehaze_strength", 0.95, float),
+        "composite_fill_black": param("composite_fill_black", 25.0, float),
+        "composite_edge_clean": param("composite_edge_clean", 0, int),
+        "mask_invert": param("mask_invert", 0, int),
+        "latent_inpaint": param("latent_inpaint", 0, int),
+        "composite_unpremul": param("composite_unpremul", 0.0, float),
         "prompt": param("prompt", ""),
         "negative_prompt": param("negative_prompt", ""),
         "pose_strength": param("pose_strength", 1.0, float),
@@ -80,11 +91,13 @@ def main():
         inputs["mask_video"] = ref(mask_id)
 
     t0 = time.time()
-    jid = submit_job(url, {"name": "wan.animate2", "inputs": inputs}, tok)
+    jid = submit_job(url, {"name": actual_op, "inputs": inputs}, tok)
     emit_preview(f"{pbase}/preview/{jid}", 0.0, tok, base=pbase, job_id=jid)
     print(f"[wan-animate2] job={jid} steps={inputs['steps']} "
           f"pose_str={inputs['pose_strength']} ref_str="
-          f"{inputs['reference_image_strength']}", flush=True)
+          f"{inputs['reference_image_strength']} "
+          f"latent_inpaint={inputs['latent_inpaint']} "
+          f"fill={inputs['inpaint_fill']}", flush=True)
     result = wait_job(url, jid, tok,
                       timeout=param("job_timeout", 3600, int),
                       poll=param("poll_interval", 5, int))

@@ -1,0 +1,91 @@
+{
+  "name": "video-depth",
+  "displayName": "视频深度（Depth-Anything-V2）",
+  "description": "视频深度估计：VIDEO → 灰度深度视频（近亮远暗）+ 首帧深度图。基于 Depth-Anything-V2-Base（0.097B bf16，逐帧 ~0.1s）。用途：① 单独预览/检查深度 ② 给人物遮罩的边界判定做依据 ③ 喂 ControlNet depth 类节点当结构条件。invert=True 反转极性。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "depth",
+    "depth-anything",
+    "preprocess",
+    "video"
+  ],
+  "icon": "🌊",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "default": null
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "default": "",
+      "description": "源视频对象 ID（接 load-video）"
+    },
+    {
+      "name": "invert",
+      "type": "boolean",
+      "default": false,
+      "description": "反转深度极性（False=近亮远暗，Depth-Anything 原生；True=远亮近暗，对齐 MiDaS/ControlNet depth 惯例）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "default": 1800
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "default": 5
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "深度视频对象 ID（灰度）"
+    },
+    {
+      "name": "depth",
+      "type": "string",
+      "description": "首帧深度图对象 ID（预览用）"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 420,
+    "height": 560,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

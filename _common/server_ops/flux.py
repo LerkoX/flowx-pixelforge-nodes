@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "f840da1974f0"
+OP_VERSION = "675e44f6616b"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -354,12 +354,16 @@ class FluxClipBundle:
     """DualCLIP 组件束：CLIP-L 模块 + 双 tokenizer + T5 惰性装载信息。
     T5 权重在编码相位才装载（内存错峰），release_t5=1 编码后释放。"""
 
-    def __init__(self, clip_l, tokenizer, tokenizer_2, t5_gguf, t5_cfg):
+    def __init__(self, clip_l, tokenizer, tokenizer_2, t5_gguf, t5_cfg,
+                 t5_hf=None):
         self.clip_l = clip_l
         self.tokenizer = tokenizer
         self.tokenizer_2 = tokenizer_2
         self.t5_gguf = t5_gguf
         self.t5_cfg = t5_cfg
+        # **t5_hf（2026-11-16）**：T5 用 diffusers/HF 目录（FLUX.1-dev 的
+        # `text_encoder_2/`）而不是 GGUF 时填目录路径；GGUF 与 HF 二选一。
+        self.t5_hf = t5_hf
         self.t5 = None
 
 
@@ -385,6 +389,16 @@ def _move_vaes(device):
     if n:
         torch.cuda.empty_cache()
         print(f"[flux] {n} vae -> {device}", flush=True)
+
+
+def _load_t5(clip, device="cpu"):
+    """按 bundle 配置装载 T5：HF 目录（text_encoder_2）优先，否则 GGUF。"""
+    if getattr(clip, "t5_hf", None):
+        from transformers import T5EncoderModel
+        m = T5EncoderModel.from_pretrained(clip.t5_hf,
+                                          torch_dtype=torch.bfloat16)
+        return m.to(device) if device != "cpu" else m
+    return load_t5_gguf(clip.t5_gguf, clip.t5_cfg, device=device)
 
 
 def _dispatch_t5_split(model, k):
@@ -611,8 +625,20 @@ def register(registry):
         models = _models()
         if key in models._pipes:
             return {"model": models.get(key)}
-        tr_path = _require_file(os.path.join(FLUX_DIR, transformer),
-                                "transformer GGUF")
+        tr_full = os.path.join(FLUX_DIR, transformer)
+        # **目录 = diffusers 格式（2026-11-16）**：FLUX.1-dev 官方仓库是
+        # 3 分片 diffusers 权重，直接 from_pretrained，无需 GGUF 量化。
+        if os.path.isdir(tr_full):
+            t0 = time.time()
+            tr = FluxTransformer2DModel.from_pretrained(
+                tr_full, torch_dtype=_FLUX_DTYPES[dt])
+            print(f"[flux] transformer {transformer} (diffusers 目录) "
+                  f"dtype={dt} {time.time()-t0:.1f}s", flush=True)
+            est = sum(os.path.getsize(os.path.join(tr_full, f))
+                      for f in os.listdir(tr_full) if f.endswith(".safetensors"))
+            return {"model": _register(key, tr, est,
+                                       "FluxTransformer2DModel")}
+        tr_path = _require_file(tr_full, "transformer GGUF")
         tr_cfg_dir = _unet_config_dir(transformer)
         t0 = time.time()
         quant = GGUFQuantizationConfig(compute_dtype=_FLUX_DTYPES[dt])
@@ -646,9 +672,21 @@ def register(registry):
         models = _models()
         if key in models._pipes:
             return {"clip": models.get(key)}
-        t5_path = _require_file(os.path.join(FLUX_DIR, t5), "T5 GGUF")
-        t5_cfg = _require_file(
-            os.path.join(FLUX_DIR, "text_encoder_2", "config.json"), "T5 config")
+        # **t5="hf"（2026-11-16）**：用 diffusers 格式的 text_encoder_2
+        # （FLUX.1-dev 官方仓库全套），省掉 GGUF 依赖。
+        _hf_t5 = None
+        if str(t5).lower() in ("hf", "text_encoder_2", "diffusers"):
+            _hf_dir = os.path.join(FLUX_DIR, "text_encoder_2")
+            if not os.path.isdir(_hf_dir):
+                raise ValueError(f"flux: 缺 text_encoder_2 目录（{_hf_dir}）")
+            t5_path = _hf_dir
+            t5_cfg = os.path.join(_hf_dir, "config.json")
+            _hf_t5 = _hf_dir
+        else:
+            t5_path = _require_file(os.path.join(FLUX_DIR, t5), "T5 GGUF")
+            t5_cfg = _require_file(
+                os.path.join(FLUX_DIR, "text_encoder_2", "config.json"),
+                "T5 config")
         t0 = time.time()
         bundle = FluxClipBundle(
             clip_l=CLIPTextModel.from_pretrained(
@@ -658,7 +696,7 @@ def register(registry):
                 os.path.join(FLUX_DIR, "tokenizer")),
             tokenizer_2=T5TokenizerFast.from_pretrained(
                 os.path.join(FLUX_DIR, "tokenizer_2")),
-            t5_gguf=t5_path, t5_cfg=t5_cfg)
+            t5_gguf=t5_path, t5_cfg=t5_cfg, t5_hf=_hf_t5)
         print(f"[flux] dual-clip (clip-l {dt} + tokenizers, t5 lazy) "
               f"{time.time()-t0:.1f}s", flush=True)
         return {"clip": _register(key, bundle, int(0.5e9), "FluxClipBundle")}
@@ -754,7 +792,7 @@ def register(registry):
             if direct_split:
                 raise RuntimeError("out of memory (preflight: T5 全量超可用显存)")
             if clip.t5 is None:
-                clip.t5 = load_t5_gguf(clip.t5_gguf, clip.t5_cfg, device="cuda")
+                clip.t5 = _load_t5(clip, "cuda")
             else:
                 clip.t5.to("cuda")
             clip.clip_l.to("cuda")
@@ -779,7 +817,7 @@ def register(registry):
             clip.t5 = None            # 丢掉半成品 GPU 张量
             gc.collect()
             torch.cuda.empty_cache()
-            clip.t5 = load_t5_gguf(clip.t5_gguf, clip.t5_cfg, device="cpu")
+            clip.t5 = _load_t5(clip, "cpu")
             clip.clip_l.to("cpu")
             enc_dev = torch.device("cpu")
             print(f"[flux.encode] T5 已全量驻 CPU，开始 CPU 编码（预计 3~5 分钟）",

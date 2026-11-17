@@ -140,12 +140,15 @@ OP_FAMILIES = {
     "video_flow.py": ["load-video", "video-to-frames", "frames-to-video",
                       "video-repaint", "video-v2v"],
     # SAM3 视频人物遮罩（文本检测+全片追踪）：人物替换 inpaint_mask 选区件
-    "video_mask.py": ["video-person-mask"],
+    "video_mask.py": ["video-person-mask", "video-depth"],
     # Wan 视频族（通义万相）：组件装配 + 文本编码 + 生成 + animate/vace
     "wan.py": ["wan-gen", "wan-text-encode", "wan-animate", "wan-animate2",
                "wan-vace",
+               "wan-vace-standalone",
                "wan-transformer-load", "wan-te-load", "wan-vae-load",
-               "wan-image-encoder-load", "wan-pipe"],
+               "wan-image-encoder-load", "wan-pipe",
+               "wan-lora-load", "wan-te-cache",
+           ],
 }
 
 

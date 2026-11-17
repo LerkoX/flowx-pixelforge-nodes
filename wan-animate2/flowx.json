@@ -125,6 +125,13 @@
       "default": 5
     },
     {
+      "name": "inpaint_ring_width",
+      "type": "integer",
+      "description": "边缘环带宽度（inpaint_fill=telea_ring 时生效）：只把这圈换成背景纹理，中心保持待生成",
+      "required": false,
+      "default": 10
+    },
+    {
       "name": "fps",
       "type": "integer",
       "required": false,
@@ -319,6 +326,30 @@
       "description": "mask 内近黑空白回填阈值（RGB 三通道都低于此值的像素换回背景，治硬黑边；0=关闭，推荐 20~30）",
       "required": false,
       "default": 25.0
+    },
+    {
+      "name": "composite_edge_clean",
+      "type": "integer",
+      "default": 0,
+      "description": "边缘颜色去污带宽（px，0=关，推荐 16~28）。黑边真正成因是边缘像素被抹黑污染：模型在 mask 边界把人物画暗，合成时半透明前景叠背景=黑边。开启后用人物内部颜色重建边界环带（几何确定，不像 fill_black 按亮度猜会误伤黑发）。带宽略大于原人物轮廓与新人物轮廓的偏差即可"
+    },
+    {
+      "name": "composite_unpremul",
+      "type": "float",
+      "default": 0.0,
+      "description": "边缘反预乘增益上限（0=关，推荐 3~4）。模型在 mask 边界生成的是'半透明前景叠在黑抹除层'的结果 I=aF+(1-a)·0，直接按 a 合成会二次衰减 ⇒ 黑边。开启后先 F=I/max(a,1/gain) 还原前景再合成，边界亮度回到背景水平（数学上的边缘去污）"
+    },
+    {
+      "name": "mask_invert",
+      "type": "integer",
+      "default": 0,
+      "description": "传 mask 时是否反相（1=反相）。diffusers replace 内部会 1-mask + 条件帧置1，实测需按此调极性：成片保留原人物时打开"
+    },
+    {
+      "name": "latent_inpaint",
+      "type": "integer",
+      "default": 0,
+      "description": "Latent inpainting（0=关，1=开，**推荐开**）：走 diffusers 官方 callback_on_step_end，每步把 mask 外区域拉回「原视频 latent + σ 噪声」，mask 内自由生成。效果=背景像素级保留 + 换人成功 + 无黑边（不靠涂黑、不靠输出端合成，也不绕开 diffusers）"
     }
   ],
   "outputs": [

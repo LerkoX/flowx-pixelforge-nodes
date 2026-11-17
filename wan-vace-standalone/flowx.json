@@ -1,0 +1,207 @@
+{
+  "name": "wan-vace-standalone",
+  "displayName": "Wan VACE 替换（独立装配）",
+  "description": "Wan-VACE 可控生成（**独立装配版**）：直接接 transformer / text_encoder / vae 三个组件句柄，内部按 diffusers 官方示例 `WanVACEPipeline(...) + pipe.to(\"cuda\")` 装配，**完全不经过 wan.pipe**。用于绕开组件缓存与 offload hook 导致的数值异常（彩色噪声）。把原视频+遮罩(白=重绘/黑=保留)+参考图传入，输出重绘后的视频。流水线连法：transformer-load → te-load → vae-load → 本节点 → save-video。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "wan",
+    "vace",
+    "character-swap",
+    "video",
+    "inference"
+  ],
+  "icon": "🎬",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "transformer",
+      "type": "string",
+      "default": "",
+      "description": "transformer 组件句柄（接 wan-transformer-load）"
+    },
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "default": "",
+      "description": "text_encoder 组件句柄（接 wan-te-load）"
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "default": "",
+      "description": "vae 组件句柄（接 wan-vae-load）"
+    },
+    {
+      "name": "flow_shift",
+      "type": "float",
+      "default": 5.0,
+      "description": "flow matching shift（720p 5.0 / 480p 3.0）"
+    },
+    {
+      "name": "scheduler",
+      "type": "string",
+      "default": "euler",
+      "description": "调度器：euler（推荐）/ unipc / dpm++"
+    },
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达地址（留空同 service_url）"
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "原视频对象 ID（接 load-video）"
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "遮罩对象 ID（白=重绘区/黑=保留；接 video-person-mask）"
+    },
+    {
+      "name": "reference_image",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "新角色参考图对象 ID（接 load-image；建议脸部/半身特写）"
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "提示词：描述替换后画面（人物外观 + 保留原动作/场景）"
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "负向提示词"
+    },
+    {
+      "name": "conditioning_scale",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "条件强度（1.0=训练默认；<1 更贴原片结构，>1 更贴参考图）"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "帧数（0=跟随原视频；自动对齐 4k+1）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "宽（0=跟随原视频；16 的倍数）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "高（0=跟随原视频；16 的倍数）"
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "required": false,
+      "default": 30,
+      "description": "采样步数（官方默认 50；VACE 30 步通常够）"
+    },
+    {
+      "name": "guidance_scale",
+      "type": "float",
+      "required": false,
+      "default": 5.0,
+      "description": "CFG 强度（官方 5.0~7.0）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "required": false,
+      "default": -1,
+      "description": "随机种子，-1 为随机"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "生成视频对象 ID"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际种子"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 520,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

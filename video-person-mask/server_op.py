@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "480f2b2e593d"
+OP_VERSION = "2feeaa757d82"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -780,10 +780,18 @@ def _matting_birefnet(frames, weights=None, smooth=3):
             "ComfyUI_LayerStyle/ComfyUI/models/BiRefNet/RMBG-2.0 可软链）")
     global _BIREF_CACHE
     if rdir not in _BIREF_CACHE:
+        import importlib
         import sys
-        if rdir not in sys.path:
-            sys.path.insert(0, rdir)
-        from birefnet import BiRefNet          # noqa: PLC0415 自包含网络定义
+        import types
+        # **手造包加载（2026-11-17）**：birefnet.py 内部用相对导入
+        # （from .BiRefNet_config import ...），直接 sys.path 注入会
+        # ImportError；把 RMBG-2.0 目录注册为包（rmbg2）再 importlib
+        # 加载子模块，相对导入正常解析（且不污染 sys.path）。
+        if "rmbg2" not in sys.modules:
+            _pkg = types.ModuleType("rmbg2")
+            _pkg.__path__ = [rdir]
+            sys.modules["rmbg2"] = _pkg
+        BiRefNet = importlib.import_module("rmbg2.birefnet").BiRefNet
         from safetensors.torch import load_file
         net = BiRefNet(bb_pretrained=False).cuda().eval()
         sd = load_file(str(Path(rdir) / "model.safetensors"))

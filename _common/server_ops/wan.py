@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "f7af6892412b"
+OP_VERSION = "477659bedc3c"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2517,9 +2517,13 @@ def register(registry):
                     _lm = []
                     for _im in mk_out:
                         _a = np.asarray(_im.convert("L"), dtype=np.float32) / 255.0
+                        # **LINEAR 下采样（2026-11-17 v26）**：NEAREST 会把
+                        # 像素级羽化的软 alpha 量化成硬边+锯齿 → 拉回/生成的
+                        # 切换变成硬边界（边缘"透明分界感"的来源）。LINEAR
+                        # 保持渐变 → 每步拉回强度从人物到背景连续过渡（L3）。
                         _a = _cv2li.resize(
                             _a, (_src.shape[-1], _src.shape[-2]),
-                            interpolation=_cv2li.INTER_NEAREST)
+                            interpolation=_cv2li.INTER_LINEAR)
                         _lm.append(_a)
                     _li_t = _src.shape[2]
                     _lm2 = [_lm[min(i * 4, len(_lm) - 1)] for i in range(_li_t)]

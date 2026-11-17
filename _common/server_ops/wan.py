@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "6556d3559f78"
+OP_VERSION = "48eb742f41f9"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2539,8 +2539,21 @@ def register(registry):
                         _lm.append(_a)
                     _li_t = _src.shape[2]
                     _lm2 = [_lm[min(i * 4, len(_lm) - 1)] for i in range(_li_t)]
+                    _mnp = np.stack(_lm2).astype(np.float32)
+                    # **拉回 mask 硬化（2026-11-18 v30，治半透明纱化）**：
+                    # 软 alpha 直接当拉回权重时，人物内部低置信区（宽大黑裤
+                    # α≈0.7~0.85）每步被 (1-α) 稀释 → 20 步累积成半透明（v29
+                    # 实证：上半身 α 高实心、腿部 α 低纱化）。SD inpainting 的
+                    # SetLatentNoiseMask 是硬 mask+边界羽化：二值化(α>0.5)→
+                    # 腐蚀 1 格（人物内部零稀释）→ 轻羽化（边界 1 格渐变）。
+                    # 软 alpha 只留给条件/合成路径（mk_out 原样）。
+                    _k = _cv2li.getStructuringElement(
+                        _cv2li.MORPH_ELLIPSE, (3, 3))
+                    _mnp = (_mnp > 0.5).astype(np.float32)
+                    _mnp = _cv2li.erode(_mnp, _k)
+                    _mnp = _cv2li.GaussianBlur(_mnp, (3, 3), 0)
                     _mask_lat = _tj.from_numpy(
-                        np.stack(_lm2)[None, None]).to(_src.device, _src.dtype)
+                        _mnp[None, None]).to(_src.device, _src.dtype)
                     _g = _tj.Generator("cpu").manual_seed(
                         int(seed) if seed >= 0 else 0)
                     _noise = _tj.randn(_src.shape, generator=_g,

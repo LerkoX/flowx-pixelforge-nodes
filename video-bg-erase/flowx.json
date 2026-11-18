@@ -70,5 +70,15 @@
       "type": "integer",
       "description": "帧数"
     }
-  ]
+  ],
+  "language": "python",
+  "displayName": "背景抹除（Clean Plate）",
+  "category": "video",
+  "entry": "main.py",
+  "files": [
+    "main.py",
+    "server_op.py",
+    "flowx_client.py"
+  ],
+  "inputs": []
 }

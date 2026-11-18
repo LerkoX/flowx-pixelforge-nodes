@@ -64,5 +64,15 @@
       "type": "integer",
       "description": "帧数"
     }
-  ]
+  ],
+  "language": "python",
+  "displayName": "骨架派生遮罩（紧身轮廓）",
+  "category": "video",
+  "entry": "main.py",
+  "files": [
+    "main.py",
+    "server_op.py",
+    "flowx_client.py"
+  ],
+  "inputs": []
 }

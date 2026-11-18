@@ -905,19 +905,52 @@ def _lama_inpaint(net, img_rgb, mask_u8):
     return arr[:h, :w]
 
 
+
+def _bg_color_match(src, tgt, mask_u8, soft=False):
+    """Clean Plate 色彩对齐（Reinhard 迁移 + mask 外像素还原）。
+
+    为什么需要（2026-11-18 实测）：LaMa 补全的整帧亮度/色调会与源视频有
+    细微偏差（mask 外也会被动到），而条件图 telea_dim 的压暗暗谷以该背景
+    为基准 → 色偏会放大「暗谷 vs 背景」的对比 → 成片出现灰雾光晕。
+    做法：① 用 mask 外区域做逐通道 mean/std 对齐（Reinhard）；
+         ② mask 外像素强制还原为源视频原值（保证背景 100% 真实）。
+    """
+    import cv2 as _cv2c
+    import numpy as np
+    keep = mask_u8 <= 127
+    if keep.sum() < 100:
+        return tgt
+    out = tgt.astype(np.float32).copy()
+    for c in range(3):
+        sv = src[:, :, c][keep].astype(np.float32)
+        tv = tgt[:, :, c][keep].astype(np.float32)
+        sm, ss = float(sv.mean()), float(sv.std()) + 1e-6
+        tm, ts = float(tv.mean()), float(tv.std()) + 1e-6
+        out[:, :, c] = (out[:, :, c] - tm) * (ss / ts) + sm
+    out = np.clip(out, 0, 255)
+    # mask 外强制还原原像素（用羽化权重软混合，避免硬切边界线）
+    w = (mask_u8.astype(np.float32) / 255.0)
+    if soft:
+        w = _cv2c.GaussianBlur(w, (0, 0), sigmaX=3.0)
+    w = w[..., None]
+    out = out * w + src.astype(np.float32) * (1.0 - w)
+    return np.clip(out, 0, 255).round().astype(np.uint8)
+
+
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
 
     @registry.register(
         "video.bg_erase",
         inputs={"video": "VIDEO", "mask": "VIDEO", "dilate": "INT",
-                "radius": "INT", "method": "STRING"},
+                "radius": "INT", "method": "STRING", "color_match": "INT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="**流派A 第一阶段（Clean Plate）**：把 mask 区域从视频里"
                     "抹除，输出空无一人的纯净背景视频。method=telea（默认，"
                     "快）/ns（Navier-Stokes，大面积遮挡更自然）。dilate 保证"
                     "覆盖人物所有像素（原人残留会在下游生成时变成鬼影）。")
-    def _op_bg_erase(video, mask, dilate=20, radius=15, method="telea"):
+    def _op_bg_erase(video, mask, dilate=20, radius=15, method="telea",
+                     color_match=1):
         import cv2
         import numpy as np
         from PIL import Image as _Image
@@ -941,11 +974,15 @@ def register(registry):
                 mnp = cv2.dilate(mnp, ker)
             if _lama is not None:
                 res = _lama_inpaint(_lama, img, mnp)      # LaMa 高质量补全
+                if int(color_match or 0) > 0:
+                    # 色彩对齐 + mask 外还原（治 LaMa 色偏导致的成片灰雾）
+                    res = _bg_color_match(img, res, mnp, soft=True)
             else:
                 res = cv2.inpaint(img, mnp, max(1, int(radius)), flag)
             out.append(_Image.fromarray(res))
         print(f"[video-bg-erase] done {n}帧 {time.time()-t0:.1f}s "
-              f"dilate={dilate} radius={radius} method={method}", flush=True)
+              f"dilate={dilate} radius={radius} method={method} "
+              f"color_match={color_match}", flush=True)
         return {"video": {"frames": out, "fps": fps},
                 "fps": int(round(fps)), "num_frames": n}
 

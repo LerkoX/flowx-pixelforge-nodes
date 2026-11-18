@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "4fcc809d266d"
+OP_VERSION = "83efe3d69954"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2507,6 +2507,7 @@ def register(registry):
                 "composite_unpremul": "FLOAT",
                 "mask_invert": "INT",
                 "latent_inpaint": "INT", "inpaint_dim": "FLOAT",
+        "face_from_ref": "INT",
                 "composite_dehaze_strength": "FLOAT",
                 "lora": "STRING", "relight_lora": "STRING",
                 "relight_scale": "FLOAT",
@@ -2537,6 +2538,7 @@ def register(registry):
                      composite_fill_black=0.0, composite_edge_clean=0,
                      composite_unpremul=0.0, mask_invert=0,
                      latent_inpaint=0, inpaint_dim=0.38,
+                     face_from_ref=1,
                      lora="", relight_lora="",
                      relight_scale=1.0, prompt_embeds_path="",
                      negative_embeds_path=""):
@@ -2671,6 +2673,23 @@ def register(registry):
 
         # face 全黑（239 无 face 节点；有 face_video 输入时优先生效）
         face = _pils(face_video) if face_video is not None else None
+        # **face 改为参考图人脸（2026-11-18 v36，治原人身份泄漏/鬼影）**：
+        # Wan-Animate 的 face_video 是**面部身份驱动通道**——喂原视频人脸
+        # 则生成的脸=原人的脸（v35 实证：脸/发型与原视频完全一致，即
+        # "双重曝光鬼影"的主因之一）。替换任务必须让身份来自参考图：
+        # face_from_ref>0 时（默认开）从 image（参考图）裁上部人脸区，
+        # 重复到全部帧 → 身份=参考图、表情不跟随（舞蹈场景可接受）。
+        if int(face_from_ref or 0) > 0:
+            _rw, _rh = ref.size
+            _fy0 = int(0.02 * _rh)
+            _fy1 = int(0.22 * _rh)
+            _fs = max(32, _fy1 - _fy0)
+            _fx0 = max(0, (_rw - _fs) // 2)
+            _fcrop = ref.crop((_fx0, _fy0, min(_rw, _fx0 + _fs), _fy1)
+                              ).resize((512, 512), _Image.LANCZOS)
+            face = [_fcrop for _ in pose]
+            print(f"[wan] animate2 face 来自参考图（{_fs}px 裁剪→512²，"
+                  f"{len(face)} 帧）——身份由参考图驱动", flush=True)
         if face is None:
             face = [_Image.new("RGB", (512, 512), (0, 0, 0))
                     for _ in pose]

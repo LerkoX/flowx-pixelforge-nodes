@@ -346,6 +346,12 @@
       "description": "传 mask 时是否反相（1=反相）。diffusers replace 内部会 1-mask + 条件帧置1，实测需按此调极性：成片保留原人物时打开"
     },
     {
+      "name": "inpaint_dim",
+      "type": "float",
+      "default": 0.38,
+      "description": "telea_dim 暗化系数（0.38=填充实至38%亮度）。v31全填亮窗帘→人物幽灵(条件覆盖)；v32黑洞→Halo(断崖)；暗化全填是中间态——暗区传递待重绘信号且无断崖。0.62=更亮(台阶更小人物更亮)"
+    },
+    {
       "name": "latent_inpaint",
       "type": "integer",
       "default": 0,

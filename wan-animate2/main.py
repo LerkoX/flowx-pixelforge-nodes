@@ -61,6 +61,7 @@ def main():
         "composite_edge_clean": param("composite_edge_clean", 0, int),
         "mask_invert": param("mask_invert", 0, int),
         "latent_inpaint": param("latent_inpaint", 0, int),
+        "inpaint_dim": param("inpaint_dim", 0.38, float),
         "composite_unpremul": param("composite_unpremul", 0.0, float),
         "prompt": param("prompt", ""),
         "negative_prompt": param("negative_prompt", ""),

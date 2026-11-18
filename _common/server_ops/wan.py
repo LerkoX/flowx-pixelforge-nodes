@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "be7b0b4cec95"
+OP_VERSION = "4fcc809d266d"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2565,10 +2565,18 @@ def register(registry):
                     # SetLatentNoiseMask 是硬 mask+边界羽化：二值化(α>0.5)→
                     # 腐蚀 1 格（人物内部零稀释）→ 轻羽化（边界 1 格渐变）。
                     # 软 alpha 只留给条件/合成路径（mk_out 原样）。
+                    # **拉回 mask 必须"绝对包裹"（2026-11-18 v35 修鬼影）**：
+                    # v30 加的 erode 是致命错误——腐蚀使遮罩内缩，原视频里
+                    # **宽大黑裤/散开头发**落到 mask=0 区 → 每步被
+                    # `lat*0 + src_noisy*1` 拉回原视频 → 20 步累积成双重曝光
+                    # 鬼影。铁律：mask=0 区域不得含任何原人物像素。
+                    # 改为 dilate 膨胀 2 格（5×5）：完全吞掉原人最宽轮廓；
+                    # 原人↔新人之间的空隙区进 mask=1，交由模型按 L2 条件
+                    # （telea_dim 暗化窗帘）自由生成背景。
                     _k = _cv2li.getStructuringElement(
-                        _cv2li.MORPH_ELLIPSE, (3, 3))
+                        _cv2li.MORPH_ELLIPSE, (5, 5))
                     _mnp = (_mnp > 0.5).astype(np.float32)
-                    _mnp = _cv2li.erode(_mnp, _k)
+                    _mnp = _cv2li.dilate(_mnp, _k)
                     _mnp = _cv2li.GaussianBlur(_mnp, (3, 3), 0)
                     _mask_lat = _tj.from_numpy(
                         _mnp[None, None]).to(_src.device, _src.dtype)

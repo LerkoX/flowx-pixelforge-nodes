@@ -1,0 +1,68 @@
+{
+  "name": "video-pose-mask",
+  "version": "1.0.0",
+  "description": "**流派B 进攻掩码**：DWPose 骨架（黑底白线）→ 膨胀成紧身轮廓软遮罩。用作条件图暗谷（只压暗这个紧身形状，逼模型画瘦人物），同时可配 独立拉回 mask 防原人泄漏。",
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": false,
+      "description": "推理服务地址"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "description": "服务令牌"
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "description": "DWPose 骨架视频对象 ID"
+    },
+    {
+      "name": "grow",
+      "type": "integer",
+      "default": 40,
+      "description": "骨架膨胀像素（40≈紧身裤轮廓；大改小场景 30~50）"
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "default": 21,
+      "description": "软边高斯核（奇数，>1 生效）→ L3 过渡"
+    },
+    {
+      "name": "threshold",
+      "type": "integer",
+      "default": 10,
+      "description": "骨架二值化阈值"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "骨架派生遮罩视频对象 ID"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "帧数"
+    }
+  ]
+}

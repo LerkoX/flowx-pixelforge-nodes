@@ -1,0 +1,74 @@
+{
+  "name": "video-bg-erase",
+  "version": "1.0.0",
+  "description": "**流派A 第一阶段（Clean Plate）**：视频 + 人物遮罩 → 空无一人的纯净背景视频（cv2.inpaint 逐帧）。用作下游 Wan-Animate 的 background_video，彻底消除原人残留导致的鬼影与空间压迫感。",
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": false,
+      "description": "推理服务地址"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "description": "服务令牌"
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "description": "原视频对象 ID"
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "required": true,
+      "description": "人物遮罩视频（白=人物）"
+    },
+    {
+      "name": "dilate",
+      "type": "integer",
+      "default": 20,
+      "description": "遮罩膨胀像素（确保覆盖原人所有像素，原人残留会在下游变成鬼影）"
+    },
+    {
+      "name": "radius",
+      "type": "integer",
+      "default": 15,
+      "description": "inpaint 半径（大面积遮挡建议 15~30）"
+    },
+    {
+      "name": "method",
+      "type": "string",
+      "default": "telea",
+      "description": "telea（快）/ ns（Navier-Stokes，大面积更自然）"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "纯净背景视频对象 ID"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "description": "帧率"
+    },
+    {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "帧数"
+    }
+  ]
+}

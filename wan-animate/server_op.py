@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "36803d45beb9"
+OP_VERSION = "812b7a0313e7"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2509,6 +2509,7 @@ def register(registry):
                 "latent_inpaint": "INT", "inpaint_dim": "FLOAT",
         "dim_shrink": "INT",
         "face_from_ref": "INT",
+        "pullback_mask": "VIDEO",
                 "composite_dehaze_strength": "FLOAT",
                 "lora": "STRING", "relight_lora": "STRING",
                 "relight_scale": "FLOAT",
@@ -2524,6 +2525,7 @@ def register(registry):
                     "pose_strength 等 ComfyUI 旋钮在此实现中不适用（保留参数"
                     "兼容旧工作流，不参与计算）。")
     def _op_animate2(model=None, image=None, pose_video=None, face_video=None,
+                     pullback_mask=None,
                      background_video=None, mask_video=None, mode="auto",
                      inpaint_fill="black", inpaint_erode=0,
                      inpaint_expand=0, inpaint_telea_radius=5,
@@ -3013,8 +3015,26 @@ def register(registry):
                             _vae.config.latents_std, device=_src.device,
                             dtype=_src.dtype).view(1, -1, 1, 1, 1)
                         _src = (_src - _mean) * _std
+                    # **独立拉回 mask（2026-11-18 流派B）**：防御(拉回)与
+                    # 进攻(条件暗谷)解耦——pullback_mask 给了就用它构建拉回
+                    # mask（通常是 BiRefNet 大 mask，确保原人绝对包裹），
+                    # 而条件暗谷仍由 mask_video 决定（骨架膨胀的紧身轮廓）。
+                    _lm_src = mk_out
+                    if pullback_mask is not None:
+                        try:
+                            _pbf = _pils(pullback_mask)
+                            if _pbf:
+                                _pb_n = len(pose)
+                                _pbf = (_pbf * ((_pb_n // len(_pbf)) + 1))[:_pb_n]
+                                _lm_src = _pbf
+                                print(f"[wan] 拉回 mask 独立来源 "
+                                      f"({len(_pbf)}帧，条件暗谷仍用 mask_video)",
+                                      flush=True)
+                        except Exception as _epb:  # noqa: BLE001
+                            print(f"[wan] pullback_mask 解析失败（{_epb}），"
+                                  f"回退 mask_video", flush=True)
                     _lm = []
-                    for _im in mk_out:
+                    for _im in _lm_src:
                         _a = np.asarray(_im.convert("L"), dtype=np.float32) / 255.0
                         # **LINEAR 下采样（2026-11-17 v26）**：NEAREST 会把
                         # 像素级羽化的软 alpha 量化成硬边+锯齿 → 拉回/生成的

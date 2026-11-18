@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2feeaa757d82"
+OP_VERSION = "e9433f65a9d0"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -859,6 +859,77 @@ def _emit_soft_mask(alpha, dilate, fps, n, w, h, tag, t0):
 
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
+
+    @registry.register(
+        "video.bg_erase",
+        inputs={"video": "VIDEO", "mask": "VIDEO", "dilate": "INT",
+                "radius": "INT", "method": "STRING"},
+        outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
+        description="**流派A 第一阶段（Clean Plate）**：把 mask 区域从视频里"
+                    "抹除，输出空无一人的纯净背景视频。method=telea（默认，"
+                    "快）/ns（Navier-Stokes，大面积遮挡更自然）。dilate 保证"
+                    "覆盖人物所有像素（原人残留会在下游生成时变成鬼影）。")
+    def _op_bg_erase(video, mask, dilate=20, radius=15, method="telea"):
+        import cv2
+        import numpy as np
+        from PIL import Image as _Image
+        t0 = time.time()
+        frames, fps = _video_to_frames(video, 0)
+        masks, _ = _video_to_frames(mask, 0)
+        n = len(frames)
+        masks = (masks * ((n // len(masks)) + 1))[:n]
+        flag = (cv2.INPAINT_NS if str(method).lower() == "ns"
+                else cv2.INPAINT_TELEA)
+        out = []
+        for f, m in zip(frames, masks):
+            img = np.asarray(f.convert("RGB"), dtype=np.uint8)
+            mnp = np.asarray(m.convert("L").resize(f.size), dtype=np.uint8)
+            mnp = (mnp > 127).astype(np.uint8) * 255
+            kd = int(dilate or 0)
+            if kd > 0:
+                ker = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE, (kd * 2 + 1, kd * 2 + 1))
+                mnp = cv2.dilate(mnp, ker)
+            res = cv2.inpaint(img, mnp, max(1, int(radius)), flag)
+            out.append(_Image.fromarray(res))
+        print(f"[video-bg-erase] done {n}帧 {time.time()-t0:.1f}s "
+              f"dilate={dilate} radius={radius} method={method}", flush=True)
+        return {"video": {"frames": out, "fps": fps},
+                "fps": int(round(fps)), "num_frames": n}
+
+    @registry.register(
+        "video.pose_mask",
+        inputs={"video": "VIDEO", "grow": "INT", "feather": "INT",
+                "threshold": "INT"},
+        outputs={"mask": "VIDEO", "fps": "INT", "num_frames": "INT"},
+        description="**流派B 进攻掩码**：把 DWPose 骨架线（黑底白线）膨胀成"
+                    "紧身轮廓软遮罩（grow px），用作条件图暗谷——只有这个紧身"
+                    "形状被压暗，逼模型画瘦人物；原人宽轮廓区域保持亮窗帘由"
+                    "模型补背景。feather>0 时转软边（L3 过渡）。")
+    def _op_pose_mask(video, grow=40, feather=21, threshold=10):
+        import cv2
+        import numpy as np
+        from PIL import Image as _Image
+        t0 = time.time()
+        frames, fps = _video_to_frames(video, 0)
+        n = len(frames)
+        out = []
+        for f in frames:
+            g = np.asarray(f.convert("L"), dtype=np.uint8)
+            b = (g > int(threshold)).astype(np.uint8) * 255
+            kg = int(grow or 0)
+            if kg > 0:
+                ker = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE, (kg * 2 + 1, kg * 2 + 1))
+                b = cv2.dilate(b, ker)
+            kf = int(feather or 0)
+            if kf > 1:
+                b = cv2.GaussianBlur(b, (kf | 1, kf | 1), 0)
+            out.append(_Image.fromarray(b))
+        print(f"[video-pose-mask] done {n}帧 {time.time()-t0:.1f}s "
+              f"grow={grow} feather={feather}", flush=True)
+        return {"mask": {"frames": out, "fps": fps},
+                "fps": int(round(fps)), "num_frames": n}
 
     @registry.register(
         "video.depth",

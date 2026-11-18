@@ -78,6 +78,9 @@ def main():
         "guidance_scale": param("guidance_scale", 1.0, float),
         "seed": param("seed", -1, int),
     }
+    _pb = param("pullback_mask", "")
+    if _pb:
+        inputs["pullback_mask"] = ref(_pb)
     _face = param("face_video", "")
     if _face:
         inputs["face_video"] = ref(_face)

@@ -368,6 +368,12 @@
       "type": "integer",
       "default": 0,
       "description": "Latent inpainting（0=关，1=开，**推荐开**）：走 diffusers 官方 callback_on_step_end，每步把 mask 外区域拉回「原视频 latent + σ 噪声」，mask 内自由生成。效果=背景像素级保留 + 换人成功 + 无黑边（不靠涂黑、不靠输出端合成，也不绕开 diffusers）"
+    },
+    {
+      "name": "pullback_mask",
+      "type": "string",
+      "required": false,
+      "description": "独立拉回 mask（可选，流派B 用）：L1 每步拉回用的防御遮罩，通常给 BiRefNet 人物大 mask（绝对包裹原人，防鬼影）。不给则复用 mask_video。条件暗谷始终由 mask_video 决定（可给骨架派生的紧身轮廓）"
     }
   ],
   "outputs": [

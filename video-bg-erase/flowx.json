@@ -52,6 +52,24 @@
       "type": "string",
       "default": "telea",
       "description": "telea（快）/ ns（Navier-Stokes，大面积更自然）"
+    },
+    {
+      "name": "color_match",
+      "type": "integer",
+      "default": 1,
+      "description": "**推荐开**：Clean Plate 色彩对齐（Reinhard 迁移 + mask 外像素还原）。LaMa 补全的整体亮度/色调与源视频有偏差，会放大条件图暗谷对比 → 成片灰雾光晕；开启后逐通道 mean/std 对齐并还原 mask 外原像素"
+    },
+    {
+      "name": "mask_threshold",
+      "type": "integer",
+      "default": 15,
+      "description": "**遮罩二值化阈值（0-255）**：BiRefNet 软 alpha 用低阈值(15≈6%)才能捕获半透明发丝/肢体边缘，否则边缘被当背景保留 → 成片出现\"透明的东西在动\""
+    },
+    {
+      "name": "temporal_union",
+      "type": "integer",
+      "default": 1,
+      "description": "时序并集（1=开）：当前帧遮罩与前后各一帧做并集，保证边缘帧间稳定、消除闪动"
     }
   ],
   "outputs": [

@@ -16,6 +16,8 @@ def main():
     inputs["radius"] = param("radius", 15, int)
     inputs["method"] = param("method", "lama")
     inputs["color_match"] = param("color_match", 1, int)
+    inputs["mask_threshold"] = param("mask_threshold", 15, int)
+    inputs["temporal_union"] = param("temporal_union", 1, int)
     inputs["video"] = ref(inputs["video"])
     inputs["mask"] = ref(inputs["mask"])
     jid = submit_job(url, {"name": actual_op, "inputs": inputs}, tok)

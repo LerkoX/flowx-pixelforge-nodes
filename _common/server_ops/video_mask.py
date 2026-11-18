@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "4342f5b946b3"
+OP_VERSION = "6554a547bdfb"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -943,14 +943,15 @@ def register(registry):
     @registry.register(
         "video.bg_erase",
         inputs={"video": "VIDEO", "mask": "VIDEO", "dilate": "INT",
-                "radius": "INT", "method": "STRING", "color_match": "INT"},
+                "radius": "INT", "method": "STRING", "color_match": "INT",
+                "mask_threshold": "INT", "temporal_union": "INT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="**流派A 第一阶段（Clean Plate）**：把 mask 区域从视频里"
                     "抹除，输出空无一人的纯净背景视频。method=telea（默认，"
                     "快）/ns（Navier-Stokes，大面积遮挡更自然）。dilate 保证"
                     "覆盖人物所有像素（原人残留会在下游生成时变成鬼影）。")
     def _op_bg_erase(video, mask, dilate=20, radius=15, method="telea",
-                     color_match=1):
+                     color_match=1, mask_threshold=15, temporal_union=1):
         import cv2
         import numpy as np
         from PIL import Image as _Image
@@ -962,11 +963,32 @@ def register(registry):
         _meth = str(method).lower()
         _lama = _lama_load() if _meth == "lama" else None
         flag = (cv2.INPAINT_NS if _meth == "ns" else cv2.INPAINT_TELEA)
+        # **遮罩二值化加固（2026-11-18）**：BiRefNet 输出软 alpha，>127 只保留
+        # 高置信主体，**半透明的发丝/肢体边缘（alpha 15~120）被当背景留下** →
+        # LaMa 不补那块 → 成片在人物位置出现"透明的东西在动"（残影逐帧闪）。
+        # 修：低阈值（默认 15/255≈6%）捕获所有半透明边缘 + 时序并集
+        # （前后各一帧的 mask 并集）保证边缘帧间稳定不闪。
+        _thr = int(mask_threshold if mask_threshold is not None else 15)
+        _raw = []
+        for m in masks:
+            a = np.asarray(m.convert("L"), dtype=np.float32)
+            _raw.append((a > _thr).astype(np.uint8))
+        if int(temporal_union or 0) > 0:
+            _tu = [_raw[0].copy()]
+            for i in range(1, len(_raw)):
+                prev = _raw[i - 1]
+                nxt = _raw[i + 1] if i + 1 < len(_raw) else _raw[i]
+                _tu.append((_raw[i] | prev | nxt).astype(np.uint8))
+            _raw = _tu
+            print(f"[video-bg-erase] 时序并集(±1帧) 遮罩均值 "
+                  f"{np.mean([r.mean() for r in _raw])*100:.1f}%", flush=True)
         out = []
-        for f, m in zip(frames, masks):
+        for f, mbin, m in zip(frames, _raw, masks):
             img = np.asarray(f.convert("RGB"), dtype=np.uint8)
-            mnp = np.asarray(m.convert("L").resize(f.size), dtype=np.uint8)
-            mnp = (mnp > 127).astype(np.uint8) * 255
+            if mbin.shape != (f.size[1], f.size[0]):
+                _tmp = np.asarray(m.convert("L").resize(f.size), dtype=np.uint8)
+                mbin = (_tmp > _thr).astype(np.uint8)
+            mnp = mbin * 255
             kd = int(dilate or 0)
             if kd > 0:
                 ker = cv2.getStructuringElement(

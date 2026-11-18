@@ -2838,6 +2838,8 @@ const WIDGET_SPEC = {
         { value: 'ns', label: 'ns Navier-Stokes（大面积较自然）' },
         { value: 'telea', label: 'telea 快（小面积）' }], default: 'lama' },
     { key: 'color_match', label: '色彩对齐（治 LaMa 色偏灰雾）', kind: 'toggle', default: true },
+    { key: 'mask_threshold', label: '遮罩阈值（低=捕获半透明边缘）', kind: 'slider', min: 1, max: 127, step: 1, default: 15 },
+    { key: 'temporal_union', label: '时序并集（消边缘闪动）', kind: 'toggle', default: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
   note: '流派A 第一阶段：把 mask 区域从视频抹除 → 空无一人的纯净背景（Clean Plate）。lama 需要 big-lama.pt（共享盘已软链 /var/lib/flowx-inference/models/lama/）。dilate 越大抹除越彻底但糊化区越大，建议 20~25。',

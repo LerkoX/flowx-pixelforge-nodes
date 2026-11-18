@@ -72,7 +72,16 @@
   "files": [
     "main.py",
     "server_op.py",
-    "flowx_client.py"
+    "flowx_client.py",
+    "ui/node-widget.js",
+    "ui/widget-def.js"
   ],
-  "inputs": []
+  "inputs": [],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 480,
+    "collapsed": false,
+    "apiVersion": 1
+  }
 }

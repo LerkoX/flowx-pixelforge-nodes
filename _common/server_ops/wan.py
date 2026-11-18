@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "48eb742f41f9"
+OP_VERSION = "85134b7707d0"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2432,6 +2432,21 @@ def register(registry):
                     wiped = _cv2t.inpaint(orig.astype(np.uint8), _m255,
                                           max(1, _r), _cv2t.INPAINT_TELEA
                                           ).astype(np.float32)
+                elif _fill == "telea_dim":
+                    # **暗化全填（2026-11-18 v33，幽灵↔Halo 两难的中间态）**：
+                    # 全填亮窗帘（v31）→ 条件覆盖，人物幽灵化；黑洞核心（v32）
+                    # → 人物实心但环带内缘断崖显影成 Halo。中间态：telea 全填
+                    # 保证纹理连续（VAE 无断崖），mask 区整体压暗到 45%——暗区
+                    # 仍向模型传递"此区域待重绘"的信号，但不制造任何边缘。
+                    import cv2 as _cv2d
+                    _m255d = ((_mnp_wide > 0.5).astype(np.uint8)) * 255
+                    _texd = _cv2d.inpaint(
+                        orig.astype(np.uint8), _m255d, 15,
+                        _cv2d.INPAINT_TELEA).astype(np.float32)
+                    _dim = _texd * 0.45
+                    wiped = np.clip(
+                        orig * (1.0 - _mnp_wide[..., None])
+                        + _dim * _mnp_wide[..., None], 0, 255)
                 elif _fill == "orig":
                     # **原样背景（2026-11-17 决定性发现）**：diffusers 的
                     # `prepare_prev_segment_cond_latents` 在 task=replace 时直接

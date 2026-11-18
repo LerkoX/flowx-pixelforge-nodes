@@ -141,6 +141,9 @@ OP_FAMILIES = {
                       "video-repaint", "video-v2v"],
     # SAM3 视频人物遮罩（文本检测+全片追踪）：人物替换 inpaint_mask 选区件
     "video_mask.py": ["video-person-mask", "video-depth"],
+    # 视频级 SD 修脸（FaceDetailer 式）：逐帧 YOLO 检测 + 低 denoise img2img
+    # + 检测框时序平滑 + 可选 ControlNet tile 锁轮廓
+    "sd_face.py": ["video-face-detail"],
     # Wan 视频族（通义万相）：组件装配 + 文本编码 + 生成 + animate/vace
     "wan.py": ["wan-gen", "wan-text-encode", "wan-animate", "wan-animate2",
                "wan-vace",

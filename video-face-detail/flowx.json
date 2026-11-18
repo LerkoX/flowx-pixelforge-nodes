@@ -1,0 +1,208 @@
+{
+  "name": "video-face-detail",
+  "displayName": "Video Face Detail（视频级 SD 修脸）",
+  "description": "对标 ComfyUI FaceDetailer 的**视频级**修脸：逐帧 YOLO 检测人脸 → 裁剪外扩 → 放大到 guide_size → SD img2img 低 denoise（0.30~0.40）重绘 → 羽化贴回。检测框 EMA 时序平滑 + 固定 seed 抑制帧间跳变。可选 ControlNet tile（以裁剪自身为 hint）锁轮廓，治「修完变另一个人」。适用于大幅运动/小脸导致的面部崩坏（H3/Wan 生成片）。SD 底模与 detector/controlnet 全部走推理服务 /models。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "video",
+    "face-detailer",
+    "sd",
+    "img2img",
+    "controlnet",
+    "inference"
+  ],
+  "icon": "🩹",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url"
+      }
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "required": true,
+      "description": "输入视频对象 ID（接 load-video / video-enhance 等）"
+    },
+    {
+      "name": "ckpt",
+      "type": "string",
+      "required": false,
+      "default": "Realistic_Vision_V5.1",
+      "description": "SD checkpoint（/models 下，不带扩展名）；写实人像推荐 Realistic_Vision_V5.1"
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": false,
+      "default": "close-up portrait of a beautiful young asian woman, symmetrical face, clear eyes, detailed skin, natural expression, soft studio light, photorealistic",
+      "description": "正向提示词：描述目标脸特征（对称五官/清晰眼睛/细节皮肤）"
+    },
+    {
+      "name": "negative",
+      "type": "string",
+      "required": false,
+      "default": "blurry, deformed, asymmetric face, distorted eyes, melting face, bad anatomy, cartoon, cgi, painting, lowres",
+      "description": "负向提示词"
+    },
+    {
+      "name": "detector",
+      "type": "string",
+      "required": false,
+      "default": "face",
+      "description": "YOLO 检测器名（/models/detectors 下，如 face / face_yolov8s / hand）"
+    },
+    {
+      "name": "det_conf",
+      "type": "float",
+      "required": false,
+      "default": 0.5,
+      "description": "检测置信度阈值"
+    },
+    {
+      "name": "padding",
+      "type": "float",
+      "required": false,
+      "default": 0.4,
+      "description": "人脸框外扩比例（越大带入越多发型/脖颈）"
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "required": false,
+      "default": 0.35,
+      "description": "重绘强度：0.30~0.40 推荐（低=保身份，高=修得狠但会换脸）"
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "required": false,
+      "default": 20,
+      "description": "重绘步数"
+    },
+    {
+      "name": "cfg",
+      "type": "float",
+      "required": false,
+      "default": 6.0,
+      "description": "CFG 引导强度"
+    },
+    {
+      "name": "guide_size",
+      "type": "integer",
+      "required": false,
+      "default": 512,
+      "description": "裁剪放大后的短边尺寸（SD1.5 用 512，SDXL 用 768~1024）"
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "required": false,
+      "default": 16,
+      "description": "贴回羽化像素（越大接缝越软）"
+    },
+    {
+      "name": "max_targets",
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "description": "每帧最多修几张脸（多人场景调大）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "required": false,
+      "default": 20261116,
+      "description": "固定种子（每帧同种子，抑制帧间跳变）"
+    },
+    {
+      "name": "sampler_name",
+      "type": "string",
+      "required": false,
+      "default": "euler",
+      "description": "采样器"
+    },
+    {
+      "name": "scheduler",
+      "type": "string",
+      "required": false,
+      "default": "normal",
+      "description": "sigma 曲线（normal/karras/exponential/beta）"
+    },
+    {
+      "name": "controlnet",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "ControlNet 名（/models 下，如 control_v11f1e_sd15_tile_fp16）；空=关闭。开启后用裁剪自身作 hint 锁轮廓"
+    },
+    {
+      "name": "cn_strength",
+      "type": "float",
+      "required": false,
+      "default": 0.6,
+      "description": "ControlNet 强度（0.5~0.8）"
+    },
+    {
+      "name": "temporal_alpha",
+      "type": "float",
+      "required": false,
+      "default": 0.6,
+      "description": "检测框 EMA 平滑系数（0=关闭；越大越稳但可能拖影）"
+    },
+    {
+      "name": "fps",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "输出帧率（0=跟随输入）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 7200,
+      "description": "job 超时秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "string",
+      "description": "修脸后视频对象 ID"
+    },
+    {
+      "name": "faces",
+      "type": "integer",
+      "description": "实际修脸帧数"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  }
+}

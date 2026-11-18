@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "e9433f65a9d0"
+OP_VERSION = "7d67f1238a28"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -857,6 +857,54 @@ def _emit_soft_mask(alpha, dilate, fps, n, w, h, tag, t0):
             "width": w, "height": h, "objects": 1}
 
 
+
+_LAMA_CACHE = {}
+
+
+def _lama_load():
+    """big-lama (torchscript) 加载：Lama-cleaner 官方权重，高质量大区域补全。"""
+    import torch
+    from pathlib import Path
+    cands = [
+        "/var/lib/flowx-inference/models/lama/big-lama.pt",
+        "/model/ModelScope/zhl438443467/AI_model/models/lama/big-lama.pt",
+    ]
+    path = next((c for c in cands if Path(c).is_file()), None)
+    if path is None:
+        raise RuntimeError("big-lama.pt 未找到（共享盘 ModelScope/"
+                           "zhl438443467/AI_model/models/lama/big-lama.pt 可软链）")
+    if path not in _LAMA_CACHE:
+        net = torch.jit.load(path, map_location="cuda").eval()
+        _LAMA_CACHE[path] = net
+        print(f"[video-mask] big-lama 加载: {path}", flush=True)
+    return _LAMA_CACHE[path]
+
+
+def _lama_inpaint(net, img_rgb, mask_u8):
+    """单帧 LaMa 补全：img RGB uint8 HxWx3，mask uint8（>127=抹除区）。
+
+    LaMa 是大感受野 FFC 模型，大区域遮挡补全质量远优于 cv2.inpaint
+    （后者只会边缘扩散糊化）。输入需 pad 到 8 的倍数。
+    """
+    import numpy as np
+    import torch
+    h, w = img_rgb.shape[:2]
+    ph, pw = (-h) % 8, (-w) % 8
+    img_p = np.pad(img_rgb, ((0, ph), (0, pw), (0, 0)), mode="symmetric")
+    mask_p = np.pad(mask_u8, ((0, ph), (0, pw)), mode="constant")
+    t_img = (torch.from_numpy(img_p).permute(2, 0, 1)[None]
+             .float().div(255.0).cuda())
+    t_mask = (torch.from_numpy((mask_p > 127).astype(np.float32))
+              [None, None].cuda())
+    with torch.no_grad():
+        out = net(t_img, t_mask)
+    arr = out[0].permute(1, 2, 0).float().cpu().numpy()
+    if arr.max() <= 1.5:
+        arr = arr * 255.0
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return arr[:h, :w]
+
+
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
 
@@ -878,8 +926,9 @@ def register(registry):
         masks, _ = _video_to_frames(mask, 0)
         n = len(frames)
         masks = (masks * ((n // len(masks)) + 1))[:n]
-        flag = (cv2.INPAINT_NS if str(method).lower() == "ns"
-                else cv2.INPAINT_TELEA)
+        _meth = str(method).lower()
+        _lama = _lama_load() if _meth == "lama" else None
+        flag = (cv2.INPAINT_NS if _meth == "ns" else cv2.INPAINT_TELEA)
         out = []
         for f, m in zip(frames, masks):
             img = np.asarray(f.convert("RGB"), dtype=np.uint8)
@@ -890,7 +939,10 @@ def register(registry):
                 ker = cv2.getStructuringElement(
                     cv2.MORPH_ELLIPSE, (kd * 2 + 1, kd * 2 + 1))
                 mnp = cv2.dilate(mnp, ker)
-            res = cv2.inpaint(img, mnp, max(1, int(radius)), flag)
+            if _lama is not None:
+                res = _lama_inpaint(_lama, img, mnp)      # LaMa 高质量补全
+            else:
+                res = cv2.inpaint(img, mnp, max(1, int(radius)), flag)
             out.append(_Image.fromarray(res))
         print(f"[video-bg-erase] done {n}帧 {time.time()-t0:.1f}s "
               f"dilate={dilate} radius={radius} method={method}", flush=True)

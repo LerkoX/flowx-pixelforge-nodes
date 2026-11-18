@@ -46,6 +46,18 @@
       "type": "integer",
       "default": 10,
       "description": "骨架二值化阈值"
+    },
+    {
+      "name": "limit_mask",
+      "type": "string",
+      "default": "",
+      "description": "**可选**：原人精确遮罩（BiRefNet）。给定时用骨架膨胀 ∩ dilate(该遮罩, limit_expand) 约束溢出——手臂处原人轮廓细会自动裁掉\"灰翅膀\"，等效按部位分粗细"
+    },
+    {
+      "name": "limit_expand",
+      "type": "integer",
+      "default": 4,
+      "description": "约束遮罩的膨胀像素（3~5 推荐）"
     }
   ],
   "outputs": [

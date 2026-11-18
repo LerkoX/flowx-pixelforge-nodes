@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "812b7a0313e7"
+OP_VERSION = "f23938cd9dc7"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2086,7 +2086,7 @@ def register(registry):
                 "composite_unpremul": "FLOAT",
                 "mask_invert": "INT",
                 "latent_inpaint": "INT", "inpaint_dim": "FLOAT",
-        "dim_shrink": "INT",
+        "dim_shrink": "INT", "dim_feather": "FLOAT",
         "face_from_ref": "INT",
         "pullback_mask": "VIDEO",
                 "composite_dehaze_strength": "FLOAT",
@@ -2120,7 +2120,7 @@ def register(registry):
                      composite_fill_black=0.0, composite_edge_clean=0,
                      composite_unpremul=0.0, mask_invert=0,
                      latent_inpaint=0, inpaint_dim=0.38,
-                     dim_shrink=0,
+                     dim_shrink=0, dim_feather=5.0,
                      face_from_ref=1,
                      lora="", relight_lora="",
                      relight_scale=1.0, prompt_embeds_path="",
@@ -2480,8 +2480,12 @@ def register(registry):
                         _ms = _cv2d.erode(_mb, _kb).astype(np.float32)
                         # 软过渡（sigma 随收缩量放大）→ 暗谷边缘是缓坡，
                         # VAE 编码不会产生断崖特征
+                        # 羽化 sigma：用户标定 5px 软过渡（暗谷边缘缓坡，
+                        # VAE 无断崖 → 无 Halo；且暗区被人物盖住后不留灰边）
                         _ms = _cv2d.GaussianBlur(
-                            _ms, (0, 0), sigmaX=max(2.0, _shr * 0.45))
+                            _ms, (0, 0),
+                            sigmaX=max(float(dim_feather or 5.0),
+                                       _shr * 0.45))
                         _mnp_dim = np.clip(_ms, 0, 1)[..., None]
                     else:
                         _mnp_dim = _mnp_wide[..., None]

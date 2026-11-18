@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "6554a547bdfb"
+OP_VERSION = "2c78ea96fbe1"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1011,21 +1011,38 @@ def register(registry):
     @registry.register(
         "video.pose_mask",
         inputs={"video": "VIDEO", "grow": "INT", "feather": "INT",
-                "threshold": "INT"},
+                "threshold": "INT", "limit_mask": "VIDEO",
+                "limit_expand": "INT"},
         outputs={"mask": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="**流派B 进攻掩码**：把 DWPose 骨架线（黑底白线）膨胀成"
                     "紧身轮廓软遮罩（grow px），用作条件图暗谷——只有这个紧身"
                     "形状被压暗，逼模型画瘦人物；原人宽轮廓区域保持亮窗帘由"
                     "模型补背景。feather>0 时转软边（L3 过渡）。")
-    def _op_pose_mask(video, grow=40, feather=21, threshold=10):
+    def _op_pose_mask(video, grow=40, feather=21, threshold=10,
+                      limit_mask=None, limit_expand=4):
         import cv2
         import numpy as np
         from PIL import Image as _Image
         t0 = time.time()
         frames, fps = _video_to_frames(video, 0)
         n = len(frames)
+        # **按部位自适应的膨胀上限（2026-11-18 招1）**：统一膨胀 30~40px 会把
+        # 细手臂撑成"灰翅膀"（手臂、大腿、躯干粗细差异极大）。用原人精确
+        # 轮廓做交集约束——手臂处原人 mask 细 → 自动裁掉溢出；躯干处两者都
+        # 宽 → 保留足够画布。等价于按部位分粗细，但无需解析 DWPose 关键点。
+        _lim = None
+        if limit_mask is not None:
+            try:
+                _lf, _ = _video_to_frames(limit_mask, 0)
+                _lf = (_lf * ((n // len(_lf)) + 1))[:n]
+                _lim = [np.asarray(x.convert("L"), dtype=np.uint8) for x in _lf]
+                print(f"[video-pose-mask] 启用原人轮廓约束 "
+                      f"(expand={limit_expand}px)", flush=True)
+            except Exception as _el:  # noqa: BLE001
+                print(f"[video-pose-mask] limit_mask 解析失败（{_el}），"
+                      f"不约束", flush=True)
         out = []
-        for f in frames:
+        for i, f in enumerate(frames):
             g = np.asarray(f.convert("L"), dtype=np.uint8)
             b = (g > int(threshold)).astype(np.uint8) * 255
             kg = int(grow or 0)
@@ -1033,6 +1050,17 @@ def register(registry):
                 ker = cv2.getStructuringElement(
                     cv2.MORPH_ELLIPSE, (kg * 2 + 1, kg * 2 + 1))
                 b = cv2.dilate(b, ker)
+            if _lim is not None:
+                lm = (_lim[min(i, len(_lim) - 1)] > 100).astype(np.uint8) * 255
+                if lm.shape != b.shape:
+                    lm = cv2.resize(lm, (b.shape[1], b.shape[0]),
+                                    interpolation=cv2.INTER_NEAREST)
+                ke = int(limit_expand or 0)
+                if ke > 0:
+                    lk = cv2.getStructuringElement(
+                        cv2.MORPH_ELLIPSE, (ke * 2 + 1, ke * 2 + 1))
+                    lm = cv2.dilate(lm, lk)
+                b = cv2.bitwise_and(b, lm)     # 交集：裁掉溢出（灰翅膀）
             kf = int(feather or 0)
             if kf > 1:
                 b = cv2.GaussianBlur(b, (kf | 1, kf | 1), 0)

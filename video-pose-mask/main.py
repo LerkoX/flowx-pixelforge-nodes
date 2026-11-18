@@ -14,6 +14,10 @@ def main():
     inputs["grow"] = param("grow", 40, int)
     inputs["feather"] = param("feather", 21, int)
     inputs["threshold"] = param("threshold", 10, int)
+    inputs["limit_expand"] = param("limit_expand", 4, int)
+    _lm = param("limit_mask", "")
+    if _lm:
+        inputs["limit_mask"] = ref(_lm)
     inputs["video"] = ref(inputs["video"])
     jid = submit_job(url, {"name": actual_op, "inputs": inputs}, tok)
     result = wait_job(url, jid, tok, timeout=param("job_timeout", 1800, int),

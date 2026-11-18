@@ -374,6 +374,12 @@
       "type": "string",
       "required": false,
       "description": "独立拉回 mask（可选，流派B 用）：L1 每步拉回用的防御遮罩，通常给 BiRefNet 人物大 mask（绝对包裹原人，防鬼影）。不给则复用 mask_video。条件暗谷始终由 mask_video 决定（可给骨架派生的紧身轮廓）"
+    },
+    {
+      "name": "dim_feather",
+      "type": "float",
+      "default": 5.0,
+      "description": "暗谷羽化 sigma（px，默认 5）。配合 dim_shrink：暗区比重绘 mask 瘦一圈+5px 软过渡 → 暗信号藏在身体中轴，人物画出来后完全盖住暗区，外侧露出的是 100% 亮背景 → 灰边无处存活"
     }
   ],
   "outputs": [

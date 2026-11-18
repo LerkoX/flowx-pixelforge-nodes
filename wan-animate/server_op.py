@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "83efe3d69954"
+OP_VERSION = "2fb452746f78"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2964,9 +2964,15 @@ def register(registry):
                     # ① 人物边缘拉回的是窗帘/填充纹理，无原人幽灵；
                     # ② 条件与拉回源一致（都在 bg_masked 上），生成与拉回不打架；
                     # ③ mask 外区域 bg_masked==原视频，背景照旧像素级保真。
-                    _src_frames = (bg_masked if isinstance(bg_masked, list)
-                                   and len(bg_masked) == len(_bg_orig_frames)
-                                   else _bg_orig_frames)
+                    # **拉回源必须是"无添加"原视频（2026-11-18 v38 治灰雾）**：
+                    # v29~v37 用 bg_masked（telea+压暗62%）做拉回源 → 暗坑经
+                    # VAE 编码，暗色特征沿感受野向外辐射，再顺着 (1-mask)
+                    # 每步灌回背景区 → 画面出现诡异灰雾（用户诊断坑二）。
+                    # 拉回源改回原视频：纯天然真实窗帘，VAE 编码干净。
+                    # 安全性由 mask 保证：mask 已硬化(latent 二值)+膨胀 3 格
+                    # （≈24px）→ 原人宽大黑裤完全落在 mask=1 生成区内，绝不
+                    # 会被拉回（v35 的 erode 曾致此，已改 dilate）。
+                    _src_frames = _bg_orig_frames
                     _bt = _tj.stack([_tj.from_numpy(
                         (np.asarray(f if isinstance(f, np.ndarray) else
                                     np.asarray(f), dtype=np.float32)
@@ -3014,7 +3020,7 @@ def register(registry):
                     # 原人↔新人之间的空隙区进 mask=1，交由模型按 L2 条件
                     # （telea_dim 暗化窗帘）自由生成背景。
                     _k = _cv2li.getStructuringElement(
-                        _cv2li.MORPH_ELLIPSE, (5, 5))
+                        _cv2li.MORPH_ELLIPSE, (3, 3))
                     _mnp = (_mnp > 0.5).astype(np.float32)
                     _mnp = _cv2li.dilate(_mnp, _k)
                     _mnp = _cv2li.GaussianBlur(_mnp, (3, 3), 0)

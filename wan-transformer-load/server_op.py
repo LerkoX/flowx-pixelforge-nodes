@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "85134b7707d0"
+OP_VERSION = "be7b0b4cec95"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2506,7 +2506,7 @@ def register(registry):
                 "composite_edge_clean": "INT",
                 "composite_unpremul": "FLOAT",
                 "mask_invert": "INT",
-                "latent_inpaint": "INT",
+                "latent_inpaint": "INT", "inpaint_dim": "FLOAT",
                 "composite_dehaze_strength": "FLOAT",
                 "lora": "STRING", "relight_lora": "STRING",
                 "relight_scale": "FLOAT",
@@ -2536,7 +2536,7 @@ def register(registry):
                      composite_dehaze_strength=0.95,
                      composite_fill_black=0.0, composite_edge_clean=0,
                      composite_unpremul=0.0, mask_invert=0,
-                     latent_inpaint=0,
+                     latent_inpaint=0, inpaint_dim=0.38,
                      lora="", relight_lora="",
                      relight_scale=1.0, prompt_embeds_path="",
                      negative_embeds_path=""):
@@ -2787,8 +2787,9 @@ def register(registry):
                         _cv2.MORPH_ELLIPSE, (_k * 2 + 1, _k * 2 + 1))
                     mnp0 = _cv2.erode(mnp0, _kernel)
                 m = _Image.fromarray((mnp0 * 255).astype("uint8"))
-                # 羽化 8px：遮罩边缘不再硬切，接缝自然
-                m = m.filter(_IF.GaussianBlur(radius=8))
+                # 羽化 16px（v34 从 8 加宽）：telea_dim 的亮度台阶需要更宽的
+                # 平缓过渡，8px 时 VAE/DiT 仍能感知到暗区边界（残 Halo）
+                m = m.filter(_IF.GaussianBlur(radius=16))
                 mnp = np.asarray(m, dtype=np.float32) / 255.0
                 # **抹黑区与合成区分离（2026-11-16「像贴图层+黑边」根治）**：
                 # 原实现两个用途共用一个 mask → 模型只能在**紧贴人物轮廓的
@@ -2864,7 +2865,9 @@ def register(registry):
                     _texd = _cv2d.inpaint(
                         orig.astype(np.uint8), _m255d, 15,
                         _cv2d.INPAINT_TELEA).astype(np.float32)
-                    _dim = _texd * 0.45
+                    _dim = _texd * (1.0 - min(0.9, max(0.05,
+                        float(inpaint_dim if inpaint_dim is not None
+                              else 0.38))))
                     wiped = np.clip(
                         orig * (1.0 - _mnp_wide[..., None])
                         + _dim * _mnp_wide[..., None], 0, 255)

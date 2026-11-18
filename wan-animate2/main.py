@@ -62,6 +62,7 @@ def main():
         "mask_invert": param("mask_invert", 0, int),
         "latent_inpaint": param("latent_inpaint", 0, int),
         "inpaint_dim": param("inpaint_dim", 0.38, float),
+        "dim_shrink": param("dim_shrink", 0, int),
         "face_from_ref": param("face_from_ref", 1, int),
         "composite_unpremul": param("composite_unpremul", 0.0, float),
         "prompt": param("prompt", ""),

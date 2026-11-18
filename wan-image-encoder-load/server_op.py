@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "2fb452746f78"
+OP_VERSION = "b07dd1d0f451"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2507,6 +2507,7 @@ def register(registry):
                 "composite_unpremul": "FLOAT",
                 "mask_invert": "INT",
                 "latent_inpaint": "INT", "inpaint_dim": "FLOAT",
+        "dim_shrink": "INT",
         "face_from_ref": "INT",
                 "composite_dehaze_strength": "FLOAT",
                 "lora": "STRING", "relight_lora": "STRING",
@@ -2538,6 +2539,7 @@ def register(registry):
                      composite_fill_black=0.0, composite_edge_clean=0,
                      composite_unpremul=0.0, mask_invert=0,
                      latent_inpaint=0, inpaint_dim=0.38,
+                     dim_shrink=0,
                      face_from_ref=1,
                      lora="", relight_lora="",
                      relight_scale=1.0, prompt_embeds_path="",
@@ -2874,22 +2876,43 @@ def register(registry):
                                           max(1, _r), _cv2t.INPAINT_TELEA
                                           ).astype(np.float32)
                 elif _fill == "telea_dim":
-                    # **暗化全填（2026-11-18 v33，幽灵↔Halo 两难的中间态）**：
-                    # 全填亮窗帘（v31）→ 条件覆盖，人物幽灵化；黑洞核心（v32）
-                    # → 人物实心但环带内缘断崖显影成 Halo。中间态：telea 全填
-                    # 保证纹理连续（VAE 无断崖），mask 区整体压暗到 45%——暗区
-                    # 仍向模型传递"此区域待重绘"的信号，但不制造任何边缘。
+                    # **暗化全填 + 暗谷收缩（2026-11-18 v40，治"大改小"裤型）**
+                    # 用户诊断：mask 形状=原视频宽大阔腿裤，模型会填满它 →
+                    # 生成宽裤（文本 prompt 是弱信号，改不动）。正解=分离两把
+                    # 剪刀：拉回 mask 保持"原人轮廓+膨胀"（防泄漏），暗区
+                    # 收缩 dim_shrink px（逼模型画瘦裤子）；中间环带=亮窗帘
+                    # 条件 → 模型顺势补背景。暗区仍用高斯软过渡，无断崖故
+                    # 无 Halo（绕开 v32 的坑）。
                     import cv2 as _cv2d
                     _m255d = ((_mnp_wide > 0.5).astype(np.uint8)) * 255
                     _texd = _cv2d.inpaint(
                         orig.astype(np.uint8), _m255d, 15,
                         _cv2d.INPAINT_TELEA).astype(np.float32)
-                    _dim = _texd * (1.0 - min(0.9, max(0.05,
-                        float(inpaint_dim if inpaint_dim is not None
-                              else 0.38))))
+                    _dimf = 1.0 - min(0.9, max(0.05, float(
+                        inpaint_dim if inpaint_dim is not None else 0.38)))
+                    _dim = _texd * _dimf
+                    _shr = int(dim_shrink or 0)
+                    if _shr > 0:
+                        _kb = _cv2d.getStructuringElement(
+                            _cv2d.MORPH_ELLIPSE, (_shr * 2 + 1, _shr * 2 + 1))
+                        _mb = (_mnp_wide > 0.5).astype(np.uint8)
+                        _ms = _cv2d.erode(_mb, _kb).astype(np.float32)
+                        # 软过渡（sigma 随收缩量放大）→ 暗谷边缘是缓坡，
+                        # VAE 编码不会产生断崖特征
+                        _ms = _cv2d.GaussianBlur(
+                            _ms, (0, 0), sigmaX=max(2.0, _shr * 0.45))
+                        _mnp_dim = np.clip(_ms, 0, 1)[..., None]
+                    else:
+                        _mnp_dim = _mnp_wide[..., None]
+                    # mask 内：telea 亮窗帘打底，暗谷处压暗；
+                    # mask 外：原视频（保持真实背景条件）
+                    _inner = (_texd * (1.0 - _mnp_dim) + _dim * _mnp_dim)
                     wiped = np.clip(
                         orig * (1.0 - _mnp_wide[..., None])
-                        + _dim * _mnp_wide[..., None], 0, 255)
+                        + _inner * _mnp_wide[..., None], 0, 255)
+                    if _shr > 0:
+                        print(f"[wan] 暗谷收缩 dim_shrink={_shr}px "
+                              f"（拉回 mask 不变，防原人泄漏）", flush=True)
                 elif _fill == "orig":
                     # **原样背景（2026-11-17 决定性发现）**：diffusers 的
                     # `prepare_prev_segment_cond_latents` 在 task=replace 时直接

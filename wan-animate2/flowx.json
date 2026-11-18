@@ -352,6 +352,12 @@
       "description": "**推荐开**：face 从参考图裁剪（1=开）。Wan-Animate 的 face_video 是面部身份驱动通道——喂原视频人脸会让生成的脸=原人的脸（身份泄漏/双重曝光鬼影）。开启后忽略上游 face_video，改从参考图上部裁人脸并重复到全帧，身份完全由参考图决定"
     },
     {
+      "name": "dim_shrink",
+      "type": "integer",
+      "default": 0,
+      "description": "**治\"大改小\"裤型**：暗谷区相对 mask 收缩的像素数（0=旧行为，推荐 20~40）。两把剪刀分离——拉回 mask 保持原人轮廓+膨胀（防泄漏），暗区收缩后逼迫模型画更瘦的人物，中间亮窗帘环带由模型补背景。暗区用高斯软过渡故无 Halo"
+    },
+    {
       "name": "inpaint_dim",
       "type": "float",
       "default": 0.38,

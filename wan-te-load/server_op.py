@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "b07dd1d0f451"
+OP_VERSION = "36803d45beb9"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -3042,11 +3042,16 @@ def register(registry):
                     # 改为 dilate 膨胀 2 格（5×5）：完全吞掉原人最宽轮廓；
                     # 原人↔新人之间的空隙区进 mask=1，交由模型按 L2 条件
                     # （telea_dim 暗化窗帘）自由生成背景。
+                    # **边缘零软化（2026-11-18 v44）**：latent 空间里 mask 边缘
+                    # 的膨胀+模糊会占用可观比例——人物在画面中占比小时（如
+                    # 768×432 横版，人物宽 ~9 latency格），3格膨胀+2格模糊
+                    # ≈ 5/9 宽度全是过渡带 → 边缘半透明覆盖半个身体（v42/v43
+                    # 实证）。改为 膨胀 2 格 + **不做高斯模糊**（硬边，
+                    # 半透明带仅剩膨胀区，且膨胀区在 mask=1 内可自由生成）。
                     _k = _cv2li.getStructuringElement(
-                        _cv2li.MORPH_ELLIPSE, (3, 3))
+                        _cv2li.MORPH_ELLIPSE, (5, 5))
                     _mnp = (_mnp > 0.5).astype(np.float32)
                     _mnp = _cv2li.dilate(_mnp, _k)
-                    _mnp = _cv2li.GaussianBlur(_mnp, (3, 3), 0)
                     _mask_lat = _tj.from_numpy(
                         _mnp[None, None]).to(_src.device, _src.dtype)
                     _g = _tj.Generator("cpu").manual_seed(

@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "f23938cd9dc7"
+OP_VERSION = "2b96a14089a9"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2409,7 +2409,13 @@ def register(registry):
                     _mnp_wide = mnp
                 orig = np.asarray(b, dtype=np.float32)
                 _fill = str(inpaint_fill)
-                if _fill == "blur":
+                if _fill in ("none", "keep", "passthrough", "mosaic"):
+                    # **上游已预处理（2026-11-19 Wan2.2 官方 replace 路线）**：
+                    # bg 视频的人物区已被 video-bg-erase(method=mosaic) 打成
+                    # 审查式马赛克块——模型看到"被 censorship 的人形"，重绘
+                    # 语义比黑洞明确。此处原样透传，绝不再抹黑。
+                    wiped = orig
+                elif _fill == "blur":
                     blur = np.asarray(b.filter(_IF.GaussianBlur(radius=24)),
                                       dtype=np.float32)
                     wiped = np.clip(orig * (1.0 - _mnp_wide[..., None])

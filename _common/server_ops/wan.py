@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "0a7d9249d695"
+OP_VERSION = "321ba42ce974"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -994,6 +994,8 @@ _SCHEDULERS = {
     "dpm++": "FlowMatchDPMSolverMultistepScheduler",
     # 二阶 Heun：质量略高于 Euler，步数翻倍（慢）
     "heun": "FlowMatchHeunDiscreteScheduler",
+    # DPM++ SDE（随机微分）：kijai WanAnimate 官方 example 配方（6步/cfg1）
+    "dpm++_sde": "DPMSolverSDEScheduler",
 }
 
 
@@ -2077,6 +2079,7 @@ def register(registry):
                 "seed": "INT", "fps": "INT",
                 "inpaint_fill": "STRING", "inpaint_erode": "INT",
                 "mask_invert": "INT",
+                "scheduler": "STRING", "flow_shift": "FLOAT",
                 "inpaint_expand": "INT", "inpaint_telea_radius": "INT",
                 "inpaint_ring_width": "INT",
                 "composite": "BOOL", "composite_expand": "INT",
@@ -2123,6 +2126,7 @@ def register(registry):
                      latent_inpaint=0, inpaint_dim=0.38,
                      dim_shrink=0, dim_feather=5.0,
                      face_from_ref=1,
+                     scheduler="", flow_shift=3.0,
                      lora="", relight_lora="",
                      relight_scale=1.0, prompt_embeds_path="",
                      negative_embeds_path=""):
@@ -2171,6 +2175,16 @@ def register(registry):
             )
         else:
             pipe = model
+        if str(scheduler or "").strip():
+            # 运行时覆盖采样器（kijai WanAnimate 官方配方 dpm++_sde 6步/cfg1）。
+            # pipe 可能来自组件缓存（scheduler 是装配期值），这里重挂。
+            try:
+                pipe.scheduler = _build_scheduler(float(flow_shift), scheduler)
+                print(f"[wan] animate2 scheduler 覆盖: {scheduler} "
+                      f"shift={flow_shift}", flush=True)
+            except Exception as _es:
+                print(f"[wan] scheduler 覆盖失败（{_es}），沿用装配期配置",
+                      flush=True)
         if image is None:
             raise ValueError("wan.animate2: image（角色参考图）必填")
         if pose_video is None:

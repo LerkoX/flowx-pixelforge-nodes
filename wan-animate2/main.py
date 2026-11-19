@@ -60,6 +60,8 @@ def main():
         "composite_fill_black": param("composite_fill_black", 25.0, float),
         "composite_edge_clean": param("composite_edge_clean", 0, int),
         "mask_invert": param("mask_invert", 0, int),
+        "scheduler": param("scheduler", ""),
+        "flow_shift": param("flow_shift", 3.0, float),
         "latent_inpaint": param("latent_inpaint", 0, int),
         "inpaint_dim": param("inpaint_dim", 0.38, float),
         "dim_shrink": param("dim_shrink", 0, int),

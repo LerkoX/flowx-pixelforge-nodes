@@ -380,6 +380,18 @@
       "type": "float",
       "default": 5.0,
       "description": "暗谷羽化 sigma（px，默认 5）。配合 dim_shrink：暗区比重绘 mask 瘦一圈+5px 软过渡 → 暗信号藏在身体中轴，人物画出来后完全盖住暗区，外侧露出的是 100% 亮背景 → 灰边无处存活"
+    },
+    {
+      "name": "scheduler",
+      "type": "string",
+      "default": "",
+      "description": "运行时覆盖采样器：euler/dpm++/dpm++_sde/unipc/heun（kijai 官方 WanAnimate 配方 = dpm++_sde 6步）"
+    },
+    {
+      "name": "flow_shift",
+      "type": "float",
+      "default": 3.0,
+      "description": "scheduler 覆盖时的 flow_shift（480p→3.0 / 720p→5.0）"
     }
   ],
   "outputs": [

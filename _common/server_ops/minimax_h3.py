@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "9b4c078c0a97"
+OP_VERSION = "b710d9068319"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1419,6 +1419,8 @@ def _arm_offload(module, device, offload, name):
 def register(registry):
     import os as _os
 
+    registry = _VersionedRegistry(registry, OP_VERSION)
+
     @registry.register(
         "h3.lora_load",
         inputs={"model": "MODEL", "lora": "STRING", "lora_scale": "FLOAT"},
@@ -1464,7 +1466,6 @@ def register(registry):
         return {"lora_config": cfg}
 
 
-    registry = _VersionedRegistry(registry, OP_VERSION)
 
     # ============ 拆分装配算子（SD 风：组件各自加载/设置，pipe 组装）============
     # 缓存键带组件前缀（minimax-h3:tr:/te:/vae:/pipe:），与一体版

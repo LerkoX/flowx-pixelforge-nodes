@@ -1,0 +1,142 @@
+{
+  "name": "clip-text-encode-task",
+  "displayName": "CLIP 编码（Task Prompt）",
+  "description": "CLIP Text Encode + PowerPaint task prompt：task 选 object_removal/object_insertion/outpainting/shape_guided 时自动在文本后缀对应 P_ctxt/P_shape/P_obj task token（embedding 来自服务端 MODELS_DIR/task_prompts/powerpaint.safetensors，首次使用自动注入 tokenizer/text_encoder，幂等）。side 选 positive/negative 决定后缀 token（官方 add_task 映射：移除/扩图 pos=P_ctxt neg=P_obj；插入 pos/neg=P_obj；形状引导 pos/neg=P_shape）。task=none 与 clip-text-encode 完全一致。产物接 ksampler-brushnet 的 brushnet_pos/brushnet_neg（PowerPaint v2 配方）或普通采样节点的 cond（PowerPaint v1 配方）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "clip",
+    "inpaint",
+    "powerpaint"
+  ],
+  "icon": "🔤",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址，留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "clip_ref",
+      "type": "string",
+      "description": "CLIP 模型引用 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "clip_ref",
+        "description": "由 Checkpoint 加载节点的 clip_ref 输出提供"
+      }
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "description": "提示词文本（task token 由节点自动追加，无需手写）",
+      "required": true
+    },
+    {
+      "name": "task",
+      "type": "string",
+      "description": "任务类型：none/object_removal/object_insertion/outpainting/shape_guided",
+      "required": false,
+      "default": "none"
+    },
+    {
+      "name": "side",
+      "type": "string",
+      "description": "cond 侧：positive/negative（决定后缀哪个 task token，按官方 add_task 映射）",
+      "required": false,
+      "default": "positive"
+    },
+    {
+      "name": "clip_skip",
+      "type": "integer",
+      "description": "CLIP skip（0 = 不跳层）",
+      "required": false,
+      "default": 0
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "description": "轮询间隔（秒）",
+      "required": false,
+      "default": 5
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "任务超时（秒，含排队）",
+      "required": false,
+      "default": 1800
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "CLIP_REF": "{{ Param.clip_ref }}",
+    "TEXT": "{{ Param.text }}",
+    "TASK": "{{ Param.task }}",
+    "SIDE": "{{ Param.side }}",
+    "CLIP_SKIP": "{{ Param.clip_skip }}",
+    "POLL_INTERVAL": "{{ Param.poll_interval }}",
+    "JOB_TIMEOUT": "{{ Param.job_timeout }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "conditioning",
+      "type": "string",
+      "description": "conditioning 张量在推理服务的对象 ID，供 KSampler / ksampler-brushnet 使用"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 560,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

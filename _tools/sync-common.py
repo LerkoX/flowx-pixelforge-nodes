@@ -146,6 +146,10 @@ OP_FAMILIES = {
     # 视频级 SD 修脸（FaceDetailer 式）：逐帧 YOLO 检测 + 低 denoise img2img
     # + 检测框时序平滑 + 可选 ControlNet tile 锁轮廓
     "sd_face.py": ["video-face-detail"],
+    # BrushNet / PowerPaint 族（SD1.x 局部重绘）：vendor BrushNetModel +
+    # hook 块内注入（纯插件层），task prompt 文本编码
+    "brushnet.py": ["brushnet-load", "brushnet-apply", "ksampler-brushnet",
+                    "clip-text-encode-task"],
     # Wan 视频族（通义万相）：组件装配 + 文本编码 + 生成 + animate/vace
     "wan.py": ["wan-gen", "wan-text-encode", "wan-animate", "wan-animate2",
                "wan-vace",

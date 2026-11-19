@@ -1,0 +1,155 @@
+{
+  "name": "brushnet-apply",
+  "displayName": "BrushNet 捆条件",
+  "description": "BrushNet 条件打包：官方语义 masked_image = image×(1-mask)（mask 白=重绘区，重绘区置黑）→ VAE 编码 4ch + mask 插值到 latent 尺寸 1ch = 5ch 条件。scale=残差强度（1.0 官方默认），start/end_percent 为生效步窗口。产物喂 ksampler-brushnet 的 control 端口。与 ControlNet 正交可叠加（ControlNet 链接 ksampler-brushnet 的 cn_control）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inpaint",
+    "brushnet"
+  ],
+  "icon": "🧲",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址，留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "control_net",
+      "type": "string",
+      "description": "BrushNet 对象 ID",
+      "required": true,
+      "source": {
+        "nodeRef": "brushnet-load",
+        "output": "control_net",
+        "description": "由 BrushNet 加载节点输出提供"
+      }
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "VAE 对象 ID（用于把 masked image 编码成条件 latent）",
+      "required": true,
+      "source": {
+        "nodeRef": "checkpoint-loader",
+        "output": "vae",
+        "description": "由 Checkpoint 加载节点的 vae 输出提供"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "原图对象 ID（RGB）",
+      "required": true,
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image",
+        "description": "由图像加载节点输出提供"
+      }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "蒙版对象 ID（灰度，白=重绘区）",
+      "required": true,
+      "source": {
+        "nodeRef": "mask-paint",
+        "output": "mask",
+        "description": "由蒙版节点输出提供"
+      }
+    },
+    {
+      "name": "scale",
+      "type": "float",
+      "description": "BrushNet 残差强度（官方默认 1.0；<1 放松约束，>1 更强跟随条件图）",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "start_percent",
+      "type": "float",
+      "description": "生效步窗口起点 [0,1)",
+      "required": false,
+      "default": 0.0
+    },
+    {
+      "name": "end_percent",
+      "type": "float",
+      "description": "生效步窗口终点 (0,1]",
+      "required": false,
+      "default": 1.0
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "CONTROL_NET": "{{ Param.control_net }}",
+    "VAE": "{{ Param.vae }}",
+    "IMAGE": "{{ Param.image }}",
+    "MASK": "{{ Param.mask }}",
+    "SCALE": "{{ Param.scale }}",
+    "START_PERCENT": "{{ Param.start_percent }}",
+    "END_PERCENT": "{{ Param.end_percent }}"
+  },
+  "outputs": [
+    {
+      "name": "control",
+      "type": "string",
+      "description": "BrushNet 条件对象 ID，供 ksampler-brushnet 的 control 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 1800,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 640,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

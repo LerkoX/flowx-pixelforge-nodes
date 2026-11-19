@@ -1,0 +1,98 @@
+{
+  "name": "brushnet-load",
+  "displayName": "BrushNet 加载",
+  "description": "加载 BrushNet 分支权重（MODELS_DIR/brushnet/<name>，diffusers 组件目录或 safetensors 单文件；无 config.json 时按权重键嗅探结构，兼容 PowerPaint_Brushnet 裸权重）。输出 CONTROL_NET 句柄经 brushnet-apply 捆条件后喂 ksampler-brushnet；dtype=auto 默认 fp16，进模型 LRU 常驻管理。配套权重：Sanster/brushnet_random_mask（通用随机遮罩）/ PowerPaint-v2-1 的 PowerPaint_Brushnet（task prompt 版，配 clip-text-encode-task 使用）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "inpaint",
+    "brushnet"
+  ],
+  "icon": "🖌️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：模型列表查询、预览帧/重放/中断中转都由 Studio 发请求，用的是 Studio 的网络视角。docker 节点的 service_url 只能填容器内网地址（如 http://172.17.0.1:8100），Studio（手机/外网侧）取不到——此时把本参数绑成 Studio 可达地址（通常绑 {{ Param.service_url }} 公网隧道），否则画布上没有模型下拉数据、也看不到实时预览。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "description": "BrushNet 权重名（MODELS_DIR/brushnet/ 下目录名或 safetensors 文件名），如 brushnet_random_mask / powerpaint_v2_brushnet",
+      "required": true
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "精度 auto/fp16/bf16/fp32，auto 默认 fp16",
+      "required": false,
+      "default": "auto"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}",
+    "NAME": "{{ Param.name }}",
+    "DTYPE": "{{ Param.dtype }}"
+  },
+  "outputs": [
+    {
+      "name": "control_net",
+      "type": "string",
+      "description": "BrushNet 对象 ID（CONTROL_NET 句柄），供 brushnet-apply 的 control_net 输入"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 3900,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 480,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

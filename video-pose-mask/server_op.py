@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "cca25c3e540b"
+OP_VERSION = "cb5597ba979a"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -965,14 +965,21 @@ def register(registry):
         "video.bg_erase",
         inputs={"video": "VIDEO", "mask": "VIDEO", "dilate": "INT",
                 "radius": "INT", "method": "STRING", "color_match": "INT",
-                "mask_threshold": "INT", "temporal_union": "INT"},
+                "mask_threshold": "INT", "temporal_union": "INT",
+                "mosaic_size": "INT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="**流派A 第一阶段（Clean Plate）**：把 mask 区域从视频里"
                     "抹除，输出空无一人的纯净背景视频。method=telea（默认，"
-                    "快）/ns（Navier-Stokes，大面积遮挡更自然）。dilate 保证"
-                    "覆盖人物所有像素（原人残留会在下游生成时变成鬼影）。")
+                    "快）/ns（Navier-Stokes，大面积遮挡更自然）/lama（大模型"
+                    "抹除）/mosaic（**Wan2.2 官方 replace 预处理**：人物区域"
+                    "打审查式马赛克像素块——模型看到一个'被 censorship 的人"
+                    "形'，天然知道要在那里重画一个人，比黑洞/telea 的语义"
+                    "更明确）。mosaic_size=像素块宽（默认 16，建议 12~24）。"
+                    "dilate 保证覆盖人物所有像素（原人残留会在下游生成时"
+                    "变成鬼影）。")
     def _op_bg_erase(video, mask, dilate=20, radius=15, method="telea",
-                     color_match=1, mask_threshold=15, temporal_union=1):
+                     color_match=1, mask_threshold=15, temporal_union=1,
+                     mosaic_size=16):
         import cv2
         import numpy as np
         from PIL import Image as _Image
@@ -1020,6 +1027,17 @@ def register(registry):
                 if int(color_match or 0) > 0:
                     # 色彩对齐 + mask 外还原（治 LaMa 色偏导致的成片灰雾）
                     res = _bg_color_match(img, res, mnp, soft=True)
+            elif _meth == "mosaic":
+                # 审查式马赛克：区域内容 AREA 降到 1/N → 最近邻放大成块，
+                # 只写回 mask 内（硬边，与官方预处理一致）
+                ms = max(4, int(mosaic_size or 16))
+                small = cv2.resize(img, (max(1, img.shape[1] // ms),
+                                         max(1, img.shape[0] // ms)),
+                                   interpolation=cv2.INTER_AREA)
+                moz = cv2.resize(small, (img.shape[1], img.shape[0]),
+                                 interpolation=cv2.INTER_NEAREST)
+                res = img.copy()
+                res[mnp > 0] = moz[mnp > 0]
             else:
                 res = cv2.inpaint(img, mnp, max(1, int(radius)), flag)
             out.append(_Image.fromarray(res))

@@ -51,7 +51,7 @@
       "name": "method",
       "type": "string",
       "default": "telea",
-      "description": "telea（快）/ ns（Navier-Stokes，大面积更自然）"
+      "description": "telea/ns/lama/mosaic（Wan2.2 官方 replace 预处理：人物区审查式马赛克）"
     },
     {
       "name": "color_match",
@@ -70,6 +70,12 @@
       "type": "integer",
       "default": 1,
       "description": "时序并集（1=开）：当前帧遮罩与前后各一帧做并集，保证边缘帧间稳定、消除闪动"
+    },
+    {
+      "name": "mosaic_size",
+      "type": "integer",
+      "default": 16,
+      "description": "mosaic 专用：像素块宽（建议 12~24）"
     }
   ],
   "outputs": [

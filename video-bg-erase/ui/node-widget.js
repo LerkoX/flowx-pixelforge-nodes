@@ -2834,6 +2834,7 @@ const WIDGET_SPEC = {
     { key: 'dilate', label: '遮罩膨胀像素（覆盖原人所有像素）', kind: 'slider', min: 0, max: 60, step: 1, default: 20 },
     { key: 'radius', label: 'inpaint 半径（telea/ns 用）', kind: 'slider', min: 1, max: 40, step: 1, default: 15 },
     { key: 'method', label: '补全算法', kind: 'select', options: [
+    { key: 'mosaic_size', label: '马赛克块宽', kind: 'slider', min: 4, max: 32, step: 2, default: 16 },
         { value: 'lama', label: 'lama 大感受野（推荐，质量最好）' },
         { value: 'ns', label: 'ns Navier-Stokes（大面积较自然）' },
         { value: 'telea', label: 'telea 快（小面积）' }], default: 'lama' },

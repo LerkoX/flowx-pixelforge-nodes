@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "2b96a14089a9"
+OP_VERSION = "acd5cae811e0"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2076,6 +2076,7 @@ def register(registry):
                 "width": "INT", "steps": "INT", "guidance_scale": "FLOAT",
                 "seed": "INT", "fps": "INT",
                 "inpaint_fill": "STRING", "inpaint_erode": "INT",
+                "mask_invert": "INT",
                 "inpaint_expand": "INT", "inpaint_telea_radius": "INT",
                 "inpaint_ring_width": "INT",
                 "composite": "BOOL", "composite_expand": "INT",
@@ -2107,6 +2108,7 @@ def register(registry):
                      pullback_mask=None,
                      background_video=None, mask_video=None, mode="auto",
                      inpaint_fill="black", inpaint_erode=0,
+                     mask_invert=0,
                      inpaint_expand=0, inpaint_telea_radius=5,
                      inpaint_ring_width=10,
                      prompt="", negative_prompt="", pose_strength=1.0,
@@ -2382,6 +2384,11 @@ def register(registry):
                 # 黑边改由 inpaint_erode 收缩**合成 mask** 裁掉边缘残留
                 # （erode 在羽化前做，收缩后再羽化保持接缝自然）。
                 mnp0 = np.asarray(m, dtype=np.float32) / 255.0
+                if int(mask_invert or 0) > 0:
+                    # **Wan2.2 官方预处理风格（2026-11-19）**：上游 mask 是
+                    # 纯黑人形 + 白底（ComfyUI 官方工作流的 mask 产物），
+                    # 这里翻回内部约定（白=生成区）。
+                    mnp0 = 1.0 - mnp0
                 if int(inpaint_erode) > 0:
                     import cv2 as _cv2
                     _k = int(inpaint_erode)
@@ -2609,6 +2616,7 @@ def register(registry):
                     # mask（通常是 BiRefNet 大 mask，确保原人绝对包裹），
                     # 而条件暗谷仍由 mask_video 决定（骨架膨胀的紧身轮廓）。
                     _lm_src = mk_out
+                    _lm_need_invert = False
                     if pullback_mask is not None:
                         try:
                             _pbf = _pils(pullback_mask)
@@ -2616,6 +2624,7 @@ def register(registry):
                                 _pb_n = len(pose)
                                 _pbf = (_pbf * ((_pb_n // len(_pbf)) + 1))[:_pb_n]
                                 _lm_src = _pbf
+                                _lm_need_invert = True   # 独立视频未经 mk_out 的翻转
                                 print(f"[wan] 拉回 mask 独立来源 "
                                       f"({len(_pbf)}帧，条件暗谷仍用 mask_video)",
                                       flush=True)
@@ -2625,6 +2634,8 @@ def register(registry):
                     _lm = []
                     for _im in _lm_src:
                         _a = np.asarray(_im.convert("L"), dtype=np.float32) / 255.0
+                        if _lm_need_invert and int(mask_invert or 0) > 0:
+                            _a = 1.0 - _a
                         # **LINEAR 下采样（2026-11-17 v26）**：NEAREST 会把
                         # 像素级羽化的软 alpha 量化成硬边+锯齿 → 拉回/生成的
                         # 切换变成硬边界（边缘"透明分界感"的来源）。LINEAR

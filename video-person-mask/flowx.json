@@ -162,6 +162,12 @@
       "type": "integer",
       "default": 0,
       "description": "马赛克块化边（0=关）：边缘对齐 latent 网格（Wan 建议 8，H3 建议 16）"
+    },
+    {
+      "name": "invert",
+      "type": "integer",
+      "default": 0,
+      "description": "1=黑白翻转输出（纯黑人形+白底，Wan2.2 官方 mask 风格；下游 wan-animate2 需开 mask_invert）"
     }
   ],
   "executor": {

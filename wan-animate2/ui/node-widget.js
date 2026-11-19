@@ -2846,6 +2846,7 @@ const WIDGET_SPEC = {
     { key: 'steps', label: '采样步数', kind: 'slider', min: 1, max: 60, step: 1, default: 20 },
     { key: 'guidance_scale', label: 'CFG 强度（Animate 默认 1.0 关 CFG）', kind: 'slider', min: 0, max: 10, step: 0.5, default: 1.0 },
     { key: 'inpaint_fill', label: '抹除填充（replace 模式）', kind: 'select', options: [{ value: 'black', label: 'black 实心替换（推荐）' }, { value: 'blur', label: 'blur 模糊背景（会半透明，勿用）' }], default: 'black' },
+    { key: 'mask_invert', label: 'mask 黑白翻转（纯黑人形输入）', kind: 'toggle', default: 0 },
     { key: 'inpaint_erode', label: '合成 mask 收缩 px（裁黑边，推荐 6）', kind: 'slider', min: 0, max: 32, step: 1, default: 0 },
     { key: 'fps', label: '输出帧率（0=跟随源视频）', kind: 'slider', min: 0, max: 60, step: 1, default: 0 },
     { key: 'composite', label: '像素级合成（治边缘暗晕）', kind: 'toggle', default: false },

@@ -35,7 +35,7 @@ def main():
         "shape": param("shape", "contour"),
         "bbox_smooth": param("bbox_smooth", 5, int),
         "motion_union": param("motion_union", "0") in ("1", "true", "True"),
-    inputs["mosaic"] = param("mosaic", 0, int)
+        "mosaic": param("mosaic", 0, int),
     }
     # 外部深度视频（可选，接 video-depth）：省一次推理 + 深度可视化
     _dv = param("depth_video", "")

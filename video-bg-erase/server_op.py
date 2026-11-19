@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "f28e698ab51f"
+OP_VERSION = "9ea5db224f03"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1008,6 +1008,27 @@ def register(registry):
         return {"video": {"frames": out, "fps": fps},
                 "fps": int(round(fps)), "num_frames": n}
 
+def _mosaic_blockify(mask_frames, n_px):
+    """马赛克块化边缘：AREA 降到 1/N（块值=局部覆盖率）→ 最近邻放大。
+    ComfyUI 圈公认块边 mask 对 latent inpaint 更友好（边缘对齐 latent
+    网格，细窄羽化带不被 patchify 稀释成半透明）。n_px<=1 原样返回。"""
+    n_px = int(n_px or 0)
+    if n_px <= 1 or not mask_frames:
+        return mask_frames
+    import cv2
+    import numpy as np
+    from PIL import Image as _Im
+    out = []
+    for f in mask_frames:
+        a = np.asarray(f.convert("L"), dtype=np.uint8)
+        h0, w0 = a.shape[:2]
+        sm = cv2.resize(a, (max(1, w0 // n_px), max(1, h0 // n_px)),
+                        interpolation=cv2.INTER_AREA)
+        out.append(_Im.fromarray(
+            cv2.resize(sm, (w0, h0), interpolation=cv2.INTER_NEAREST)))
+    return out
+
+
     @registry.register(
         "video.pose_mask",
         inputs={"video": "VIDEO", "grow": "INT", "feather": "INT",
@@ -1069,17 +1090,10 @@ def register(registry):
             kf = int(feather or 0)
             if kf > 1:
                 b = cv2.GaussianBlur(b, (kf | 1, kf | 1), 0)
-            km = int(mosaic or 0)
-            if km > 1:
-                # 马赛克块化：AREA 降到 1/N（取块均值=局部覆盖率），
-                # 最近邻放大 → 块状阶梯边缘，块内值=覆盖率（0~255 渐变）
-                h0, w0 = b.shape[:2]
-                sm = cv2.resize(b, (max(1, w0 // km), max(1, h0 // km)),
-                                interpolation=cv2.INTER_AREA)
-                b = cv2.resize(sm, (w0, h0), interpolation=cv2.INTER_NEAREST)
             out.append(_Image.fromarray(b))
         print(f"[video-pose-mask] done {n}帧 {time.time()-t0:.1f}s "
               f"grow={grow} feather={feather} mosaic={mosaic}", flush=True)
+        out = _mosaic_blockify(out, mosaic)
         return {"mask": {"frames": out, "fps": fps},
                 "fps": int(round(fps)), "num_frames": n}
 
@@ -1117,7 +1131,7 @@ def register(registry):
                 "depth_refine": "INT", "mask_matting": "INT",
                 "contour_smooth": "INT",
                 "depth_video": "VIDEO",
-                "motion_union": "BOOL"},
+                "motion_union": "BOOL", "mosaic": "INT"},
         outputs={"mask": "VIDEO", "fps": "INT", "num_frames": "INT",
                  "width": "INT", "height": "INT", "objects": "INT"},
         description="视频人物遮罩（mask_model 五选一）：sam3=文本直接分割"
@@ -1134,7 +1148,7 @@ def register(registry):
                         motion_union=False, mask_refine_radius=8,
                         mask_model="sam3", depth_refine=0,
                         mask_matting=0, depth_video=None,
-                        contour_smooth=0):
+                        contour_smooth=0, mosaic=0):
         import numpy as np
         import torch
         from PIL import Image
@@ -1209,7 +1223,7 @@ def register(registry):
                                      ).astype(np.uint8)) for i in range(n)]
                 print(f"[video-mask] done(SAM2+trimap) "
                       f"{time.time()-t0:.1f}s 软 alpha 输出", flush=True)
-                return {"mask": {"frames": mask_frames, "fps": fps},
+                return {"mask": {"frames": _mosaic_blockify(mask_frames, mosaic), "fps": fps},
                         "fps": int(round(fps)), "num_frames": n,
                         "width": w, "height": h, "objects": 1}
             mask_frames = [
@@ -1217,7 +1231,7 @@ def register(registry):
                 for i in range(n)]
             print(f"[video-mask] done(SAM2) {time.time()-t0:.1f}s "
                   f"shape={shape}", flush=True)
-            return {"mask": {"frames": mask_frames, "fps": fps},
+            return {"mask": {"frames": _mosaic_blockify(mask_frames, mosaic), "fps": fps},
                     "fps": int(round(fps)), "num_frames": n,
                     "width": w, "height": h, "objects": 1}
         _mm_choice = str(mask_model).lower()
@@ -1243,7 +1257,7 @@ def register(registry):
                 for i in range(n)]
             print(f"[video-mask] done(depth) {time.time()-t0:.1f}s "
                   f"平均覆盖率={float(merged.mean())*100:.1f}%", flush=True)
-            return {"mask": {"frames": mask_frames, "fps": fps},
+            return {"mask": {"frames": _mosaic_blockify(mask_frames, mosaic), "fps": fps},
                     "fps": int(round(fps)), "num_frames": n,
                     "width": w, "height": h, "objects": 1}
         if _mm_choice == "rvm":
@@ -1414,7 +1428,7 @@ def register(registry):
                 for i in range(n)]
             print(f"[video-mask] done(SAM3+trimap) "
                   f"{time.time()-t0:.1f}s 软 alpha 输出", flush=True)
-            return {"mask": {"frames": mask_frames, "fps": fps},
+            return {"mask": {"frames": _mosaic_blockify(mask_frames, mosaic), "fps": fps},
                     "fps": int(round(fps)), "num_frames": n,
                     "width": w, "height": h, "objects": objects_seen}
         # **矩形化（2026-11-15 官方配方对齐）**：Wan2.2 replace 官方 mask
@@ -1430,6 +1444,6 @@ def register(registry):
                        for i in range(n)]
         print(f"[video-mask] done {time.time()-t0:.1f}s shape={shape} "
               f"objects_peak={objects_seen}", flush=True)
-        return {"mask": {"frames": mask_frames, "fps": fps},
+        return {"mask": {"frames": _mosaic_blockify(mask_frames, mosaic), "fps": fps},
                 "fps": int(round(fps)), "num_frames": n,
                 "width": w, "height": h, "objects": objects_seen}

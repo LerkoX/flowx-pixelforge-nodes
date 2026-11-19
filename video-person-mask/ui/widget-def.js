@@ -10,6 +10,7 @@ const WIDGET_SPEC = {
     { key: 'shape', label: '遮罩形状', kind: 'select', options: [{ value: 'contour', label: 'contour 精细轮廓（默认）' }, { value: 'bbox', label: 'bbox 包围矩形（Wan replace 官方配方，治轮廓黑影）' }], default: 'contour' },
     { key: 'bbox_smooth', label: 'bbox 防抖窗口（帧）', kind: 'slider', min: 1, max: 15, step: 2, default: 5, advanced: true },
     { key: 'motion_union', label: '帧差运动兜底（防裙摆漏罩）', kind: 'toggle', default: false },
+    { key: 'mosaic', label: '马赛克块边（0=关）', kind: 'slider', min: 0, max: 32, step: 2, default: 0 },
     { key: 'max_frames', label: '最多帧数（0=全片）', kind: 'number', default: 0, advanced: true },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],

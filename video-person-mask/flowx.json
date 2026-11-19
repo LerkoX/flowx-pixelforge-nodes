@@ -156,6 +156,12 @@
       "type": "integer",
       "default": 8,
       "description": "原图引导精修半径（px，0=关闭）。SAM3 mask 原始分辨率只有 1/8，放大后是 8px 方块阶梯；用原视频灰度做引导滤波把边界吸附到真实轮廓。8~12 平滑且保边，16+ 更平滑但可能糊掉手指/发丝"
+    },
+    {
+      "name": "mosaic",
+      "type": "integer",
+      "default": 0,
+      "description": "马赛克块化边（0=关）：边缘对齐 latent 网格（Wan 建议 8，H3 建议 16）"
     }
   ],
   "executor": {

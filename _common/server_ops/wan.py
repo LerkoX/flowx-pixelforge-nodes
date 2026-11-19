@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "321ba42ce974"
+OP_VERSION = "9e6fe29773bd"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2566,6 +2566,14 @@ def register(registry):
             except Exception:  # noqa: BLE001
                 pass
             extra = dict(background_video=bg_masked, mask_video=mk_out)
+            # 诊断：mask 进 pipeline 前的极性（人物=1 白 / 背景=0 黑）
+            try:
+                import numpy as _npd
+                _mm = _npd.asarray(mk_out[0], dtype=_npd.float32) / 255.0
+                print(f"[wan][diag] pipeline mask 输入: 人物(>0.5)={float((_mm>0.5).mean())*100:.1f}% "
+                      f"mean={_mm.mean():.3f}（pipeline 内部会 1-mask → 人物=0=生成）", flush=True)
+            except Exception:
+                pass
             print(f"[wan] animate2 replace: fill={inpaint_fill} "
                   f"erode={inpaint_erode}px 羽化8px ({len(bg_masked)}帧)",
                   flush=True)

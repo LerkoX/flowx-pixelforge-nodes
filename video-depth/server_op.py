@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "275f10b8fd04"
+OP_VERSION = "d13ab4b8e867"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -186,6 +186,30 @@ def _motion_union(masks, frames, thresh=25, near_px=30):
             n_add += int((e > 0).sum())
     print(f"[video-mask] 帧差运动兜底: 补 {n_add} px", flush=True)
     return out
+
+def _aug_mask_grid(mask_np, w_len=1, h_len=1):
+    """Wan2.2 官方 get_aug_mask 原版：bbox 网格块化。
+    把 body_mask 的 bbox 切成 w_len×h_len 的网格，有 mask 的格子填满。
+    w_len=1/h_len=1 → 整个 bbox 填满（矩形块）；w_len=10/h_len=20 → 细网格。
+    """
+    import numpy as np
+    m = (mask_np > 0).astype(np.uint8)
+    ys, xs = np.nonzero(m)
+    if len(xs) == 0:
+        return m
+    x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
+    bw, bh = x1 - x0, y1 - y0
+    ws = max(1, int(bw / max(1, w_len)))
+    hs = max(1, int(bh / max(1, h_len)))
+    out = m.copy()
+    for wx in range(x0, x1, ws):
+        for wy in range(y0, y1, hs):
+            x2 = min(wx + ws, x1)
+            y2 = min(wy + hs, y1)
+            if m[wy:y2, wx:x2].sum() > 0:
+                out[wy:y2, wx:x2] = 1
+    return out
+
 
 def _bbox_rectify(masks, smooth=5):
     """(T,H,W) bool → **矩形包围盒 mask**（Wan2.2 官方 get_aug_mask
@@ -1234,6 +1258,14 @@ def register(registry):
             merged = _dilate_masks(merged, int(dilate))
             if str(shape).lower() == "bbox":
                 merged = _bbox_rectify(merged, smooth=int(bbox_smooth))
+            elif str(shape).lower() == "aug":
+                # 官方 get_aug_mask 网格块化（w_len/h_len 从 mask_refine_radius 借道）
+                import numpy as _np_aug
+                _wl = max(1, int(mask_refine_radius or 1))
+                merged = _np_aug.stack([
+                    _aug_mask_grid(merged[i], w_len=_wl, h_len=_wl)
+                    for i in range(len(merged))])
+                print(f"[video-mask] aug 网格块化 w_len={_wl}", flush=True)
             _cs2 = int(contour_smooth or 0)
             if _cs2 > 0:
                 merged = np.stack([_smooth_contour(merged[i], _cs2)

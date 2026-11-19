@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "acd5cae811e0"
+OP_VERSION = "7871f83b3ad7"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2085,7 +2085,6 @@ def register(registry):
                 "composite_fill_black": "FLOAT",
                 "composite_edge_clean": "INT",
                 "composite_unpremul": "FLOAT",
-                "mask_invert": "INT",
                 "latent_inpaint": "INT", "inpaint_dim": "FLOAT",
         "dim_shrink": "INT", "dim_feather": "FLOAT",
         "face_from_ref": "INT",
@@ -2120,7 +2119,7 @@ def register(registry):
                      composite_gain=1.0, composite_dehaze=True,
                      composite_dehaze_strength=0.95,
                      composite_fill_black=0.0, composite_edge_clean=0,
-                     composite_unpremul=0.0, mask_invert=0,
+                     composite_unpremul=0.0,
                      latent_inpaint=0, inpaint_dim=0.38,
                      dim_shrink=0, dim_feather=5.0,
                      face_from_ref=1,

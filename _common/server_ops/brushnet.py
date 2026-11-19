@@ -47,7 +47,7 @@ from app import execution, ops, preview
 # --- F1 族版本化：算子身份 = 实现内容 --------------------------------------
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "379b0f2492e5"
+OP_VERSION = "22156ecff34c"
 OP_FAMILY = "brushnet"  # 落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -492,36 +492,93 @@ class _BrushNetBundle:
 # 主 UNet 块内残差注入（forward hook 精确复刻官方 fork 语义）
 # ---------------------------------------------------------------------------
 
+def _unwrap_out(out):
+    """hook 输出解包：tensor / dataclass(.sample) / tuple 皆可。"""
+    if torch.is_tensor(out):
+        return out
+    if hasattr(out, "sample") and torch.is_tensor(out.sample):
+        return out.sample
+    if isinstance(out, (tuple, list)) and out:
+        return out[0]
+    raise TypeError(f"无法解包模块输出: {type(out)}")
+
+
+def _repack_out(out, new_t):
+    if torch.is_tensor(out):
+        return new_t
+    if hasattr(out, "sample") and torch.is_tensor(out.sample):
+        out.sample = new_t
+        return out
+    if isinstance(out, (tuple, list)) and out:
+        return (new_t,) + tuple(out[1:])
+    raise TypeError(f"无法重组模块输出: {type(out)}")
+
+
+def _make_pre_add_hook(res, mod_name):
+    """forward_pre_hook：改模块入参，等价「主路径加残差、skip 不加」。
+
+    fork 语义：down_block_res_samples=(conv_in 输出,) 先存 skip，之后才
+    sample += down[0] 进 down path——所以 conv_in 位不能改 conv_in 输出
+    （会让 skip 通道也带残差），必须挂在 down_blocks[0].resnets[0] 入口改
+    隐藏态（2026-11-19 分级差分实测 down[0] 单位发散 0.21 后修正）。
+    """
+    def hook(_m, args, kwargs):
+        t = args[0]
+        if not torch.is_tensor(t) or t.shape != res.shape:
+            raise RuntimeError(
+                f"brushnet 残差形状不符 @{mod_name}: 模块入参 "
+                f"{tuple(t.shape) if torch.is_tensor(t) else type(t)} "
+                f"vs 残差 {tuple(res.shape)}")
+        return (t + res,) + tuple(args[1:]), kwargs
+    return hook
+
+
 def _make_add_hook(res, mod_name):
     def hook(_m, _a, out):
-        t = out if torch.is_tensor(out) else out[0]
+        t = _unwrap_out(out)
         if t.shape != res.shape:
             raise RuntimeError(
                 f"brushnet 残差形状不符 @{mod_name}: 模块输出 "
                 f"{tuple(t.shape)} vs 残差 {tuple(res.shape)}")
-        t = t + res
-        return t if torch.is_tensor(out) else (t,) + tuple(out[1:])
+        return _repack_out(out, t + res)
     return hook
 
 
 class _Injector:
     """把 brushnet 残差按官方位置挂到主 UNet 子模块的 forward 后钩子上。
 
-    顺序（与 fork unet_2d_condition.py 的 pop(0) 顺序逐项对齐）：
-      conv_in → down[0..3].resnets[*] → down[i].downsamplers[*] → mid_block
-      → up[0..3].resnets[*] → up[i].upsamplers[*]
-    构建期即校验残差个数与模块结构完全匹配（多/少一个都立刻报错，不放行）。
+    注入顺序（与 fork unet_2d_condition.py 的 pop(0) 顺序逐项对齐）。
+    ⚠️ CrossAttn 块内 fork 语义是 resnet→attn→+res（残差加在 attention
+    之后）——因此带 attention 的块 hook 挂 attentions[i]（在 resnet 之后
+    立即执行），无 attention 的块才挂 resnet 本体。挂错层级会让注入信号
+    先经 attn 非线性变换，位置不等价（2026-11-19 注入差分实测 maxdiff
+    0.247 后修正）。
     """
+
+    @staticmethod
+    def _block_units(blk, is_up=False):
+        """一个 block 内应挂 hook 的模块序列（与 fork 注入位一一对应）。"""
+        atths = getattr(blk, "attentions", None)
+        n_res = len(blk.resnets)
+        units = []
+        if atths and len(atths) == n_res:
+            units.extend(atths)          # resnet→attn 成对，残差加 attn 后
+        else:
+            units.extend(blk.resnets)    # 无 attn：残差加 resnet 后
+        units.extend(getattr(blk, "downsamplers", None) or [] if not is_up
+                     else (getattr(blk, "upsamplers", None) or []))
+        return units
 
     def __init__(self, unet, down_res, mid_res, up_res):
         plan = []
         it = iter(down_res)
-        plan.append((unet.conv_in, next(it)))
-        for bi, blk in enumerate(unet.down_blocks):
-            for r in blk.resnets:
-                plan.append((r, next(it)))
-            for ds in (getattr(blk, "downsamplers", None) or []):
-                plan.append((ds, next(it)))
+        # down[0]（conv_in 位）：pre-hook 挂 down_blocks[0] 首个 resnet 入口
+        # ——fork 是「先存 skip 再加残差」，改 conv_in 输出会污染 skip 通道
+        first = unet.down_blocks[0].resnets[0]
+        plan.append(("pre", first, next(it)))
+        for blk in unet.down_blocks:
+            for m in self._block_units(blk):
+                plan.append((m, next(it)))
         try:
             extra = next(it)
             raise ValueError(
@@ -532,10 +589,8 @@ class _Injector:
         plan.append((unet.mid_block, mid_res))
         it = iter(up_res)
         for blk in unet.up_blocks:
-            for r in blk.resnets:
-                plan.append((r, next(it)))
-            for us in (getattr(blk, "upsamplers", None) or []):
-                plan.append((us, next(it)))
+            for m in self._block_units(blk, is_up=True):
+                plan.append((m, next(it)))
         try:
             extra = next(it)
             raise ValueError(
@@ -547,9 +602,16 @@ class _Injector:
         self._handles = []
 
     def __enter__(self):
-        for m, res in self._plan:
-            self._handles.append(m.register_forward_hook(
-                _make_add_hook(res, type(m).__name__)))
+        for item in self._plan:
+            if item[0] == "pre":
+                _, m, res = item
+                self._handles.append(m.register_forward_pre_hook(
+                    _make_pre_add_hook(res, type(m).__name__),
+                    with_kwargs=True))
+            else:
+                m, res = item
+                self._handles.append(m.register_forward_hook(
+                    _make_add_hook(res, type(m).__name__)))
         return self
 
     def __exit__(self, *exc):
@@ -662,7 +724,8 @@ def register(registry):
                 "end_percent": "FLOAT"},
         outputs={"control": "CONTROL"},
         description="BrushNet 捆条件：官方语义 masked_image=image×(1-mask)（mask "
-                    "白=重绘区）→ VAE 编码 4ch + mask 插值到 latent 尺寸 1ch = "
+                    "白=重绘区）→ VAE 编码 4ch + mask 通道（1=保留区，即 1-mask）"
+                    "插值到 latent 尺寸 1ch = "
                     "5ch 条件。scale=残差强度（1.0 官方默认），start/end_percent "
                     "为生效步窗口。产物喂 sample_brushnet 的 control 端口")
     def _op_brushnet_apply(control_net, vae, image, mask, scale=1.0,
@@ -689,9 +752,13 @@ def register(registry):
                        * pipe.vae.config.scaling_factor)
         finally:
             pipe.vae.disable_tiling()
-        mt = torch.from_numpy(m[0][..., 0])[None, None]
+        mt = torch.from_numpy(m[:, :, 0])[None, None].to(device=lat.device)
         # 官方：interpolate 到 latent 尺寸（默认最近邻）
         mt = F.interpolate(mt, size=tuple(lat.shape[-2:]), mode="nearest")
+        # ⚠️ 官方 cond mask 通道语义：1=保留区、0=重绘区（fork pipeline 将
+        # mask 归一化 [-1,1] 后 sum<0 判定：黑=1）。本节点 mask 白=重绘，
+        # 故通道取 1-mt（2026-11-19 逐步 spy 差分 STEP0-cond maxdiff=1.0 后修正）
+        mt = 1.0 - mt
         cond = torch.cat([lat.float(), mt.float()], dim=1).cpu()
         print(f"[brushnet.apply] image={w}x{h} scale={scale} "
               f"window=[{start_percent},{end_percent}) "

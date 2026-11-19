@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "9ea5db224f03"
+OP_VERSION = "cca25c3e540b"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -937,6 +937,27 @@ def _bg_color_match(src, tgt, mask_u8, soft=False):
     return np.clip(out, 0, 255).round().astype(np.uint8)
 
 
+def _mosaic_blockify(mask_frames, n_px):
+    """马赛克块化边缘：AREA 降到 1/N（块值=局部覆盖率）→ 最近邻放大。
+    ComfyUI 圈公认块边 mask 对 latent inpaint 更友好（边缘对齐 latent
+    网格，细窄羽化带不被 patchify 稀释成半透明）。n_px<=1 原样返回。"""
+    n_px = int(n_px or 0)
+    if n_px <= 1 or not mask_frames:
+        return mask_frames
+    import cv2
+    import numpy as np
+    from PIL import Image as _Im
+    out = []
+    for f in mask_frames:
+        a = np.asarray(f.convert("L"), dtype=np.uint8)
+        h0, w0 = a.shape[:2]
+        sm = cv2.resize(a, (max(1, w0 // n_px), max(1, h0 // n_px)),
+                        interpolation=cv2.INTER_AREA)
+        out.append(_Im.fromarray(
+            cv2.resize(sm, (w0, h0), interpolation=cv2.INTER_NEAREST)))
+    return out
+
+
 def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
 
@@ -1007,27 +1028,6 @@ def register(registry):
               f"color_match={color_match}", flush=True)
         return {"video": {"frames": out, "fps": fps},
                 "fps": int(round(fps)), "num_frames": n}
-
-def _mosaic_blockify(mask_frames, n_px):
-    """马赛克块化边缘：AREA 降到 1/N（块值=局部覆盖率）→ 最近邻放大。
-    ComfyUI 圈公认块边 mask 对 latent inpaint 更友好（边缘对齐 latent
-    网格，细窄羽化带不被 patchify 稀释成半透明）。n_px<=1 原样返回。"""
-    n_px = int(n_px or 0)
-    if n_px <= 1 or not mask_frames:
-        return mask_frames
-    import cv2
-    import numpy as np
-    from PIL import Image as _Im
-    out = []
-    for f in mask_frames:
-        a = np.asarray(f.convert("L"), dtype=np.uint8)
-        h0, w0 = a.shape[:2]
-        sm = cv2.resize(a, (max(1, w0 // n_px), max(1, h0 // n_px)),
-                        interpolation=cv2.INTER_AREA)
-        out.append(_Im.fromarray(
-            cv2.resize(sm, (w0, h0), interpolation=cv2.INTER_NEAREST)))
-    return out
-
 
     @registry.register(
         "video.pose_mask",

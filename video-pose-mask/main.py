@@ -15,6 +15,7 @@ def main():
     inputs["feather"] = param("feather", 21, int)
     inputs["threshold"] = param("threshold", 10, int)
     inputs["limit_expand"] = param("limit_expand", 4, int)
+    inputs["mosaic"] = param("mosaic", 0, int)
     _lm = param("limit_mask", "")
     if _lm:
         inputs["limit_mask"] = ref(_lm)

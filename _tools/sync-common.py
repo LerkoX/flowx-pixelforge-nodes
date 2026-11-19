@@ -141,7 +141,8 @@ OP_FAMILIES = {
     "video_flow.py": ["load-video", "video-to-frames", "frames-to-video",
                       "video-repaint", "video-v2v"],
     # SAM3 视频人物遮罩（文本检测+全片追踪）：人物替换 inpaint_mask 选区件
-    "video_mask.py": ["video-person-mask", "video-depth"],
+    "video_mask.py": ["video-person-mask", "video-depth",
+                      "video-pose-mask", "video-bg-erase"],
     # 视频级 SD 修脸（FaceDetailer 式）：逐帧 YOLO 检测 + 低 denoise img2img
     # + 检测框时序平滑 + 可选 ControlNet tile 锁轮廓
     "sd_face.py": ["video-face-detail"],

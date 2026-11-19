@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2c78ea96fbe1"
+OP_VERSION = "f28e698ab51f"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1012,14 +1012,19 @@ def register(registry):
         "video.pose_mask",
         inputs={"video": "VIDEO", "grow": "INT", "feather": "INT",
                 "threshold": "INT", "limit_mask": "VIDEO",
-                "limit_expand": "INT"},
+                "limit_expand": "INT", "mosaic": "INT"},
         outputs={"mask": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="**流派B 进攻掩码**：把 DWPose 骨架线（黑底白线）膨胀成"
                     "紧身轮廓软遮罩（grow px），用作条件图暗谷——只有这个紧身"
                     "形状被压暗，逼模型画瘦人物；原人宽轮廓区域保持亮窗帘由"
-                    "模型补背景。feather>0 时转软边（L3 过渡）。")
+                    "模型补背景。feather>0 时转软边（L3 过渡）。"
+                    "mosaic>1 时把边缘块化成马赛克格（AREA 降采样到 1/N 再"
+                    "最近邻放大）——ComfyUI 圈公认块边 mask 对 latent inpaint "
+                    "更友好（边缘天然对齐 latent 网格，避免细窄羽化带被"
+                    " patchify 吃掉变成半透明）。H3 建议 16（=1 latent patch"
+                    " 对应的像素宽），Wan 建议 8。")
     def _op_pose_mask(video, grow=40, feather=21, threshold=10,
-                      limit_mask=None, limit_expand=4):
+                      limit_mask=None, limit_expand=4, mosaic=0):
         import cv2
         import numpy as np
         from PIL import Image as _Image
@@ -1064,9 +1069,17 @@ def register(registry):
             kf = int(feather or 0)
             if kf > 1:
                 b = cv2.GaussianBlur(b, (kf | 1, kf | 1), 0)
+            km = int(mosaic or 0)
+            if km > 1:
+                # 马赛克块化：AREA 降到 1/N（取块均值=局部覆盖率），
+                # 最近邻放大 → 块状阶梯边缘，块内值=覆盖率（0~255 渐变）
+                h0, w0 = b.shape[:2]
+                sm = cv2.resize(b, (max(1, w0 // km), max(1, h0 // km)),
+                                interpolation=cv2.INTER_AREA)
+                b = cv2.resize(sm, (w0, h0), interpolation=cv2.INTER_NEAREST)
             out.append(_Image.fromarray(b))
         print(f"[video-pose-mask] done {n}帧 {time.time()-t0:.1f}s "
-              f"grow={grow} feather={feather}", flush=True)
+              f"grow={grow} feather={feather} mosaic={mosaic}", flush=True)
         return {"mask": {"frames": out, "fps": fps},
                 "fps": int(round(fps)), "num_frames": n}
 

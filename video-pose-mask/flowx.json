@@ -58,6 +58,12 @@
       "type": "integer",
       "default": 4,
       "description": "约束遮罩的膨胀像素（3~5 推荐）"
+    },
+    {
+      "name": "mosaic",
+      "type": "integer",
+      "default": 0,
+      "description": "马赛克块化边（0=关）：AREA 降到 1/N 再最近邻放大，块边对齐 latent 网格。H3 建议 16，Wan 建议 8"
     }
   ],
   "outputs": [

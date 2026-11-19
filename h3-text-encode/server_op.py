@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "4a44dff6f887"
+OP_VERSION = "9b4c078c0a97"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1835,6 +1835,53 @@ def _arm_offload(module, device, offload, name):
 
 
 def register(registry):
+    import os as _os
+
+    @registry.register(
+        "h3.lora_load",
+        inputs={"model": "MODEL", "lora": "STRING", "lora_scale": "FLOAT"},
+        outputs={"lora_config": "STRING"},
+        description="H3 LoRA 统一入口（配置校验 + 归一化，独立节点版）。"
+                    "lora 支持逗号分隔多挂，每项可带 @强度："
+                    "'minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors@1.0,"
+                    "h3_character_swap_v1.5.safetensors@1.0'。输出配置串接到"
+                    " minimax-h3-transformer-load 的 lora 参数（直接填，"
+                    "真正的合并发生在 TrLoad 装配时）。akatz character-swap "
+                    "官方配方：Ref2VA INT8 base + swap_v1.5@1.0 + "
+                    "fl2v_turbo_8step@1.0，8 步 CFG1。")
+    def _op_lora_load(model=None, lora="", lora_scale=1.0):
+        items = []
+        for raw in str(lora or "").split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            # 语法：name@strength（H3 惯例 @；也兼容 :strength）
+            path, _, st = raw.rpartition("@")
+            if not path or "@" not in raw:
+                path, st = raw, ""
+            if not st:
+                path, _, st2 = raw.rpartition(":")
+                if path and "." in st2:
+                    try:
+                        st = str(float(st2))
+                    except ValueError:
+                        path, st = raw, ""
+                else:
+                    path, st = raw, ""
+            try:
+                sc = float(st) if st else float(lora_scale)
+            except ValueError:
+                path, sc = raw, float(lora_scale)
+            p = path if _os.path.isabs(path) else _os.path.join(
+                H3_DIR, "loras", path.strip())
+            if not _os.path.isfile(p):
+                raise FileNotFoundError(f"h3.lora_load: LoRA 不存在: {p}")
+            items.append(f"{_os.path.basename(p)}@{sc:g}")
+        cfg = ",".join(items)
+        print(f"[h3.lora_load] {len(items)} 项 -> {cfg[:200]}", flush=True)
+        return {"lora_config": cfg}
+
+
     registry = _VersionedRegistry(registry, OP_VERSION)
 
     # ============ 拆分装配算子（SD 风：组件各自加载/设置，pipe 组装）============

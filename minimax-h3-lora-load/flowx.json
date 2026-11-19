@@ -1,0 +1,69 @@
+{
+  "name": "minimax-h3-lora-load",
+  "displayName": "H3 LoRA 挂载（独立）",
+  "description": "H3 LoRA 统一入口（独立节点）：逗号分隔多挂，每项可带 @强度。输出配置串接 minimax-h3-transformer-load 的 lora 参数。akatz character-swap 官方配方：swap_v1.5@1.0 + fl2v_turbo_8step@1.0",
+  "category": "video",
+  "language": "python",
+  "entry": "main.py",
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": false,
+      "description": "推理服务地址"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "description": "服务令牌"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": false,
+      "description": "上游 MODEL（可选，仅作依赖锚点）"
+    },
+    {
+      "name": "lora",
+      "type": "string",
+      "default": "",
+      "description": "LoRA 列表（逗号分隔，每项 name@strength）：'a.safetensors@1.0,b.safetensors@0.8'。留空不挂"
+    },
+    {
+      "name": "lora_scale",
+      "type": "float",
+      "default": 1.0,
+      "description": "默认强度（单项未带 @ 时用此值）"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "lora_config",
+      "type": "string",
+      "description": "归一化配置串 → 接 minimax-h3-transformer-load 的 lora 参数"
+    }
+  ],
+  "files": [
+    "main.py",
+    "server_op.py",
+    "flowx_client.py",
+    "ui/node-widget.js",
+    "ui/widget-def.js"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 340,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "7871f83b3ad7"
+OP_VERSION = "0a7d9249d695"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2531,10 +2531,13 @@ def register(registry):
             # 「条件帧」置 1（1=保留原 latent / 0=重绘）。实测传「人物=1」时
             # 成片把原人物原样保留（说明该路径下 1 被当成"保留"），需要反转。
             # mask_invert=1 → 传「人物=0 / 背景=1」。
-            if int(mask_invert or 0) > 0:
-                from PIL import ImageOps as _IO
-                mk_out = [_IO.invert(_m.convert("L")) for _m in mk_out]
-                print("[wan] mask 已反相（人物=0 / 背景=1）", flush=True)
+            # **2026-11-19 双重翻转事故复盘**：load 端翻转（官方纯黑人形
+            # 输入 → 内部白人形）与此处的管道端翻转叠加 = 净零 → 管道收到
+            # 人物=0 → preserve → 马赛克人形原样保留（1745 实证）。
+            # 正确语义：mask_invert 只负责「输入 artifact 是官方纯黑人形」
+            # 的 load 端归一化；管道端永远喂内部形态（人物=1=重绘，与
+            # 246/248/252 成功件一致，mask_invert=0 默认从未开过翻转）。
+            # 此 legacy 翻转块退役（保留注释备查，勿复活）。
             # **诊断打印（2026-11-17）**：确认实际喂给 pipeline 的 bg/mask 是什么
             # （黑边根因排查收敛到"bg 该原样还是涂黑 + mask 极性"两点，必须看得见）
             try:

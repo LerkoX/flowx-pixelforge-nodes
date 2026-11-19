@@ -343,7 +343,7 @@
       "name": "mask_invert",
       "type": "integer",
       "default": 0,
-      "description": "传 mask 时是否反相（1=反相）。diffusers replace 内部会 1-mask + 条件帧置1，实测需按此调极性：成片保留原人物时打开"
+      "description": "1=输入 mask 是官方风格纯黑人形+白底（load 端翻回白=生成区；管道端不再二次翻转）"
     },
     {
       "name": "face_from_ref",

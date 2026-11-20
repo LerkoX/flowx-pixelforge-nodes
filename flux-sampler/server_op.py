@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "a4a3b31cfe8f"
+OP_VERSION = "15bfd2776701"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1166,9 +1166,10 @@ def register(registry):
         # 加载/卸载/切片/异步传输），专为 24GB 卡设计。
         # 模型先在 CPU（mmgp 在 CPU 侧完成配置，避免 GPU OOM）
         pipe = pipe.to("cpu")
-        if hasattr(pipe.transformer, "enable_gradient_checkpointing"):
-            pipe.transformer.enable_gradient_checkpointing()
-            print("[flux.kontext_edit] gradient checkpointing 已开", flush=True)
+        # **不开 gradient checkpointing（2026-11-20）**：checkpoint 在 no_grad
+        # 下重放 forward，与 mmgp 的 forward_pre 搬运 hook 时序冲突——
+        # hook 不触发、权重留 CPU，addmm 报 cuda/cpu 混设备（exec 1910）。
+        # mmgp 本身已管显存，checkpoint 多余。
         torch.cuda.empty_cache()
 
         _dt_run = model.dtype  # 见上：全链统一跟 transformer

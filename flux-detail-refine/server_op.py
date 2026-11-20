@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "452693ccc541"
+OP_VERSION = "8af39361cc05"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1144,7 +1144,11 @@ def register(registry):
         # **dtype 统一（2026-11-20）**：VAE 默认 fp16，Kontext transformer
         # bf16 → 类型不匹配。VAE 转 bf16。
         _vae = vae["vae"] if isinstance(vae, dict) else vae
-        _vae = _vae.to(torch.bfloat16).to("cuda")  # VAE 上卡（Kontext 需要）
+        # **dtype 全链统一（2026-11-20）**：transformer auto→fp16 加载，
+        # VAE/pe 都必须同 dtype——VAE 转 bf16 会在 vae 内部 fp16 激活
+        # vs bf16 权重处炸（exec 1903），pe 转 bf16 会在 transformer
+        # fp16 权重处炸（exec 1906）。统一跟 transformer。
+        _vae = _vae.to(model.dtype).to("cuda")  # VAE 上卡（Kontext 需要）
         pipe = FluxKontextPipeline(
             scheduler=_assemble_txt2img(model).scheduler,
             vae=_vae,
@@ -1167,10 +1171,7 @@ def register(registry):
             print("[flux.kontext_edit] gradient checkpointing 已开", flush=True)
         torch.cuda.empty_cache()
 
-        # **dtype 以 mmgp 转换后为准（2026-11-20）**：unet_load auto→fp16
-        # 加载，但 mmgp convertWeightsFloatTo=bf16 把权重转 bf16 →
-        # pe 若按 model.dtype(fp16) 转，报 Half vs BFloat16 不匹配。
-        _dt_run = torch.bfloat16
+        _dt_run = model.dtype  # 见上：全链统一跟 transformer
         pe = cond["prompt_embeds"].to("cuda", _dt_run)
         ne = cond.get("negative_prompt_embeds")
         if ne is not None:

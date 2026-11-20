@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "11a8d916c15f"
+OP_VERSION = "f90671c9688b"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1102,7 +1102,9 @@ def register(registry):
             transformer=model,
             image_encoder=None, feature_extractor=None,
         )
-        pipe.to("cuda")
+        # **Kontext 显存（2026-11-20）**：fp8 权重在 GPU 上展开为 bf16，
+        # 23.5GB 超 24GB 卡。改用 CPU offload（transformer 逐层搬运）。
+        pipe.enable_model_cpu_offload()
         torch.cuda.empty_cache()
 
         pe = cond["prompt_embeds"].to("cuda", model.dtype)

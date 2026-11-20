@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2658edce3b30"
+OP_VERSION = "2d2b8f14d17c"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -611,14 +611,15 @@ def register(registry):
     registry = _VersionedRegistry(registry, OP_VERSION)
     @registry.register(
         "flux.unet_load",
-        inputs={"transformer": "STRING", "dtype": "STRING"},
+        inputs={"transformer": "STRING", "dtype": "STRING",
+                "load_8bit": "STRING"},
         outputs={"model": "MODEL"},
         description="FLUX UNET Loader（对标 ComfyUI UNETLoader）：GGUF Q4_K_S "
                     "transformer 单独装载（dtype 为 compute 精度旋钮，auto 默认 "
                     "fp16；量化档位按文件名选），输出 MODEL 组件引用，"
                     "进 model_manager LRU。权重布局 /models/flux，见插件 docstring")
     def _op_flux_unet_load(transformer="flux1-schnell-Q4_K_S.gguf",
-                           dtype="auto"):
+                           dtype="auto", load_8bit="1"):
         from diffusers import FluxTransformer2DModel, GGUFQuantizationConfig
         dt = _resolve_compute_dtype(dtype, "fp16")
         key = f"flux-unet:{transformer}{_dtype_suffix(dt if dtype not in (None, '', 'auto') else None)}"
@@ -632,7 +633,9 @@ def register(registry):
             t0 = time.time()
             # **BitsAndBytes 8-bit（2026-11-20）**：Kontext bf16 超 24GB，
             # 用 8-bit 量化（~12GB），且参数物化（不经过 meta）。
-            if os.environ.get("FLUX_UNET_8BIT", "1") == "1":
+            # load_8bit="0"：bf16 全量 CPU 加载（mmgp 量化路线用——
+            # bnb Int8Params 会让 mmgp profile 静默崩溃，2026-11-20 实证）。
+            if str(load_8bit) not in ("0", "false", "False"):
                 from transformers import BitsAndBytesConfig
                 tr = FluxTransformer2DModel.from_pretrained(
                     tr_full,

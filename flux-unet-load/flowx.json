@@ -51,6 +51,13 @@
       "default": "auto"
     },
     {
+      "name": "load_8bit",
+      "type": "string",
+      "description": "目录权重 8-bit 量化开关：1=BitsAndBytes 8bit（~12GB，省显存）；0=bf16 全量 CPU 加载（mmgp 量化路线用，bnb 与 mmgp 不兼容）",
+      "required": false,
+      "default": "1"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",

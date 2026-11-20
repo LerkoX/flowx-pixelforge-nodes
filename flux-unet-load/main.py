@@ -21,12 +21,12 @@ def main():
     tok = token()
     transformer = param("transformer", "flux1-schnell-Q4_K_S.gguf")
 
-    ensure_plugin(url, "flux.unet_load", tok=tok)
-
     t0 = time.time()
-    jid = submit_job(url, {"name": "flux.unet_load", "inputs": {
+    actual_op = ensure_plugin(url, "flux.unet_load", tok=tok)
+    jid = submit_job(url, {"name": actual_op, "inputs": {
         "transformer": transformer,
         "dtype": param("dtype", "auto"),
+        "load_8bit": param("load_8bit", "1"),
     }}, tok)
 
     # 上报 job 标记（base + job_id）：Studio 取消/超时时据此**定向转发**

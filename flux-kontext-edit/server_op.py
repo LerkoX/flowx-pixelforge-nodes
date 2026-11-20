@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "dd1939f47a8e"
+OP_VERSION = "a9c52e8bb133"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1202,6 +1202,10 @@ def register(registry):
         print(f"[flux.kontext_edit] image device={image.device if hasattr(image,'device') else 'PIL'} "
               f"pe device={pe.device} vae device={next(_vae.parameters()).device}",
               flush=True)
+        # 诊断：transformer 参数设备分布
+        from collections import Counter as _Ctr
+        _devs = _Ctr(str(p.device) for p in pipe.transformer.parameters())
+        print(f"[flux.kontext_edit] transformer 参数设备: {dict(_devs)}", flush=True)
         result = pipe(
             image=image,
             prompt_embeds=pe,

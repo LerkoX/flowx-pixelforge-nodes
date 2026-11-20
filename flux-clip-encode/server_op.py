@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "8ea1131b2198"
+OP_VERSION = "c079f416f169"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1067,7 +1067,7 @@ def register(registry):
         "flux.kontext_edit",
         inputs={"model": "MODEL", "vae": "VAE", "cond": "COND",
                 "clip": "CLIP", "image": "IMAGE", "seed": "INT", "steps": "INT",
-                "guidance": "FLOAT", "denoise": "FLOAT"},
+                "guidance": "FLOAT", "denoise": "FLOAT", "device": "STRING"},
         outputs={"image": "IMAGE"},
         description="FLUX.1-Kontext-dev 图像编辑（指令驱动）：输入图片 + "
                     "编辑指令（cond 由 flux.encode 产出，文本描述编辑目标）→ "
@@ -1076,7 +1076,7 @@ def register(registry):
                     "与 img2img 的区别：Kontext 理解编辑指令语义，非简单加噪"
                     "去噪。denoise 建议 0.6~0.8（保留原图结构）。")
     def _op_flux_kontext_edit(model, vae, cond, clip=None, image=None, seed=-1, steps=20,
-                              guidance=3.5, denoise=0.7):
+                              guidance=3.5, denoise=0.7, device="cuda"):
         import numpy as np
         from diffusers import FluxKontextPipeline
         from PIL import Image as _Image
@@ -1131,10 +1131,20 @@ def register(registry):
         # 23.5GB 超 24GB 卡。改用 CPU offload（transformer 逐层搬运）。
         # **Kontext 显存（2026-11-20）**：24GB 卡上 Kontext 激活 OOM。
         # 逐层 offload + gradient checkpointing 双管齐下。
-        # **Kontext 显存（2026-11-20）**：GGUF 强制 meta 加载（diffusers
-        # 量化路径），需先 to("cpu") 物化参数，再 sequential offload。
-        pipe.to("cpu")
-        pipe.enable_sequential_cpu_offload()
+        # **Kontext 显存（2026-11-20）**：改 apply_group_offloading
+        # （Wan-Animate 验证过的方法：block_level + stream，峰值 17.5GB）。
+        from diffusers.hooks import apply_group_offloading
+        apply_group_offloading(
+            pipe.transformer,
+            onload_device=torch.device("cuda"),
+            offload_device=torch.device("cpu"),
+            offload_type="block_level",
+            num_blocks_per_group=1,
+            use_stream=True,
+            low_cpu_mem_usage=True,
+        )
+        print("[flux.kontext_edit] apply_group_offloading(block=1, stream)",
+              flush=True)
         if hasattr(pipe.transformer, "enable_gradient_checkpointing"):
             pipe.transformer.enable_gradient_checkpointing()
             print("[flux.kontext_edit] gradient checkpointing 已开", flush=True)
@@ -1150,6 +1160,10 @@ def register(registry):
 
         # Kontext 采样（以输入图片为条件）
         generator = torch.Generator("cpu").manual_seed(seed)
+        _dev = str(device).lower()
+        if _dev == "cpu":
+            pipe = pipe.to("cpu")
+            print("[flux.kontext_edit] 完全 CPU 模式（慢但可行）", flush=True)
         result = pipe(
             image=image,
             prompt_embeds=pe,

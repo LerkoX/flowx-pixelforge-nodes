@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2f567ff528c3"
+OP_VERSION = "738cc492ab06"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1181,8 +1181,15 @@ def register(registry):
         generator = torch.Generator("cpu").manual_seed(seed)
         _dev = str(device).lower()
         if _dev == "cpu":
+            # 完全 CPU：不装 mmgp/offload，直接 CPU 跑（慢但可行）
             pipe = pipe.to("cpu")
             print("[flux.kontext_edit] 完全 CPU 模式（慢但可行）", flush=True)
+        else:
+            # GPU 模式：mmgp offload
+            from mmgp import offload, profile_type
+            offload.profile(pipe, profile_type.HighRAM_LowVRAM,
+                            budgets={"*": 1000})
+            print("[flux.kontext_edit] mmgp offload.profile", flush=True)
         # 诊断：输入设备
         print(f"[flux.kontext_edit] image device={image.device if hasattr(image,'device') else 'PIL'} "
               f"pe device={pe.device} vae device={next(_vae.parameters()).device}",

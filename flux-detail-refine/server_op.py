@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2bf4a806154b"
+OP_VERSION = "e20773789082"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1155,8 +1155,9 @@ def register(registry):
         from diffusers.hooks import apply_group_offloading
         # 幂等：先 remove_hook（若存在）再挂载（重复挂载会报错）
         try:
-            pipe.transformer._diffusers_hook.remove_hook(
-                "lazy_prefetch_group_offloading", recurse=True)
+            for _hn in ("lazy_prefetch_group_offloading",
+                        "layer_execution_tracker", "group_offloading"):
+                pipe.transformer._diffusers_hook.remove_hook(_hn, recurse=True)
         except Exception:
             pass
         if not getattr(pipe.transformer, "_flowx_offload_armed", False):

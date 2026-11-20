@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "c02bb88c0346"
+OP_VERSION = "30f6a3b07d42"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -632,7 +632,7 @@ def register(registry):
             t0 = time.time()
             # **BitsAndBytes 8-bit（2026-11-20）**：Kontext bf16 超 24GB，
             # 用 8-bit 量化（~12GB），且参数物化（不经过 meta）。
-            if os.environ.get("FLUX_UNET_8BIT", "0") == "1":
+            if os.environ.get("FLUX_UNET_8BIT", "1") == "1":
                 from transformers import BitsAndBytesConfig
                 tr = FluxTransformer2DModel.from_pretrained(
                     tr_full,
@@ -1154,31 +1154,11 @@ def register(registry):
         # 23.5GB 超 24GB 卡。改用 CPU offload（transformer 逐层搬运）。
         # **Kontext 显存（2026-11-20）**：24GB 卡上 Kontext 激活 OOM。
         # 逐层 offload + gradient checkpointing 双管齐下。
-        # **Kontext 显存（2026-11-20）**：改 apply_group_offloading
-        # （Wan-Animate 验证过的方法：block_level + stream，峰值 17.5GB）。
-        from diffusers.hooks import apply_group_offloading
-        # 幂等：先 remove_hook（若存在）再挂载（重复挂载会报错）
-        try:
-            for _hn in ("lazy_prefetch_group_offloading",
-                        "layer_execution_tracker", "group_offloading"):
-                pipe.transformer._diffusers_hook.remove_hook(_hn, recurse=True)
-        except Exception:
-            pass
-        if not getattr(pipe.transformer, "_flowx_offload_armed", False):
-            apply_group_offloading(
-                pipe.transformer,
-                onload_device=torch.device("cuda"),
-                offload_device=torch.device("cpu"),
-                offload_type="leaf_level",
-                num_blocks_per_group=1,
-                use_stream=True,
-                low_cpu_mem_usage=True,
-            )
-            pipe.transformer._flowx_offload_armed = True
-            print("[flux.kontext_edit] apply_group_offloading(block=1, stream)",
-                  flush=True)
-        else:
-            print("[flux.kontext_edit] offload 已挂载（跳过）", flush=True)
+        # **Kontext 显存（2026-11-20）**：改 enable_model_cpu_offload
+        # （diffusers 标准方法，设备管理正确，避免 apply_group_offloading
+        # 的设备不一致问题）。
+        pipe.enable_model_cpu_offload()
+        print("[flux.kontext_edit] enable_model_cpu_offload", flush=True)
         if hasattr(pipe.transformer, "enable_gradient_checkpointing"):
             pipe.transformer.enable_gradient_checkpointing()
             print("[flux.kontext_edit] gradient checkpointing 已开", flush=True)

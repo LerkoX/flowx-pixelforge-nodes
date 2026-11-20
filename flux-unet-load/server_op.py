@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2d2b8f14d17c"
+OP_VERSION = "b1c3ec83b8ef"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1167,13 +1167,17 @@ def register(registry):
             print("[flux.kontext_edit] gradient checkpointing 已开", flush=True)
         torch.cuda.empty_cache()
 
-        pe = cond["prompt_embeds"].to("cuda", model.dtype)
+        # **dtype 以 mmgp 转换后为准（2026-11-20）**：unet_load auto→fp16
+        # 加载，但 mmgp convertWeightsFloatTo=bf16 把权重转 bf16 →
+        # pe 若按 model.dtype(fp16) 转，报 Half vs BFloat16 不匹配。
+        _dt_run = torch.bfloat16
+        pe = cond["prompt_embeds"].to("cuda", _dt_run)
         ne = cond.get("negative_prompt_embeds")
         if ne is not None:
-            ne = ne.to("cuda", model.dtype)
+            ne = ne.to("cuda", _dt_run)
         pooled = cond.get("pooled_prompt_embeds") or cond.get("pooled")
         if pooled is not None:
-            pooled = pooled.to("cuda", model.dtype)
+            pooled = pooled.to("cuda", _dt_run)
 
         # Kontext 采样（以输入图片为条件）
         generator = torch.Generator("cpu").manual_seed(seed)

@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "2a4d8f1aab3c"
+OP_VERSION = "0f4b60635b06"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -857,7 +857,8 @@ def _matting_birefnet(frames, weights=None, smooth=3):
     return A, rdir
 
 
-def _emit_soft_mask(alpha, dilate, fps, n, w, h, tag, t0):
+def _emit_soft_mask(alpha, dilate, fps, n, w, h, tag, t0,
+                    mosaic=0, binarize=0, invert=0):
     """软 alpha mask 的公共收尾（rvm / birefnet 共用）：
 
     dilate>0 时做**软膨胀**（对连续 alpha 是 max 滤波，边缘向外渐开），
@@ -875,7 +876,12 @@ def _emit_soft_mask(alpha, dilate, fps, n, w, h, tag, t0):
         print(f"[video-mask] {tag} 软膨胀 dilate={dilate}", flush=True)
     out_frames = [Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8))
                   for a in alpha]
-    print(f"[video-mask] done({tag}) {time.time() - t0:.1f}s", flush=True)
+    # 马赛克块化 + 二值化 + 翻转（与 SAM2 分支同语义）
+    out_frames = _mosaic_blockify(out_frames, mosaic)
+    out_frames = _binarize_frames(out_frames, binarize)
+    out_frames = _invert_frames(out_frames, invert)
+    print(f"[video-mask] done({tag}) {time.time() - t0:.1f}s "
+          f"mosaic={mosaic} binarize={binarize}", flush=True)
     return {"mask": {"frames": out_frames, "fps": fps},
             "fps": int(round(fps)), "num_frames": n,
             "width": w, "height": h, "objects": 1}
@@ -1343,7 +1349,7 @@ def register(registry):
                   f"软alpha mean={float(_alpha.mean()):.3f} 权重={_wp}",
                   flush=True)
             return _emit_soft_mask(_alpha, dilate, fps, n, w, h,
-                                   "rvm", t0)
+                                   "rvm", t0, mosaic, binarize, invert)
         if _mm_choice == "birefnet":
             # **BiRefNet 分支（2026-11-17）**：单帧 SOTA 高精度抠图（双分辨率
             # 全局参考，边缘质量远超 SAM 系），1024² onnx 逐帧推理 + 中心
@@ -1354,7 +1360,7 @@ def register(registry):
                   f"软alpha mean={float(_alpha.mean()):.3f} 权重={_wp}",
                   flush=True)
             return _emit_soft_mask(_alpha, dilate, fps, n, w, h,
-                                   "birefnet", t0)
+                                   "birefnet", t0, mosaic, binarize, invert)
         bundle = _load_sam3()
         model, processor = bundle["model"], bundle["processor"]
 

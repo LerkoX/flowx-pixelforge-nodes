@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "75adff6b6ee7"
+OP_VERSION = "11a8d916c15f"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -641,6 +641,16 @@ def register(registry):
         tr_path = _require_file(tr_full, "transformer GGUF")
         tr_cfg_dir = _unet_config_dir(transformer)
         t0 = time.time()
+        # **safetensors 单文件（2026-11-20 Kontext fp8）**：非 GGUF 的
+        # safetensors 单文件直接 from_single_file（不量化，fp8 权重原生）
+        if tr_path.endswith(".safetensors"):
+            tr = FluxTransformer2DModel.from_single_file(
+                tr_path, config=tr_cfg_dir, torch_dtype=_FLUX_DTYPES[dt])
+            print(f"[flux] transformer {transformer} (safetensors) "
+                  f"dtype={dt} {time.time()-t0:.1f}s", flush=True)
+            est = os.path.getsize(tr_path)
+            return {"model": _register(key, tr, est,
+                                       "FluxTransformer2DModel(safetensors)")}
         quant = GGUFQuantizationConfig(compute_dtype=_FLUX_DTYPES[dt])
         # 注意：量化加载**必须**保持 low_cpu_mem_usage=True（diffusers 会抛
         # "low_cpu_mem_usage cannot be False when using quantization"）。

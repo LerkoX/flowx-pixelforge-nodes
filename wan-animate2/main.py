@@ -115,7 +115,8 @@ def main():
     fps = out.get("fps") or 16
     print(f"[wan-animate2] -> video={out['video']} seed={out['seed']} fps={fps} "
           f"({time.time()-t0:.1f}s)", flush=True)
-    emit(video=out["video"], seed=out["seed"], fps=fps)
+    emit(video=out["video"], seed=out["seed"], fps=fps,
+         bg_video_out=out.get("bg_video_out"))
 
 
 if __name__ == "__main__":

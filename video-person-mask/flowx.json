@@ -168,6 +168,12 @@
       "type": "integer",
       "default": 0,
       "description": "1=黑白翻转输出（纯黑人形+白底，Wan2.2 官方 mask 风格；下游 wan-animate2 需开 mask_invert）"
+    },
+    {
+      "name": "binarize",
+      "type": "integer",
+      "default": 0,
+      "description": "1=二值化（不透明马赛克 mask：纯黑/纯白，无渐变）"
     }
   ],
   "executor": {

@@ -37,6 +37,7 @@ def main():
         "motion_union": param("motion_union", "0") in ("1", "true", "True"),
         "mosaic": param("mosaic", 0, int),
         "invert": param("invert", 0, int),
+        "binarize": param("binarize", 0, int),
     }
     # 外部深度视频（可选，接 video-depth）：省一次推理 + 深度可视化
     _dv = param("depth_video", "")

@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "15bfd2776701"
+OP_VERSION = "8a2804168407"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1202,24 +1202,21 @@ def register(registry):
             # 对同一对象重复 offload.profile 会让 mmgp 状态错乱（"already
             # quantized / already pinned" 后静默崩）。打标记跳过。
             if getattr(pipe.transformer, "_flowx_mmgp_armed", False):
+                # 幂等：transformer/vae 都是跨 job 缓存对象，mmgp hook 还在
+                # 对象上，直接复用（重复 profile 会静默崩，exec 1908）。
                 print("[flux.kontext_edit] mmgp 已挂载（复用，跳过重挂）",
                       flush=True)
             else:
-                # **只 profile transformer（2026-11-20）**：pipe 里的 vae 是
-                # vae_load 节点缓存的共享对象，被 mmgp pin/hook 过一次后
-                # 再 profile 直接静默崩（exec 1908 "already pinned"）。
-                # vae 仅 0.16GB，.to("cuda") 常驻即可，无需 mmgp 管理。
-                offload.profile({"transformer": pipe.transformer},
-                                profile_type.HighRAM_LowVRAM,
-                                budgets={"transformer": 8000},
+                # **整个 pipe 交给 mmgp（2026-11-20）**：exec 1903 实证整管
+                # 时搬运工作正常（只输 dtype）；dict 只管 transformer 的
+                # 变体（1910/1911）hook 不触发搬运，addmm cuda/cpu 混设备。
+                offload.profile(pipe, profile_type.HighRAM_LowVRAM,
+                                budgets={"*": 8000},
                                 quantizeTransformer=not _already_q)
                 pipe.transformer._flowx_mmgp_armed = True
                 print(f"[flux.kontext_edit] mmgp offload.profile "
-                      f"(transformer only, quantize={not _already_q})",
+                      f"(whole pipe, quantize={not _already_q})",
                       flush=True)
-            # vae 重新上卡：pipe.to("cpu") 把它搬下去了，mmgp 不再管它
-            pipe.vae = pipe.vae.to("cuda")
-            _vae = pipe.vae
         # 诊断：输入设备
         print(f"[flux.kontext_edit] image device={image.device if hasattr(image,'device') else 'PIL'} "
               f"pe device={pe.device} vae device={next(_vae.parameters()).device}",

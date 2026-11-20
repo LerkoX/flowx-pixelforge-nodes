@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "0f48f9507d76"
+OP_VERSION = "8ea1131b2198"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -662,9 +662,17 @@ def register(registry):
         # 而是 **transformer/config.json 多了 axes_dims_rope / out_channels
         # 两个字段**，导致结构不匹配、GGUF 权重没灌进去、参数留在 meta。
         # 现改用官方 config（从已验证可用的 1080 机器同步，见 AGENTS.md）。
-        tr = FluxTransformer2DModel.from_single_file(
-            tr_path, config=tr_cfg_dir,
-            quantization_config=quant, torch_dtype=_FLUX_DTYPES[dt])
+        # **GGUF meta 物化（2026-11-20）**：from_single_file 的 GGUF 加载
+        # 参数始终在 meta（diffusers 量化路径强制 init_empty_weights）。
+        # 改手动：from_config 创建空壳 → load_state_dict(assign=True) 物化。
+        from diffusers import FluxTransformer2DModel as _FT2D
+        import json as _json
+        with open(os.path.join(tr_cfg_dir, "config.json")) as _f:
+            _cfg = _json.load(_f)
+        tr = _FT2D.from_config(_cfg, torch_dtype=_FLUX_DTYPES[dt])
+        from diffusers.utils import load_gguf_checkpoint
+        _sd = load_gguf_checkpoint(tr_path)
+        tr.load_state_dict(_sd, assign=True)
         print(f"[flux] transformer {transformer} dtype={dt} "
               f"{time.time()-t0:.1f}s", flush=True)
         est = os.path.getsize(tr_path)

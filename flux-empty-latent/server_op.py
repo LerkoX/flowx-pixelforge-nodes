@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "3f931286e9f3"
+OP_VERSION = "a4a3b31cfe8f"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1216,6 +1216,9 @@ def register(registry):
                 print(f"[flux.kontext_edit] mmgp offload.profile "
                       f"(transformer only, quantize={not _already_q})",
                       flush=True)
+            # vae 重新上卡：pipe.to("cpu") 把它搬下去了，mmgp 不再管它
+            pipe.vae = pipe.vae.to("cuda")
+            _vae = pipe.vae
         # 诊断：输入设备
         print(f"[flux.kontext_edit] image device={image.device if hasattr(image,'device') else 'PIL'} "
               f"pe device={pe.device} vae device={next(_vae.parameters()).device}",

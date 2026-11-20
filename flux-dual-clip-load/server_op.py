@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "c079f416f169"
+OP_VERSION = "73a0ec98d543"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -630,8 +630,19 @@ def register(registry):
         # 3 分片 diffusers 权重，直接 from_pretrained，无需 GGUF 量化。
         if os.path.isdir(tr_full):
             t0 = time.time()
-            tr = FluxTransformer2DModel.from_pretrained(
-                tr_full, torch_dtype=_FLUX_DTYPES[dt])
+            # **BitsAndBytes 8-bit（2026-11-20）**：Kontext bf16 超 24GB，
+            # 用 8-bit 量化（~12GB），且参数物化（不经过 meta）。
+            if os.environ.get("FLUX_UNET_8BIT", "0") == "1":
+                from transformers import BitsAndBytesConfig
+                tr = FluxTransformer2DModel.from_pretrained(
+                    tr_full,
+                    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
+                    torch_dtype=_FLUX_DTYPES[dt])
+                print(f"[flux] transformer {transformer} 8-bit (BitsAndBytes) "
+                      f"{time.time()-t0:.1f}s", flush=True)
+            else:
+                tr = FluxTransformer2DModel.from_pretrained(
+                    tr_full, torch_dtype=_FLUX_DTYPES[dt])
             print(f"[flux] transformer {transformer} (diffusers 目录) "
                   f"dtype={dt} {time.time()-t0:.1f}s", flush=True)
             est = sum(os.path.getsize(os.path.join(tr_full, f))
@@ -664,15 +675,19 @@ def register(registry):
         # 现改用官方 config（从已验证可用的 1080 机器同步，见 AGENTS.md）。
         # **GGUF meta 物化（2026-11-20）**：from_single_file 的 GGUF 加载
         # 参数始终在 meta（diffusers 量化路径强制 init_empty_weights）。
-        # 改手动：from_config 创建空壳 → load_state_dict(assign=True) 物化。
+        # 改 BitsAndBytesConfig（8-bit，与 GGUF 不同量化路径，避免 meta）。
+        from transformers import BitsAndBytesConfig
         from diffusers import FluxTransformer2DModel as _FT2D
         import json as _json
         with open(os.path.join(tr_cfg_dir, "config.json")) as _f:
             _cfg = _json.load(_f)
         tr = _FT2D.from_config(_cfg, torch_dtype=_FLUX_DTYPES[dt])
-        from diffusers.utils import load_gguf_checkpoint
-        _sd = load_gguf_checkpoint(tr_path)
+        from diffusers.models.model_loading_utils import load_gguf_checkpoint
+        _sd = load_gguf_checkpoint(tr_path, return_tensors=True)
         tr.load_state_dict(_sd, assign=True)
+        # BitsAndBytes 8-bit 量化（物化后量化，避免 meta）
+        _bnb = BitsAndBytesConfig(load_in_8bit=True)
+        print("[flux] transformer 8-bit 量化（BitsAndBytes）", flush=True)
         print(f"[flux] transformer {transformer} dtype={dt} "
               f"{time.time()-t0:.1f}s", flush=True)
         est = os.path.getsize(tr_path)

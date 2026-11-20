@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "ef51cfadec2f"
+OP_VERSION = "8a942d05747f"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2175,6 +2175,16 @@ def register(registry):
             )
         else:
             pipe = model
+        # **黑边根因修复（2026-11-20）**：diffusers 的 video_processor_for_mask
+        # 默认 resample=lanczos → mask 硬边被软边化 → 模型在 mask 边缘混合
+        # 生成与黑色背景 → 一圈黑晕。kijai 用 nearest（硬边）。对齐。
+        try:
+            if hasattr(pipe, "video_processor_for_mask"):
+                pipe.video_processor_for_mask.config.resample = "nearest"
+                print("[wan] mask processor resample → nearest（治黑边）",
+                      flush=True)
+        except Exception as _er:
+            print(f"[wan] mask resample 设置失败（{_er}）", flush=True)
         if str(scheduler or "").strip():
             # 运行时覆盖采样器（kijai WanAnimate 官方配方 dpm++_sde 6步/cfg1）。
             # pipe 可能来自组件缓存（scheduler 是装配期值），这里重挂。

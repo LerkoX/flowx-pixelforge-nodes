@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "73a0ec98d543"
+OP_VERSION = "cc17fe597c7a"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1134,9 +1134,13 @@ def register(registry):
         # 从 clip 束取 tokenizer/tokenizer_2。
         _tok = getattr(clip, "tokenizer", None) if clip else None
         _tok2 = getattr(clip, "tokenizer_2", None) if clip else None
+        # **dtype 统一（2026-11-20）**：VAE 默认 fp16，Kontext transformer
+        # bf16 → 类型不匹配。VAE 转 bf16。
+        _vae = vae["vae"] if isinstance(vae, dict) else vae
+        _vae = _vae.to(torch.bfloat16)
         pipe = FluxKontextPipeline(
             scheduler=_assemble_txt2img(model).scheduler,
-            vae=vae["vae"] if isinstance(vae, dict) else vae,
+            vae=_vae,
             text_encoder=None, text_encoder_2=None,  # 用预计算 embeds
             tokenizer=_tok, tokenizer_2=_tok2,
             transformer=model,

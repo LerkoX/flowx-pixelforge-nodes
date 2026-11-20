@@ -79,6 +79,12 @@
       "type": "float",
       "default": 0.7,
       "description": "去噪强度（0.6~0.8 保留原图结构）"
+    },
+    {
+      "name": "device",
+      "type": "string",
+      "default": "cuda",
+      "description": "运行设备：cuda（默认）/cpu（完全 CPU，慢但可行）"
     }
   ],
   "outputs": [

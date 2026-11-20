@@ -33,6 +33,12 @@
       "description": "flux.unet_load 输出"
     },
     {
+      "name": "clip",
+      "type": "string",
+      "required": false,
+      "description": "flux.dual_clip_load 输出（tokenizer 来源）"
+    },
+    {
       "name": "vae",
       "type": "string",
       "required": true,

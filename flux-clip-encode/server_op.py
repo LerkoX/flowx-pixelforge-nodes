@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "8ef42fca44cc"
+OP_VERSION = "1f4238d02287"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1058,7 +1058,7 @@ def register(registry):
     @registry.register(
         "flux.kontext_edit",
         inputs={"model": "MODEL", "vae": "VAE", "cond": "COND",
-                "image": "IMAGE", "seed": "INT", "steps": "INT",
+                "clip": "CLIP", "image": "IMAGE", "seed": "INT", "steps": "INT",
                 "guidance": "FLOAT", "denoise": "FLOAT"},
         outputs={"image": "IMAGE"},
         description="FLUX.1-Kontext-dev 图像编辑（指令驱动）：输入图片 + "
@@ -1067,7 +1067,7 @@ def register(registry):
                     "重定向**（把参考图人物编辑成与视频第一帧同姿态）。"
                     "与 img2img 的区别：Kontext 理解编辑指令语义，非简单加噪"
                     "去噪。denoise 建议 0.6~0.8（保留原图结构）。")
-    def _op_flux_kontext_edit(model, vae, cond, image, seed=-1, steps=20,
+    def _op_flux_kontext_edit(model, vae, cond, clip=None, image=None, seed=-1, steps=20,
                               guidance=3.5, denoise=0.7):
         import numpy as np
         from diffusers import FluxKontextPipeline
@@ -1106,11 +1106,16 @@ def register(registry):
         torch.cuda.empty_cache()
 
         # Kontext pipeline 装配（复用 txt2img 的组件，换 pipeline 类）
+        # **Kontext 需要 tokenizer（2026-11-20）**：即使传了 prompt_embeds，
+        # Kontext 内部仍可能调用 tokenizer（maybe_convert_prompt 等）。
+        # 从 clip 束取 tokenizer/tokenizer_2。
+        _tok = getattr(clip, "tokenizer", None) if clip else None
+        _tok2 = getattr(clip, "tokenizer_2", None) if clip else None
         pipe = FluxKontextPipeline(
             scheduler=_assemble_txt2img(model).scheduler,
             vae=vae["vae"] if isinstance(vae, dict) else vae,
             text_encoder=None, text_encoder_2=None,  # 用预计算 embeds
-            tokenizer=None, tokenizer_2=None,
+            tokenizer=_tok, tokenizer_2=_tok2,
             transformer=model,
             image_encoder=None, feature_extractor=None,
         )

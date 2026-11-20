@@ -14,6 +14,7 @@ def main():
         "model": ref(param("model")),
         "vae": ref(param("vae")),
         "cond": ref(param("cond")),
+        "clip": ref(param("clip", "")),
         "image": ref(param("image")),
         "seed": param("seed", -1, int),
         "steps": param("steps", 20, int),

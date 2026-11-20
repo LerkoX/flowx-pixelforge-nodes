@@ -409,6 +409,11 @@
       "name": "fps",
       "type": "integer",
       "description": "帧率"
+    },
+    {
+      "name": "bg_video_out",
+      "type": "video",
+      "description": "挖空后的背景视频（调试用）"
     }
   ],
   "executor": {

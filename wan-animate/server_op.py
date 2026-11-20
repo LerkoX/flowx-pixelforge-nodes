@@ -484,7 +484,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "9e6fe29773bd"
+OP_VERSION = "ef51cfadec2f"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -3408,8 +3408,10 @@ def register(registry):
                   f"（原始背景混合）", flush=True)
         print(f"[wan] gen done {len(frames)}帧 {fps}fps "
               f"{time.time()-t0:.1f}s", flush=True)
+        _bg_out = {"frames": bg_masked, "fps": fps} if bg_masked else None
         return {"video": {"frames": frames, "fps": fps,
                           "num_frames": len(frames)},
+                "bg_video_out": _bg_out,
                 "seed": seed, "fps": fps}
 
     @registry.register(

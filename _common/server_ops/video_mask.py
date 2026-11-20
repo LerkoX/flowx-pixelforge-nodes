@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "d13ab4b8e867"
+OP_VERSION = "ddb261532914"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1059,6 +1059,10 @@ def register(registry):
                 if int(color_match or 0) > 0:
                     # 色彩对齐 + mask 外还原（治 LaMa 色偏导致的成片灰雾）
                     res = _bg_color_match(img, res, mnp, soft=True)
+            elif _meth == "black":
+                # 官方 Wan2.2-Animate 预处理：frame * (1 - mask) → 人物区纯黑
+                res = img.copy()
+                res[mnp > 0] = 0
             elif _meth == "mosaic":
                 # 审查式马赛克：区域内容 AREA 降到 1/N → 最近邻放大成块，
                 # 只写回 mask 内（硬边，与官方预处理一致）

@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "9378ade2fc87"
+OP_VERSION = "d239373d87bc"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1113,7 +1113,8 @@ def register(registry):
             negative_pooled_prompt_embeds=cond.get("negative_pooled_prompt_embeds"),
             num_inference_steps=steps,
             guidance_scale=guidance,
-            strength=denoise,
+            height=H,
+            width=W,
             generator=generator,
             output_type="pil",
         )

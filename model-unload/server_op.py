@@ -1,3 +1,6 @@
+OP_VERSION = "v1"
+OP_FAMILY = "model_unload"
+
 """model-unload 节点的服务端算子插件（随节点包自注册）。
 
 model.unload 算子与 POST /model/unload 端点同语义（端点保留供运维 curl 直调，

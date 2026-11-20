@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "e20773789082"
+OP_VERSION = "545d7694d65a"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -685,9 +685,13 @@ def register(registry):
         from diffusers.models.model_loading_utils import load_gguf_checkpoint
         _sd = load_gguf_checkpoint(tr_path, return_tensors=True)
         tr.load_state_dict(_sd, assign=True)
-        # BitsAndBytes 8-bit 量化（物化后量化，避免 meta）
-        _bnb = BitsAndBytesConfig(load_in_8bit=True)
-        print("[flux] transformer 8-bit 量化（BitsAndBytes）", flush=True)
+        # **剩余 meta 物化（2026-11-20，PR #13117 手动实现）**：
+        # 不在 checkpoint 里的参数（RoPE inv_freq 等）仍在 meta。
+        # to_empty 物化到 CPU。
+        _meta = [n for n, p in tr.named_parameters() if p.device.type == "meta"]
+        if _meta:
+            print(f"[flux] 物化 {len(_meta)} 个剩余 meta 参数", flush=True)
+            tr = tr.to_empty(device="cpu")
         print(f"[flux] transformer {transformer} dtype={dt} "
               f"{time.time()-t0:.1f}s", flush=True)
         est = os.path.getsize(tr_path)

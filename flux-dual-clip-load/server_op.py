@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "b1c3ec83b8ef"
+OP_VERSION = "452693ccc541"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1196,11 +1196,19 @@ def register(registry):
                                       "is_loaded_in_8bit", False) or
                               getattr(pipe.transformer,
                                       "is_loaded_in_4bit", False))
-            offload.profile(pipe, profile_type.HighRAM_LowVRAM,
-                            budgets={"*": 8000},
-                            quantizeTransformer=not _already_q)
-            print(f"[flux.kontext_edit] mmgp offload.profile "
-                  f"(quantizeTransformer={not _already_q})", flush=True)
+            # **幂等（2026-11-20）**：模型对象在 model_manager 里跨 job 复用，
+            # 对同一对象重复 offload.profile 会让 mmgp 状态错乱（"already
+            # quantized / already pinned" 后静默崩）。打标记跳过。
+            if getattr(pipe.transformer, "_flowx_mmgp_armed", False):
+                print("[flux.kontext_edit] mmgp 已挂载（复用，跳过重挂）",
+                      flush=True)
+            else:
+                offload.profile(pipe, profile_type.HighRAM_LowVRAM,
+                                budgets={"*": 8000},
+                                quantizeTransformer=not _already_q)
+                pipe.transformer._flowx_mmgp_armed = True
+                print(f"[flux.kontext_edit] mmgp offload.profile "
+                      f"(quantizeTransformer={not _already_q})", flush=True)
         # 诊断：输入设备
         print(f"[flux.kontext_edit] image device={image.device if hasattr(image,'device') else 'PIL'} "
               f"pe device={pe.device} vae device={next(_vae.parameters()).device}",

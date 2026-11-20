@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "c45e8b306261"
+OP_VERSION = "8cca8a2c07f8"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -646,6 +646,9 @@ def register(registry):
         if tr_path.endswith(".safetensors"):
             tr = FluxTransformer2DModel.from_single_file(
                 tr_path, config=tr_cfg_dir, torch_dtype=_FLUX_DTYPES[dt])
+            # **meta 物化（2026-11-20）**：from_single_file 的 safetensors
+            # 加载后参数可能在 meta 设备（未物化）。显式 to("cpu") 物化。
+            tr = tr.to("cpu")
             print(f"[flux] transformer {transformer} (safetensors) "
                   f"dtype={dt} {time.time()-t0:.1f}s", flush=True)
             est = os.path.getsize(tr_path)

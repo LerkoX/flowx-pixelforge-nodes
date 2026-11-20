@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "675e44f6616b"
+OP_VERSION = "9378ade2fc87"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1040,6 +1040,87 @@ def register(registry):
                            "width": W, "height": H,
                            "batch": out.shape[0]},
                 "seed": seed}
+
+    @registry.register(
+        "flux.kontext_edit",
+        inputs={"model": "MODEL", "vae": "VAE", "cond": "COND",
+                "image": "IMAGE", "seed": "INT", "steps": "INT",
+                "guidance": "FLOAT", "denoise": "FLOAT"},
+        outputs={"image": "IMAGE"},
+        description="FLUX.1-Kontext-dev 图像编辑（指令驱动）：输入图片 + "
+                    "编辑指令（cond 由 flux.encode 产出，文本描述编辑目标）→ "
+                    "编辑后图片。用于 Wan2.2-Animate 官方推荐的**参考图姿态"
+                    "重定向**（把参考图人物编辑成与视频第一帧同姿态）。"
+                    "与 img2img 的区别：Kontext 理解编辑指令语义，非简单加噪"
+                    "去噪。denoise 建议 0.6~0.8（保留原图结构）。")
+    def _op_flux_kontext_edit(model, vae, cond, image, seed=-1, steps=20,
+                              guidance=3.5, denoise=0.7):
+        import numpy as np
+        from diffusers import FluxKontextPipeline
+        from PIL import Image as _Image
+
+        if type(model).__name__ != "FluxTransformer2DModel":
+            raise ValueError("flux.kontext_edit: model 需为 flux.unet_load 的输出")
+        if not isinstance(cond, dict) or "prompt_embeds" not in cond:
+            raise ValueError("flux.kontext_edit: cond 需为 flux.encode 的输出")
+        if not torch.cuda.is_available():
+            raise ValueError("flux.kontext_edit 需要 CUDA")
+
+        seed = int(seed) if int(seed) >= 0 else random.randint(0, 2**32 - 1)
+        steps = int(steps)
+        denoise = float(denoise)
+        guidance = float(guidance)
+
+        # 图片预处理
+        if isinstance(image, dict):
+            image = image.get("frames", [image])[0]
+        if not isinstance(image, _Image.Image):
+            raise ValueError("flux.kontext_edit: image 需为 IMAGE 对象")
+        W, H = image.size
+
+        _move_vaes("cpu")
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # Kontext pipeline 装配（复用 txt2img 的组件，换 pipeline 类）
+        pipe = FluxKontextPipeline(
+            scheduler=_assemble_txt2img(model).scheduler,
+            vae=vae["vae"] if isinstance(vae, dict) else vae,
+            text_encoder=None, text_encoder_2=None,  # 用预计算 embeds
+            tokenizer=None, tokenizer_2=None,
+            transformer=model,
+            image_encoder=None, feature_extractor=None,
+        )
+        pipe.to("cuda")
+        torch.cuda.empty_cache()
+
+        pe = cond["prompt_embeds"].to("cuda", model.dtype)
+        ne = cond.get("negative_prompt_embeds")
+        if ne is not None:
+            ne = ne.to("cuda", model.dtype)
+        pooled = cond.get("pooled_prompt_embeds")
+        if pooled is not None:
+            pooled = pooled.to("cuda", model.dtype)
+
+        # Kontext 采样（以输入图片为条件）
+        generator = torch.Generator("cpu").manual_seed(seed)
+        result = pipe(
+            image=image,
+            prompt_embeds=pe,
+            negative_prompt_embeds=ne,
+            pooled_prompt_embeds=pooled,
+            negative_pooled_prompt_embeds=cond.get("negative_pooled_prompt_embeds"),
+            num_inference_steps=steps,
+            guidance_scale=guidance,
+            strength=denoise,
+            generator=generator,
+            output_type="pil",
+        )
+        out_img = result.images[0]
+        print(f"[flux.kontext_edit] done {steps}步 denoise={denoise} "
+              f"guidance={guidance}", flush=True)
+        return {"image": out_img}
 
     @registry.register(
         "flux.vae_decode",

@@ -1,0 +1,99 @@
+{
+  "name": "flux-kontext-edit",
+  "displayName": "FLUX Kontext 图像编辑",
+  "description": "FLUX.1-Kontext-dev 指令驱动图像编辑：输入图片 + 编辑指令 → 编辑后图片。用于参考图姿态重定向（与视频第一帧同姿态）",
+  "category": "image",
+  "language": "python",
+  "entry": "main.py",
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": false,
+      "description": "推理服务地址"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "description": "服务令牌"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": true,
+      "description": "flux.unet_load 输出"
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "required": true,
+      "description": "flux.vae_load 输出"
+    },
+    {
+      "name": "cond",
+      "type": "string",
+      "required": true,
+      "description": "flux.encode 输出（编辑指令）"
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true,
+      "description": "输入图片"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "default": -1,
+      "description": "随机种子"
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "default": 20,
+      "description": "采样步数"
+    },
+    {
+      "name": "guidance",
+      "type": "float",
+      "default": 3.5,
+      "description": "CFG 强度"
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "default": 0.7,
+      "description": "去噪强度（0.6~0.8 保留原图结构）"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "image",
+      "type": "image",
+      "description": "编辑后的图片"
+    }
+  ],
+  "files": [
+    "main.py",
+    "server_op.py",
+    "flowx_client.py",
+    "ui/node-widget.js",
+    "ui/widget-def.js"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 340,
+    "height": 420,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

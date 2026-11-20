@@ -106,7 +106,7 @@ OP_FAMILIES = {
     "ipadapter.py": ["ipadapter-load", "ipadapter-apply", "clip-vision-load"],
     "flux.py": ["flux-clip-encode", "flux-detail-refine", "flux-dual-clip-load",
                 "flux-empty-latent", "flux-sampler", "flux-unet-load",
-                "flux-vae-decode", "flux-vae-encode", "flux-vae-load"],
+                "flux-vae-decode", "flux-vae-encode", "flux-vae-load", "flux-kontext-edit"],
     "instantid.py": ["instantid-apply", "instantid-face-analyze",
                      "face-mask", "face-similarity"],
     "upscale.py": ["upscale-model-load", "upscale-model-apply"],

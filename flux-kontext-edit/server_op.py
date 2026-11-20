@@ -1,0 +1,1321 @@
+"""FLUX 细分节点链服务端算子插件（ComfyUI 风格组件级编排，随节点包自注册）。
+
+与旧聚合插件（flux.load/flux.encode/flux.sample 单管 FluxPipeline）的区别：
+组件拆成独立对象在节点间传递——UNET（transformer GGUF）/ CLIP（CLIP-L+T5 束）
+/ VAE / COND / LATENT，采样器吃 latent 吐 latent，VAE 编解码独立成节点，
+可编排 hires-fix（vae_encode → sample denoise<1）、latent 级接力等 ComfyUI
+同款图。LATENT 束：{samples, packed, width, height, batch}——txt2img 路径
+samples=None（采样器按 seed 生噪声）；vae_encode 路径为未 pack 的归一化张量。
+
+内存相位（12GB 内存盒核心约束，继承聚合版设计）：
+- 组件各自注册进 model_manager LRU（flux-unet:/flux-clip:/flux-vae: 键），
+  淘汰/pin/unload 语义与整管一致（对象身份比较，见 model_manager.keys_of）
+- flux.encode：先把所有 FluxTransformer2DModel 搬回 CPU（6.8GB 让位）→
+  T5 装载上卡（bf16 4.9GB，GGUF→npy 分片缓存，首建 ~4min 此后 ~40s）→
+  编码 → release_t5=1（默认）释放 / 0 搬回 CPU
+- flux.sample：transformer 上卡（~6.8GB），采样 output_type="latent" 不解码
+  （VAE 可不上卡）；完事留卡供连续采样
+- flux.vae_decode/encode、flux.detail_refine：VAE 小（~0.3GB）随用随上卡
+
+img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）：
+- FluxPipeline.__call__ 支持 sigmas 自定义调度 + latents 直通（须已 pack）；
+  shift/time_shift 均为逐点函数 ⇒ shifted(slice) == slice(shifted)，传
+  pre-shift linspace 尾部切片即可精确复刻 FluxImg2ImgPipeline 的 timesteps 尾段
+- 加噪手动做 flow-match 前向：x_t = (1-σ)x + σ·noise，σ = 完整调度 sigmas[t_start]
+  （diffusers img2img 对传入 latents 不加噪，必须自己加）
+- denoise>=1 且给了 latent：等价重生成（latents=None 纯噪声起步）
+
+算子：
+- flux.unet_load(transformer) → MODEL（FluxTransformer2DModel GGUF Q4）
+- flux.dual_clip_load(t5) → CLIP（FluxClipBundle：CLIP-L+双 tokenizer+T5 惰性信息）
+- flux.vae_load(name) → VAE（AutoencoderKL）
+- flux.encode(clip, text, max_seq, release_t5) → COND{prompt_embeds, pooled}
+- flux.empty_latent(width, height, batch_size) → LATENT（samples=None）
+- flux.sample(model, cond, latent, seed, steps, guidance, denoise,
+  preview_every, pulid?, pulid_weight?) → LATENT（packed）；pulid 为
+  flux.pulid_encode 的 FACE 对象时按 PuLID-FLUX 机制做身份注入（前向
+  hook，仅本次调用生效）
+- flux.vae_decode(vae, latent) → IMAGE
+- flux.vae_encode(vae, image) → LATENT（未 pack，归一化）
+- flux.detail_refine(model, vae, cond, image, ...) → IMAGE（ADetailer 式，
+  img2img 用 FluxImg2ImgPipeline 按组件装配，PIL crop 路径天然正确）
+"""
+
+# --- F1 族版本化（dev-plan §47）：算子身份 = 实现内容 ------------------------
+# 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
+# OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
+# 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
+OP_VERSION = "9378ade2fc87"
+OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
+
+
+class _VersionedRegistry:
+    """包装注册表：族内注册名一律带上版本后缀。"""
+
+    def __init__(self, inner, version):
+        self._inner = inner
+        self._version = version
+
+    def register(self, name, inputs, outputs, description=""):
+        return self._inner.register(f"{name}@{self._version}", inputs, outputs,
+                                    description)
+# ---------------------------------------------------------------------------
+
+import glob
+import json
+import os
+import random
+import time
+
+import torch
+
+from app import execution, ops, preview
+
+FLUX_DIR = os.environ.get("FLUX_DIR", "/models/flux")
+DETECTOR_DIR = os.environ.get("DETECTOR_DIR", "/models/detectors")
+
+# compute dtype 旋钮（加载旋钮全量化，dev-plan §43.1）：auto/空 → 各 loader
+# 历史默认（unet/vae=fp16，clip-l=bf16），显式指定则缓存键扩展 '|dtype=..'，
+# 同模型不同精度 = 独立常驻条目（与核心 checkpoint.load 同一语义）。
+# 量化档位（Q4_K_S/Q8 等）仍按文件名选择，不做参数（决策记录 §43.3）。
+_FLUX_DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16,
+                "fp32": torch.float32}
+
+
+def _resolve_compute_dtype(dtype, default):
+    if dtype in (None, "", "auto"):
+        return default
+    if dtype not in _FLUX_DTYPES:
+        raise ValueError(
+            f"unknown dtype '{dtype}' (expect auto/fp16/bf16/fp32)")
+    return dtype
+
+
+def _dtype_suffix(dtype):
+    """显式指定（非 auto）时返回缓存键后缀，否则空串（默认行为键名不变）。"""
+    return "" if dtype in (None, "", "auto") else f"|dtype={dtype}"
+
+# ---------------------------------------------------------------------------
+# torch 2.3.1 兼容补丁（幂等，模块导入即安装；与旧聚合插件相同三处）
+# ---------------------------------------------------------------------------
+
+
+def _install_torch_compat():
+    if not hasattr(torch.nn, "RMSNorm"):
+        class _RMSNorm(torch.nn.Module):
+            def __init__(self, dim, eps=1e-6, elementwise_affine=True):
+                super().__init__()
+                self.eps = eps
+                self.weight = (torch.nn.Parameter(torch.ones(dim))
+                               if elementwise_affine else None)
+
+            def forward(self, x):
+                dt = x.dtype
+                v = x.float()
+                v = v * torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + self.eps)
+                v = v.to(dt)
+                if self.weight is not None:
+                    v = v * self.weight.to(dt)
+                return v
+
+        torch.nn.RMSNorm = _RMSNorm
+        print("[flux] torch.nn.RMSNorm patched (torch<2.4)", flush=True)
+
+    import torch.nn.functional as F
+    # enable_gqa 是 torch 2.5+ 的 SDPA 参数：仅老 torch 需要剥离 shim，
+    # 新 torch（如 M 栈 2.13）装上反而会拦截 H3 的 GQA 注意力（真机踩坑）。
+    def _ver_tuple():
+        import re
+        m = re.match(r"(\d+)\.(\d+)", torch.__version__)
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+    if _ver_tuple() < (2, 5) and not getattr(
+            F.scaled_dot_product_attention, "_flux_gqa_shim", False):
+        _orig = F.scaled_dot_product_attention
+
+        def _sdpa_shim(*a, **kw):
+            gqa = kw.pop("enable_gqa", None)
+            if gqa:
+                raise RuntimeError(
+                    "enable_gqa=True 需要 torch>=2.5（本 shim 仅剥离 False）")
+            return _orig(*a, **kw)
+
+        _sdpa_shim._flux_gqa_shim = True
+        F.scaled_dot_product_attention = _sdpa_shim
+        print("[flux] SDPA enable_gqa shim applied (torch<2.5)", flush=True)
+
+
+_install_torch_compat()
+
+# ---------------------------------------------------------------------------
+# T5-XXL GGUF 手工装载（transformers 4.44 不支持 T5 架构 GGUF；与旧版同实现）
+# ---------------------------------------------------------------------------
+
+_T5_TENSOR_MAP = {
+    "attn_q.weight": "layer.0.SelfAttention.q.weight",
+    "attn_k.weight": "layer.0.SelfAttention.k.weight",
+    "attn_v.weight": "layer.0.SelfAttention.v.weight",
+    "attn_o.weight": "layer.0.SelfAttention.o.weight",
+    "attn_rel_b.weight": "layer.0.SelfAttention.relative_attention_bias.weight",
+    "attn_norm.weight": "layer.0.layer_norm.weight",
+    "ffn_gate.weight": "layer.1.DenseReluDense.wi_0.weight",
+    "ffn_up.weight": "layer.1.DenseReluDense.wi_1.weight",
+    "ffn_down.weight": "layer.1.DenseReluDense.wo.weight",
+    "ffn_norm.weight": "layer.1.layer_norm.weight",
+}
+
+_T5_CACHE_MARK = "COMPLETE"
+
+
+def _t5_hf_name(gguf_name):
+    if gguf_name == "token_embd.weight":
+        return "shared.weight"
+    if gguf_name == "enc.output_norm.weight":
+        return "encoder.final_layer_norm.weight"
+    if gguf_name.startswith("enc.blk."):
+        rest = gguf_name[len("enc.blk."):]
+        i, name = rest.split(".", 1)
+        tgt = _T5_TENSOR_MAP.get(name)
+        if tgt:
+            return f"encoder.block.{int(i)}.{tgt}"
+    return None
+
+
+def _t5_cache_fname(hf_name):
+    return hf_name.replace(".", "__") + ".npy"
+
+
+def _t5_state_dict_from_gguf(gguf_path, dtype, device="cpu", cache_dir=None,
+                             device_fn=None):
+    """GGUF → HF T5 state_dict。gguf shape 是 [in,out]，数据行主序按 [out,in]
+    存 → reshape(shape[::-1])。cache_dir 逐张量 npy 落盘（safetensors 全量
+    副本会在 12GB 内存盒 OOM）。device_fn(hf_name)→device 可按张量分层直载。"""
+    import numpy as np
+    from gguf import GGUFReader
+    from gguf.quants import dequantize
+
+    r = GGUFReader(gguf_path)
+    sd = {}
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+    for t in r.tensors:
+        hf = _t5_hf_name(t.name)
+        if hf is None:
+            continue
+        arr = dequantize(t.data, t.tensor_type).reshape(t.shape[::-1])
+        if cache_dir:
+            np.save(os.path.join(cache_dir, _t5_cache_fname(hf)),
+                    arr.astype(np.float32))
+        w = torch.from_numpy(np.ascontiguousarray(arr)).to(dtype)
+        dev = device_fn(hf) if device_fn else device
+        if dev != "cpu":
+            w = w.to(dev)
+        sd[hf] = w
+        del arr, w
+    if cache_dir:
+        open(os.path.join(cache_dir, _T5_CACHE_MARK), "w").write("ok")
+    return sd
+
+
+def _t5_state_dict_from_cache(cache_dir, dtype, device, device_fn=None):
+    import numpy as np
+    sd = {}
+    for fn in sorted(os.listdir(cache_dir)):
+        if not fn.endswith(".npy"):
+            continue
+        hf = fn[:-4].replace("__", ".")
+        arr = np.load(os.path.join(cache_dir, fn))
+        w = torch.from_numpy(arr).to(dtype)
+        dev = device_fn(hf) if device_fn else device
+        if dev != "cpu":
+            w = w.to(dev)
+        sd[hf] = w
+        del arr, w
+    return sd
+
+
+def load_t5_gguf(gguf_path, config_path, dtype=torch.bfloat16, device="cpu",
+                 device_fn=None):
+    """GGUF T5 → T5EncoderModel（bf16 默认；fp16 高激活崩坏勿改）。
+    meta 壳 + assign=True；逐张量 npy 缓存。device="cuda" 逐张量直上卡。
+    device_fn(hf_name)→device：逐张量选设备（分层直载，绕开 RAM 峰值）。"""
+    from transformers import T5Config, T5EncoderModel
+
+    cache_dir = gguf_path + f".{str(dtype).split('.')[-1]}.cache"
+    cfg = T5Config(**json.load(open(config_path)))
+    if os.path.isfile(os.path.join(cache_dir, _T5_CACHE_MARK)):
+        t0 = time.time()
+        sd = _t5_state_dict_from_cache(cache_dir, dtype, device,
+                                       device_fn=device_fn)
+        print(f"[flux] t5 缓存命中（{time.time()-t0:.1f}s）", flush=True)
+    else:
+        t0 = time.time()
+        write_cache = (device == "cpu" and device_fn is None)
+        sd = _t5_state_dict_from_gguf(
+            gguf_path, dtype, device=device,
+            cache_dir=cache_dir if write_cache else None,
+            device_fn=device_fn)
+        print(f"[flux] t5 gguf->sd {time.time()-t0:.1f}s tensors={len(sd)}"
+              f"{'（缓存已写）' if write_cache else ''}", flush=True)
+    sd.setdefault("encoder.embed_tokens.weight", sd["shared.weight"])
+    with torch.device("meta"):
+        model = T5EncoderModel(cfg)
+    missing, unexpected = model.load_state_dict(sd, assign=True, strict=False)
+    missing = [m for m in missing if "relative_attention_bias" not in m]
+    if missing or unexpected:
+        print(f"[flux] WARN t5 load missing={missing[:5]} "
+              f"unexpected={unexpected[:5]}", flush=True)
+    del sd
+    model.tie_weights()
+    model.eval()
+    return model
+
+
+# ---------------------------------------------------------------------------
+# 组件注册（model_manager LRU；与整管同一淘汰/pin/unload 语义）
+# ---------------------------------------------------------------------------
+
+
+def _models():
+    from app.main import models
+    return models
+
+
+def _register(key, obj, est_bytes, arch):
+    models = _models()
+    with models._lock:
+        models._evict_if_needed(est_bytes)
+        models._pipes[key] = obj
+        models._archs[key] = arch
+        models._sizes[key] = est_bytes
+        models._last_used[key] = time.time()
+    print(f"[flux] registered '{key}' est={est_bytes/1e9:.1f}GB", flush=True)
+    return obj
+
+
+def _require_file(path, what):
+    if not os.path.isfile(path):
+        raise ValueError(f"flux: 缺 {what}（{path}）")
+    return path
+
+
+# FLUX.1 Fill dev 的 transformer 结构（与基础版唯一差别是 in_channels）：
+# Fill 把「噪声 latent(64) + 被遮图 latent(64) + 蒙版(256)」拼成 384 通道输入；
+# 基础版是 64。用基础版 config 加载 Fill GGUF 会直接报
+# `x_embedder.weight expected shape [3072, 64], but got [3072, 384]`。
+_FLUX_FILL_CONFIG = {
+    "_class_name": "FluxTransformer2DModel",
+    "attention_head_dim": 128,
+    "axes_dims_rope": [16, 56, 56],
+    "guidance_embeds": True,   # Fill dev 基于 dev，带蒸馏 guidance（False 会让 guidance_scale 失效）
+    "in_channels": 384,   # 输入：noisy latent 64 + masked latent 64 + mask 256
+    # 输出仍是 64 通道 latent（proj_out 384×3072 是错的：Fill 只多扩输入层）
+    "out_channels": 64,
+    "joint_attention_dim": 4096,   # T5-XXL 维度（2048 会报 context_embedder 形状不符）
+    "num_attention_heads": 24,
+    "num_layers": 19,
+    "num_single_layers": 38,
+    "patch_size": 1,
+    "pooled_projection_dim": 768,
+}
+
+
+def _unet_config_dir(transformer):
+    """按权重文件名选择 transformer config 目录。
+
+    顺序：`/models/flux/transformer-<变体>/config.json`（用户放的真实 config，优先）
+    → 内置 config（写临时目录，仅 fill 有内置值）。
+    为什么不能只看一个 config.json：Fill（in_channels=384）与基础版（64）的
+    x_embedder 形状不同，同一份 config 不可能同时服务两者（exec 1222 实测报错）。
+    """
+    is_fill = "fill" in str(transformer or "").lower()
+    if not is_fill:
+        cfg = os.path.join(FLUX_DIR, "transformer", "config.json")
+        if not os.path.isfile(cfg):
+            raise ValueError(
+                "flux: 缺 transformer config（/models/flux/transformer/config.json）")
+        return os.path.dirname(cfg)
+    # 内置 fill config → 落临时目录（不污染 /models 只读挂载）
+    import json as _json
+    import tempfile as _tempfile
+    d = os.path.join(_tempfile.gettempdir(), "flux-fill-transformer-config")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        _json.dump(_FLUX_FILL_CONFIG, f)
+    print(f"[flux] fill transformer config → {path} "
+          f"(in_channels={_FLUX_FILL_CONFIG['in_channels']}, "
+          f"joint_attention_dim={_FLUX_FILL_CONFIG['joint_attention_dim']}, "
+          f"layers={_FLUX_FILL_CONFIG['num_layers']}/{_FLUX_FILL_CONFIG['num_single_layers']})",
+          flush=True)
+    return d
+
+
+class FluxClipBundle:
+    """DualCLIP 组件束：CLIP-L 模块 + 双 tokenizer + T5 惰性装载信息。
+    T5 权重在编码相位才装载（内存错峰），release_t5=1 编码后释放。"""
+
+    def __init__(self, clip_l, tokenizer, tokenizer_2, t5_gguf, t5_cfg,
+                 t5_hf=None):
+        self.clip_l = clip_l
+        self.tokenizer = tokenizer
+        self.tokenizer_2 = tokenizer_2
+        self.t5_gguf = t5_gguf
+        self.t5_cfg = t5_cfg
+        # **t5_hf（2026-11-16）**：T5 用 diffusers/HF 目录（FLUX.1-dev 的
+        # `text_encoder_2/`）而不是 GGUF 时填目录路径；GGUF 与 HF 二选一。
+        self.t5_hf = t5_hf
+        self.t5 = None
+
+
+def _move_transformers(device):
+    """把所有已注册 FluxTransformer2DModel 搬到指定设备（编码相位腾 VRAM）。"""
+    n = 0
+    for p in list(_models()._pipes.values()):
+        if type(p).__name__ == "FluxTransformer2DModel":
+            p.to(device)
+            n += 1
+    if n:
+        torch.cuda.empty_cache()
+        print(f"[flux] {n} transformer -> {device}", flush=True)
+
+
+def _move_vaes(device):
+    """把所有已注册 AutoencoderKL 搬到指定设备（采样相位腾 VRAM）。"""
+    n = 0
+    for p in list(_models()._pipes.values()):
+        if type(p).__name__ == "AutoencoderKL":
+            p.to(device)
+            n += 1
+    if n:
+        torch.cuda.empty_cache()
+        print(f"[flux] {n} vae -> {device}", flush=True)
+
+
+def _load_t5(clip, device="cpu"):
+    """按 bundle 配置装载 T5：HF 目录（text_encoder_2）优先，否则 GGUF。"""
+    if getattr(clip, "t5_hf", None):
+        from transformers import T5EncoderModel
+        m = T5EncoderModel.from_pretrained(clip.t5_hf,
+                                          torch_dtype=torch.bfloat16)
+        return m.to(device) if device != "cpu" else m
+    return load_t5_gguf(clip.t5_gguf, clip.t5_cfg, device=device)
+
+
+def _dispatch_t5_split(model, k):
+    """挂 accelerate 跨设备钩子：前 k 层与 embed 已在 GPU、其余驻 CPU
+    （权重驻留不搬动，仅激活跨设备）。device_map 必须全覆盖，
+    否则 accelerate 报 missing parameters。"""
+    from accelerate import dispatch_model
+    n = len(model.encoder.block)
+    embed_dev = 0 if k > 0 else "cpu"
+    device_map = {f"encoder.block.{i}": (0 if i < k else "cpu") for i in range(n)}
+    device_map["shared"] = embed_dev
+    device_map["encoder.embed_tokens"] = embed_dev
+    device_map["encoder.final_layer_norm"] = "cpu"
+    dispatch_model(model, device_map=device_map)
+    print(f"[flux.encode] t5 split hooks: {k}/{n} blocks on cuda", flush=True)
+
+
+def _t5_param_bytes(t5_cfg_path):
+    """T5 bf16 全量参数字节数预估（embed + 24 层 attn/ffn）+10% 冗余。"""
+    cfgd = json.load(open(t5_cfg_path))
+    n, d, dff = int(cfgd["num_layers"]), int(cfgd["d_model"]), int(cfgd["d_ff"])
+    vocab = int(cfgd.get("vocab_size", 32128))
+    params = vocab * d + n * (4 * d * d + 3 * d * dff)
+    return int(params * 2 * 1.1)
+
+
+def _t5_split_k(t5_cfg_path, budget_frac=0.9, reserve_mb=1024):
+    """估算可直载 GPU 的 T5 层数（bf16 2 字节/参数）。
+    WSL2 下 mem_get_info 驱动层恒报 0，且 expandable_segments 下 reserved
+    降不下来（cached-free 段本进程仍可复用）——真正不可用的只有 allocated，
+    故按分配器账本估算：free ≈ 物理总量 - allocated - 固定开销。"""
+    cfgd = json.load(open(t5_cfg_path))
+    n = int(cfgd["num_layers"])
+    d, dff = int(cfgd["d_model"]), int(cfgd["d_ff"])
+    per = int((4 * d * d + 3 * d * dff) * 2 * 1.05)  # attn+ffn 参数 + 5% 冗余
+    total = torch.cuda.get_device_properties(0).total_memory
+    allocated = torch.cuda.memory_allocated()
+    free = max(0, total - allocated - reserve_mb * 1024 * 1024)
+    k = max(0, min(n - 1, int(free * budget_frac) // max(per, 1)))
+    print(f"[flux.encode] t5 分层计划: {k}/{n} 层 -> cuda "
+          f"(free_est={free // 2 ** 20}MB allocated={allocated // 2 ** 20}MB "
+          f"per_layer={per // 2 ** 20}MB)", flush=True)
+    return k, n
+
+
+def _t5_block_device_fn(k):
+    """device_fn：encoder.block.{i} 前 k 层 -> cuda；embed 随前段上卡，
+    final_norm/其余 -> cpu（与 _dispatch_t5_split 的 device_map 对齐）。"""
+    def fn(hf):
+        if hf.startswith("encoder.block."):
+            try:
+                return "cuda" if int(hf.split(".")[2]) < k else "cpu"
+            except (ValueError, IndexError):
+                return "cpu"
+        if hf == "shared.weight":
+            return "cuda" if k > 0 else "cpu"
+        return "cpu"
+    return fn
+
+
+# FLUX 官方 FlowMatch 调度器参数（schnell/dev 通用；无本地 scheduler 目录时兜底）
+_FLUX_SCHED_DEFAULTS = dict(
+    base_image_seq_len=256, base_shift=0.5, max_image_seq_len=4096,
+    max_shift=1.15, num_train_timesteps=1000, shift=1.0, shift_terminal=None,
+    use_dynamic_shifting=False, use_karras_sigmas=False,
+    use_exponential_sigmas=False, use_beta_sigmas=False, invert_sigmas=False)
+
+
+def _fresh_scheduler():
+    """新建 FLUX 调度器。
+
+    优先读 `/models/flux/scheduler/scheduler_config.json`；**缺失时直接按官方
+    默认参数构造**——原先无条件 `from_pretrained` 会在没有该目录时转而联网
+    拉 HuggingFace（云机无外网 ⇒ 报 "couldn't connect to huggingface.co /
+    /models/flux/scheduler is not the path to a directory..."），
+    真机实测（2026-11-12 4090）卡在这一步。
+    """
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    d = os.path.join(FLUX_DIR, "scheduler")
+    if os.path.isfile(os.path.join(d, "scheduler_config.json")):
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(d)
+    print("[flux] 无 scheduler 目录，用官方默认参数构造 FlowMatch", flush=True)
+    return FlowMatchEulerDiscreteScheduler(**_FLUX_SCHED_DEFAULTS)
+
+
+def _assemble_txt2img(unet):
+    """轻量 FluxPipeline：仅 scheduler+transformer（采样 output_type=latent，
+    不需要 VAE/文本组件；vae=None 时 vae_scale_factor 守卫默认 8，正确）。"""
+    from diffusers import FluxPipeline
+    pipe = FluxPipeline(scheduler=_fresh_scheduler(), vae=None,
+                        text_encoder=None, tokenizer=None, text_encoder_2=None,
+                        tokenizer_2=None, transformer=unet)
+    pipe.set_progress_bar_config(disable=True)
+    return pipe
+
+
+def _flux_latent_preview_pil(pipe, latents, height, width, max_size=256):
+    """采样中间 packed latent → PIL 预览帧（通道分组均值投影，粗糙但结构可辨）。
+
+    height/width 是**像素**尺寸（latent 束的 width/height），直接交给
+    `_unpack_latents`——该函数内部自己做 `2*(h//(vsf*2))` 的降采样；
+    调用方若先除一遍会二次降采样，view() token 数对不上 packed latent
+    （768px：144 vs 9216）→ RuntimeError → 预览永远退化成进度卡片（exec 826）。"""
+    from PIL import Image
+    with torch.no_grad():
+        lat = pipe._unpack_latents(latents, int(height), int(width),
+                                   pipe.vae_scale_factor)[0].float()
+        rgb = torch.stack([lat[0:6].mean(0), lat[6:11].mean(0),
+                           lat[11:16].mean(0)])
+        lo, hi = rgb.min(), rgb.max()
+        rgb = (rgb - lo) / (hi - lo + 1e-6)
+        arr = (rgb * 255).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
+    img = Image.fromarray(arr)
+    scale = max_size / max(img.size)
+    if scale > 1:
+        img = img.resize((round(img.width * scale),
+                          round(img.height * scale)), Image.BILINEAR)
+    return img
+
+
+# ---------------------------------------------------------------------------
+# PuLID-FLUX 身份注入（前向 hook 版，对拍 InstantX/PuLID flux/model.py）：
+# double blocks i%2==0 与 single blocks i%4==0 的输出 img token 段做残差
+# 加法 img += weight * ca[idx](id_embedding, img)。diffusers 0.35 双/单 block
+# 均返回 (encoder_hidden_states, hidden_states)，hook 统一处理。
+# FACE 对象（flux.pulid_encode 产物）自带 CA 模块：{"id_embedding", "ca"}。
+# 显存策略（GTX1080 8GB）：CA 按块惰性上卡、用完回 CPU（20 块 × ~40MB
+# 每步往返 PCIe，相对 Pascal 单步耗时可忽略），id_embedding 全程驻留
+# （仅 ~128KB）。
+# ---------------------------------------------------------------------------
+
+def _pulid_install_hooks(model, pulid, weight):
+    if not (isinstance(pulid, dict) and "id_embedding" in pulid
+            and "ca" in pulid):
+        raise ValueError("flux.sample: pulid 需为 flux.pulid_encode 的输出 "
+                         "FACE 对象（含 id_embedding 与 ca 字段）")
+    cas = pulid["ca"]
+    id_emb = pulid["id_embedding"].to("cuda", model.dtype)
+    weight = float(weight)
+    handles = []
+
+    def _mk(idx):
+        ca = cas[idx]
+
+        def _hook(module, args, output):
+            if not (isinstance(output, tuple) and len(output) == 2):
+                return output  # 非预期签名：放行不注入
+            txt, img = output
+            dev, dt = img.device, img.dtype
+            ca.to(dev, dt)
+            img = img + weight * ca(id_emb.to(dt), img)
+            ca.to("cpu")
+            return (txt, img)
+
+        return _hook
+
+    idx = 0
+    for bi, blk in enumerate(model.transformer_blocks):
+        if bi % 2 == 0:
+            handles.append(blk.register_forward_hook(_mk(idx)))
+            idx += 1
+    for bi, blk in enumerate(model.single_transformer_blocks):
+        if bi % 4 == 0:
+            handles.append(blk.register_forward_hook(_mk(idx)))
+            idx += 1
+    return handles
+
+
+_DETECTOR_CACHE = {}
+
+
+def _detector(name):
+    """YOLO 检测器缓存（与 detail.refine 同一约定，ultralytics 惰性导入）。"""
+    if name not in _DETECTOR_CACHE:
+        path = os.path.join(DETECTOR_DIR, name + ".pt")
+        if not os.path.isfile(path):
+            hits = sorted(glob.glob(os.path.join(DETECTOR_DIR, name + "*.pt")))
+            if hits:
+                path = hits[0]
+        if not os.path.isfile(path):
+            available = (sorted(os.listdir(DETECTOR_DIR))
+                         if os.path.isdir(DETECTOR_DIR) else [])
+            raise FileNotFoundError(
+                f"detector '{name}' not found: {path}; "
+                f"available: {available or '(empty)'}")
+        try:
+            from ultralytics import YOLO
+        except ImportError as e:
+            raise RuntimeError(
+                "flux.detail_refine 需要 ultralytics") from e
+        _DETECTOR_CACHE[name] = YOLO(path)
+    return _DETECTOR_CACHE[name]
+
+
+def _small(img, max_size=512):
+    from PIL import Image
+    scale = max_size / max(img.size)
+    if scale < 1:
+        img = img.resize((round(img.width * scale), round(img.height * scale)),
+                         Image.Resampling.BILINEAR)
+    return img
+
+
+# ---------------------------------------------------------------------------
+# 算子
+# ---------------------------------------------------------------------------
+
+
+def register(registry):
+    registry = _VersionedRegistry(registry, OP_VERSION)
+    @registry.register(
+        "flux.unet_load",
+        inputs={"transformer": "STRING", "dtype": "STRING"},
+        outputs={"model": "MODEL"},
+        description="FLUX UNET Loader（对标 ComfyUI UNETLoader）：GGUF Q4_K_S "
+                    "transformer 单独装载（dtype 为 compute 精度旋钮，auto 默认 "
+                    "fp16；量化档位按文件名选），输出 MODEL 组件引用，"
+                    "进 model_manager LRU。权重布局 /models/flux，见插件 docstring")
+    def _op_flux_unet_load(transformer="flux1-schnell-Q4_K_S.gguf",
+                           dtype="auto"):
+        from diffusers import FluxTransformer2DModel, GGUFQuantizationConfig
+        dt = _resolve_compute_dtype(dtype, "fp16")
+        key = f"flux-unet:{transformer}{_dtype_suffix(dt if dtype not in (None, '', 'auto') else None)}"
+        models = _models()
+        if key in models._pipes:
+            return {"model": models.get(key)}
+        tr_full = os.path.join(FLUX_DIR, transformer)
+        # **目录 = diffusers 格式（2026-11-16）**：FLUX.1-dev 官方仓库是
+        # 3 分片 diffusers 权重，直接 from_pretrained，无需 GGUF 量化。
+        if os.path.isdir(tr_full):
+            t0 = time.time()
+            tr = FluxTransformer2DModel.from_pretrained(
+                tr_full, torch_dtype=_FLUX_DTYPES[dt])
+            print(f"[flux] transformer {transformer} (diffusers 目录) "
+                  f"dtype={dt} {time.time()-t0:.1f}s", flush=True)
+            est = sum(os.path.getsize(os.path.join(tr_full, f))
+                      for f in os.listdir(tr_full) if f.endswith(".safetensors"))
+            return {"model": _register(key, tr, est,
+                                       "FluxTransformer2DModel")}
+        tr_path = _require_file(tr_full, "transformer GGUF")
+        tr_cfg_dir = _unet_config_dir(transformer)
+        t0 = time.time()
+        quant = GGUFQuantizationConfig(compute_dtype=_FLUX_DTYPES[dt])
+        # 注意：量化加载**必须**保持 low_cpu_mem_usage=True（diffusers 会抛
+        # "low_cpu_mem_usage cannot be False when using quantization"）。
+        # 之前报的 "Cannot copy out of meta tensor" 根因不在加载参数，
+        # 而是 **transformer/config.json 多了 axes_dims_rope / out_channels
+        # 两个字段**，导致结构不匹配、GGUF 权重没灌进去、参数留在 meta。
+        # 现改用官方 config（从已验证可用的 1080 机器同步，见 AGENTS.md）。
+        tr = FluxTransformer2DModel.from_single_file(
+            tr_path, config=tr_cfg_dir,
+            quantization_config=quant, torch_dtype=_FLUX_DTYPES[dt])
+        print(f"[flux] transformer {transformer} dtype={dt} "
+              f"{time.time()-t0:.1f}s", flush=True)
+        est = os.path.getsize(tr_path)
+        return {"model": _register(key, tr, est, "FluxTransformer2DModel(GGUF)")}
+
+    @registry.register(
+        "flux.dual_clip_load",
+        inputs={"t5": "STRING", "dtype": "STRING"},
+        outputs={"clip": "CLIP"},
+        description="FLUX DualCLIP Loader（对标 ComfyUI DualCLIPLoader）：CLIP-L "
+                    "(dtype 为 compute 精度旋钮，auto 默认 bf16) + 双 tokenizer "
+                    "立即装载，T5-XXL(GGUF) 编码相位才装载上卡（内存错峰；T5 "
+                    "装载精度恒为 bf16——fp16 高激活崩坏，不随旋钮）。"
+                    "输出 CLIP 组件束引用")
+    def _op_flux_dual_clip_load(t5="t5xxl-Q4_K_S.gguf", dtype="auto"):
+        from transformers import CLIPTextModel, CLIPTokenizer, T5TokenizerFast
+        dt = _resolve_compute_dtype(dtype, "bf16")
+        key = f"flux-clip:t5={t5}{_dtype_suffix(dt if dtype not in (None, '', 'auto') else None)}"
+        models = _models()
+        if key in models._pipes:
+            return {"clip": models.get(key)}
+        # **t5="hf"（2026-11-16）**：用 diffusers 格式的 text_encoder_2
+        # （FLUX.1-dev 官方仓库全套），省掉 GGUF 依赖。
+        _hf_t5 = None
+        if str(t5).lower() in ("hf", "text_encoder_2", "diffusers"):
+            _hf_dir = os.path.join(FLUX_DIR, "text_encoder_2")
+            if not os.path.isdir(_hf_dir):
+                raise ValueError(f"flux: 缺 text_encoder_2 目录（{_hf_dir}）")
+            t5_path = _hf_dir
+            t5_cfg = os.path.join(_hf_dir, "config.json")
+            _hf_t5 = _hf_dir
+        else:
+            t5_path = _require_file(os.path.join(FLUX_DIR, t5), "T5 GGUF")
+            t5_cfg = _require_file(
+                os.path.join(FLUX_DIR, "text_encoder_2", "config.json"),
+                "T5 config")
+        t0 = time.time()
+        bundle = FluxClipBundle(
+            clip_l=CLIPTextModel.from_pretrained(
+                os.path.join(FLUX_DIR, "text_encoder"),
+                torch_dtype=_FLUX_DTYPES[dt]),
+            tokenizer=CLIPTokenizer.from_pretrained(
+                os.path.join(FLUX_DIR, "tokenizer")),
+            tokenizer_2=T5TokenizerFast.from_pretrained(
+                os.path.join(FLUX_DIR, "tokenizer_2")),
+            t5_gguf=t5_path, t5_cfg=t5_cfg, t5_hf=_hf_t5)
+        print(f"[flux] dual-clip (clip-l {dt} + tokenizers, t5 lazy) "
+              f"{time.time()-t0:.1f}s", flush=True)
+        return {"clip": _register(key, bundle, int(0.5e9), "FluxClipBundle")}
+
+    @registry.register(
+        "flux.vae_load",
+        inputs={"name": "STRING", "dtype": "STRING"},
+        outputs={"vae": "VAE"},
+        description="FLUX VAE Loader（对标 ComfyUI Load VAE）：装载 FLUX 专用 "
+                    "AutoencoderKL（FLUX_DIR/vae，dtype 为精度旋钮，auto 默认 "
+                    "fp16），输出 VAE 组件引用")
+    def _op_flux_vae_load(name="vae", dtype="auto"):
+        from diffusers import AutoencoderKL
+        dt = _resolve_compute_dtype(dtype, "fp16")
+        key = f"flux-vae:{name}{_dtype_suffix(dt if dtype not in (None, '', 'auto') else None)}"
+        models = _models()
+        if key in models._pipes:
+            return {"vae": models.get(key)}
+        path = os.path.join(FLUX_DIR, name)
+        if not os.path.isdir(path):
+            raise ValueError(f"flux: 缺 VAE 目录（{path}）")
+        t0 = time.time()
+        # **VAE 权重格式判别（真机根因，2026-11-12）**：
+        # 共享盘的 ae.safetensors 是 **original LDM 格式**（键名
+        # `decoder.mid.attn_1.k.bias`），而 `from_pretrained` 只认 diffusers
+        # 格式（`decoder.mid_block.attentions.0.to_k.bias`）——244 个权重一个
+        # 都匹配不上，AutoencoderKL 参数全部**新初始化在 meta 设备**；
+        # 随后 `_move_vaes("cpu")` 调 `.to("cpu")` 就抛
+        # "Cannot copy out of meta tensor"，被误当成 transformer 的问题查了很久。
+        # 正解：original 格式必须走 `from_single_file`（diffusers 内置转换）。
+        ckpt = os.path.join(path, "diffusion_pytorch_model.safetensors")
+        orig = os.path.join(FLUX_DIR, "ae.safetensors")
+        src = ckpt if os.path.isfile(ckpt) else (orig if os.path.isfile(orig) else None)
+        if src and not os.path.isdir(os.path.join(path, "vae")):
+            vae = AutoencoderKL.from_single_file(
+                src, config=os.path.join(path, "config.json"),
+                torch_dtype=_FLUX_DTYPES[dt])
+            print(f"[flux] vae {name} (from_single_file, "
+                  f"original-LDM→diffusers 转换) dtype={dt} "
+                  f"{time.time()-t0:.1f}s", flush=True)
+        else:
+            vae = AutoencoderKL.from_pretrained(
+                path, torch_dtype=_FLUX_DTYPES[dt])
+        print(f"[flux] vae {name} dtype={dt} {time.time()-t0:.1f}s", flush=True)
+        return {"vae": _register(key, vae, int(0.4e9), "AutoencoderKL(FLUX)")}
+
+    @registry.register(
+        "flux.encode",
+        inputs={"clip": "CLIP", "text": "STRING", "max_seq": "INT",
+                "release_t5": "INT"},
+        outputs={"cond": "COND", "info": "STRING"},
+        description="FLUX CLIP Text Encode（对标 ComfyUI CLIP Text Encode (Flux)）："
+                    "CLIP-L pooled(768) + T5-XXL 序列 → COND。编码相位：transformer "
+                    "搬回 CPU → T5 上卡 → 编码 → release_t5=1（默认）释放 T5。"
+                    "FLUX 免负向提示词（schnell 蒸馏，guidance=0）")
+    def _op_flux_encode(clip, text, max_seq=256, release_t5=1):
+        from diffusers import FluxPipeline
+        # 鸭子校验（插件热更后类身份失效，isinstance 跨版本误杀旧对象）
+        if not (hasattr(clip, "clip_l") and hasattr(clip, "t5_gguf")):
+            raise ValueError("flux.encode: clip 需为 flux.dual_clip_load 的输出")
+        if not torch.cuda.is_available():
+            raise ValueError("flux.encode 需要 CUDA（T5 bf16 编码上卡）")
+        # cond 磁盘缓存：提示词+max_seq 不变 ⇒ 编码结果是常量，缓存命中则
+        # 跳过 T5 装载/编码——T5-XXL bf16 装载峰值 ~9.4GB 是 16GB 内存机器上
+        # 容器被 OOM Kill 的头号原因（缓存后该相位整个消失，且省 4-7min）
+        import hashlib
+        from safetensors.torch import load_file as _st_load
+        from safetensors.torch import save_file as _st_save
+        _ck = hashlib.sha256(f"{text}|{int(max_seq)}".encode()).hexdigest()[:16]
+        _cpath = os.path.join(FLUX_DIR, "cond_cache", f"{_ck}.safetensors")
+        if os.path.isfile(_cpath):
+            _sd = _st_load(_cpath)
+            info = f"cond cache hit ({_ck}) pe={tuple(_sd['pe'].shape)}"
+            print(f"[flux.encode] {info}", flush=True)
+            return {"cond": {"prompt_embeds": _sd["pe"],
+                             "pooled": _sd["pooled"]},
+                    "info": info}
+        t0 = time.time()
+        # 相位切换：transformer 回 CPU 腾 VRAM，T5/CLIP-L 上卡
+        _move_transformers("cpu")
+        enc_dev = torch.device("cuda")
+        # 预检：T5 全量 bf16 预估放不下就跳过必败的全卡尝试——
+        # 失败不只是浪费几分钟，半成品张量还会弄坏分配器账本（allocated 虚高），
+        # 导致后续分层计划算出 k=0、全量压进 RAM 被 OOM Kill
+        need = _t5_param_bytes(clip.t5_cfg)
+        total_vram = torch.cuda.get_device_properties(0).total_memory
+        avail = total_vram - torch.cuda.memory_allocated() - (1024 ** 3)
+        direct_split = clip.t5 is None and need > int(avail * 0.9)
+        if direct_split:
+            print(f"[flux.encode] T5 预估 {need // 2 ** 20}MB > 可用 "
+                  f"{avail // 2 ** 20}MB，跳过全卡尝试直接分层直载", flush=True)
+        try:
+            if direct_split:
+                raise RuntimeError("out of memory (preflight: T5 全量超可用显存)")
+            if clip.t5 is None:
+                clip.t5 = _load_t5(clip, "cuda")
+            else:
+                clip.t5.to("cuda")
+            clip.clip_l.to("cuda")
+        except RuntimeError as e:
+            if "out of memory" not in str(e).lower():
+                raise
+            # OOM 兜底（8GB 卡 T5-XXL bf16 ~9.8GB 超物理显存、WSL2 分页失效时）：
+            # T5 分层直载——前 k 层逐张量直载 GPU（不占 RAM），其余驻 CPU，
+            # 避免「全量进 RAM 再分发」把 WSL 内存盒撑爆（OOM Kill）；
+            # CLIP-L 回 CPU，编码入口改走 CPU
+            print(f"[flux.encode] T5 上卡 OOM，降级 **全程 CPU 编码**: {e}",
+                  flush=True)
+            import gc
+            # 真机教训（2026-11-12，1080 与 4090 双机复现）：
+            # 原先走「T5 分层直载（部分层驻 GPU）」会在 release 时触发
+            # `!handles_.at(i) INTERNAL ASSERT FAILED` @CUDACachingAllocator.cpp:418
+            # ——expandable_segments 下跨设备 dispatched 张量的乱序释放会
+            # **弄坏整个进程的分配器**，之后任何 CUDA 调用都崩。
+            # 改为：T5 全量在 CPU 编码（4.7B bf16 ≈9.4GB 内存，1080 的 13GB
+            # 内存刚好够），慢（3~5 分钟）但绝对不碰 GPU 分配器。
+            e.__traceback__ = None
+            clip.t5 = None            # 丢掉半成品 GPU 张量
+            gc.collect()
+            torch.cuda.empty_cache()
+            clip.t5 = _load_t5(clip, "cpu")
+            clip.clip_l.to("cpu")
+            enc_dev = torch.device("cpu")
+            print(f"[flux.encode] T5 已全量驻 CPU，开始 CPU 编码（预计 3~5 分钟）",
+                  flush=True)
+        pipe = FluxPipeline(scheduler=None, vae=None,
+                            text_encoder=clip.clip_l, tokenizer=clip.tokenizer,
+                            text_encoder_2=clip.t5,
+                            tokenizer_2=clip.tokenizer_2, transformer=None)
+        with torch.no_grad():
+            pe, pooled, _ = pipe.encode_prompt(
+                prompt=str(text), prompt_2=None, device=enc_dev,
+                max_sequence_length=int(max_seq))
+        del pipe
+        clip.clip_l.to("cpu")
+        if int(release_t5):
+            # 分层驻留的 T5 先逐块确定性搬回 CPU 再删除——expandable_segments
+            # 下让 gc 乱序释放跨设备 dispatched 张量会触发 CUDACachingAllocator
+            # INTERNAL ASSERT，弄坏全进程分配器（后续 unet 上卡必崩）
+            try:
+                t5 = clip.t5
+                if t5 is not None:
+                    if getattr(t5, "shared", None) is not None:
+                        t5.shared.to("cpu")
+                    for blk in getattr(getattr(t5, "encoder", None), "block", []):
+                        blk.to("cpu")
+            except Exception as ex:
+                print(f"[flux] t5 回迁 CPU 异常（忽略）: {ex}", flush=True)
+            clip.t5 = None
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            print("[flux] t5 released (release_t5=1)", flush=True)
+        else:
+            clip.t5.to("cpu")
+        info = f"{time.time()-t0:.1f}s pe={tuple(pe.shape)}"
+        print(f"[flux.encode] {info}", flush=True)
+        _cpe, _cpooled = pe.float().cpu(), pooled.float().cpu()
+        try:  # 落盘失败只损失下次加速，不影响本次结果
+            os.makedirs(os.path.dirname(_cpath), exist_ok=True)
+            _st_save({"pe": _cpe, "pooled": _cpooled}, _cpath)
+        except Exception as _ce:
+            print(f"[flux.encode] cond cache 写入失败（忽略）: {_ce}", flush=True)
+        return {"cond": {"prompt_embeds": _cpe, "pooled": _cpooled},
+                "info": info}
+
+    @registry.register(
+        "flux.empty_latent",
+        inputs={"width": "INT", "height": "INT", "batch_size": "INT"},
+        outputs={"latent": "LATENT"},
+        description="FLUX Empty Latent（对标 ComfyUI Empty Latent Image）：只携带"
+                    "尺寸/批次信息（samples=None），噪声由采样器按 seed 生成。"
+                    "宽高须 16 倍数")
+    def _op_flux_empty_latent(width=768, height=768, batch_size=1):
+        return {"latent": {"samples": None, "packed": True,
+                           "width": int(width), "height": int(height),
+                           "batch": int(batch_size)}}
+
+    @registry.register(
+        "flux.sample",
+        inputs={"model": "MODEL", "cond": "COND", "latent": "LATENT",
+                "seed": "INT", "steps": "INT", "guidance": "FLOAT",
+                "denoise": "FLOAT", "preview_every": "INT",
+                "pulid": "FACE", "pulid_weight": "FLOAT"},
+        outputs={"latent": "LATENT", "seed": "INT"},
+        description="FLUX Sampler（对标 ComfyUI SamplerCustomAdvanced，schnell "
+                    "蒸馏 guidance=0）：吃 latent 吐 latent（output_type=latent，"
+                    "VAE 解码独立成节点）。latent.samples=None → txt2img 全调度；"
+                    "samples 有值（vae_encode 产物）且 denoise<1 → img2img 尾段"
+                    "调度（手动 flow-match 加噪，对拍 diffusers 语义）；denoise>=1 "
+                    "给 latent 等价重生成。可选 pulid（flux.pulid_encode 的 FACE "
+                    "对象）+ pulid_weight：PuLID-FLUX 身份注入（前向 hook 挂在 "
+                    "double i%2==0 / single i%4==0 block 输出，仅本次调用生效，"
+                    "结束即摘除，不污染常驻模型）。预览：逐步 latent 投影帧 + "
+                    "job 进度")
+    def _op_flux_sample(model, cond, latent, seed=-1, steps=4, guidance=0.0,
+                        denoise=1.0, preview_every=1, pulid=None,
+                        pulid_weight=1.0):
+        import numpy as np
+        from diffusers import FluxPipeline
+        from diffusers.pipelines.flux.pipeline_flux import calculate_shift
+
+        if type(model).__name__ != "FluxTransformer2DModel":
+            raise ValueError("flux.sample: model 需为 flux.unet_load 的输出 "
+                             f"（当前 {type(model).__name__}）")
+        if not isinstance(cond, dict) or "prompt_embeds" not in cond:
+            raise ValueError("flux.sample: cond 需为 flux.encode 的输出")
+        if not isinstance(latent, dict) or "width" not in latent:
+            raise ValueError("flux.sample: latent 需为 flux.empty_latent / "
+                             "flux.vae_encode 的输出束")
+        if not torch.cuda.is_available():
+            raise ValueError("flux.sample 需要 CUDA")
+
+        seed = int(seed) if int(seed) >= 0 else random.randint(0, 2**32 - 1)
+        steps = int(steps)
+        denoise = float(denoise)
+        W, H = int(latent["width"]), int(latent["height"])
+        batch = int(latent.get("batch", 1))
+        samples = latent.get("samples")
+        job = execution.current()
+        rec = (preview.recorder_for(job.id, int(preview_every))
+               if job and int(preview_every) > 0 else None)
+
+        # 相位切换：transformer 上卡（采样不需要文本组件/VAE）
+        # VAE 先回 CPU 腾空间——8GB 卡上 unet 6.8GB + VAE 0.4GB 会超限；
+        # 解码算子自己会 vae.to("cuda") 拉回，无需还原
+        _move_vaes("cpu")
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        pipe = _assemble_txt2img(model)
+        # **量化权重必须用 pipeline 级移卡**（真机双机复现，2026-11-12）：
+        # GGUF/量化 transformer 的参数在加载后是 meta 设备占位，靠
+        # `pipe.to(device)` 里 accelerate 的 _hf_hook 才会 materialize；
+        # 直接 `model.to("cuda")` 会抛
+        # "Cannot copy out of meta tensor; no data!"（1080 与 4090 均复现）。
+        pipe.to("cuda")
+        torch.cuda.empty_cache()
+        # embeds 按 transformer 实际 compute dtype 转换（dtype 旋钮联动；
+        # 默认 fp16 与历史硬编码一致）
+        pe = cond["prompt_embeds"].to("cuda", model.dtype)
+        pooled = cond["pooled"].to("cuda", model.dtype)
+        gen = torch.Generator("cpu").manual_seed(seed)
+
+        def _cb(p, i, t, kw):
+            execution.check_cancelled()
+            total = p.num_timesteps
+            if job:
+                job.set_progress(i + 1, total)
+            if rec and rec.want(i, total):
+                latents = kw.get("latents")
+                try:
+                    rec.push_pil(
+                        _flux_latent_preview_pil(p, latents, H, W),
+                        (i + 1) / total)
+                except Exception as e:
+                    # 投影失败降级进度卡片，但必须留痕（曾静默吞异常，
+                    # 结果整场采样只剩卡片、无人发现，见 exec 826）
+                    print(f"[flux.sample] latent preview projection failed "
+                          f"(fallback to progress card): {type(e).__name__}: {e}",
+                          flush=True)
+                    rec.push_pil(preview.progress_card(i + 1, total),
+                                 (i + 1) / total)
+            return kw
+
+        t0 = time.time()
+        # PuLID 身份注入：仅本次调用生效，finally 摘除，常驻模型不受污染
+        pulid_handles = (_pulid_install_hooks(model, pulid, pulid_weight)
+                         if pulid is not None else [])
+        if pulid_handles:
+            print(f"[flux.sample] PuLID 注入 weight={float(pulid_weight)} "
+                  f"hooks={len(pulid_handles)}", flush=True)
+        try:
+            if samples is None:
+                # ---- txt2img：全调度，latents=None 由管道按 seed 生噪声 ----
+                out = pipe(
+                    prompt_embeds=pe, pooled_prompt_embeds=pooled,
+                    num_inference_steps=steps, guidance_scale=float(guidance),
+                    width=W, height=H, num_images_per_prompt=batch,
+                    generator=gen, output_type="latent",
+                    callback_on_step_end=_cb,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                ).images  # output_type=latent 时 images 即 latent 张量本体
+                # （不是 list！.images[0] 会吃掉 batch 维）
+            elif denoise >= 1.0:
+                # ---- latent + denoise=1：等价重生成（纯噪声起步）----
+                print("[flux.sample] latent 输入但 denoise>=1：按重生成处理",
+                      flush=True)
+                out = pipe(
+                    prompt_embeds=pe, pooled_prompt_embeds=pooled,
+                    num_inference_steps=steps, guidance_scale=float(guidance),
+                    width=W, height=H, num_images_per_prompt=batch,
+                    generator=gen, output_type="latent",
+                    callback_on_step_end=_cb,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                ).images  # output_type=latent 时 images 即 latent 张量本体
+                # （不是 list！.images[0] 会吃掉 batch 维）
+            else:
+                # ---- img2img：尾段调度 + 手动 flow-match 加噪 ----
+                seq = (H // 8 // 2) * (W // 8 // 2)
+                cfg = pipe.scheduler.config
+                mu = calculate_shift(
+                    seq, cfg.get("base_image_seq_len", 256),
+                    cfg.get("max_image_seq_len", 4096),
+                    cfg.get("base_shift", 0.5), cfg.get("max_shift", 1.15))
+                pipe.scheduler.set_timesteps(steps, device="cpu", mu=mu)
+                t_start = int(max(steps - min(steps * denoise, steps), 0))
+                if steps - t_start < 1:
+                    raise ValueError(
+                        f"denoise={denoise} × steps={steps} 后有效步数 < 1，"
+                        "请提高 denoise 或 steps")
+                sigma0 = float(pipe.scheduler.sigmas[t_start])
+                # 重新装配（scheduler 已被 set_timesteps 污染调度状态，换新的；
+                # sigmas 由 __call__ 内部 retrieve_timesteps 重新设置）
+                pipe = _assemble_txt2img(model)
+                s = samples.float()
+                noise = torch.randn(s.shape, generator=gen, dtype=torch.float32)
+                noised = (1.0 - sigma0) * s + sigma0 * noise  # flow-match 前向
+                packed = FluxPipeline._pack_latents(
+                    noised.to(model.dtype), s.shape[0], 16, H // 8, W // 8)
+                sigmas_pre = np.linspace(1.0, 1.0 / steps, steps)[t_start:]
+                out = pipe(
+                    prompt_embeds=pe, pooled_prompt_embeds=pooled,
+                    num_inference_steps=None, sigmas=sigmas_pre,
+                    guidance_scale=float(guidance),
+                    width=W, height=H, generator=gen, latents=packed,
+                    output_type="latent",
+                    callback_on_step_end=_cb,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                ).images  # latent 张量本体（.images[0] 会吃掉 batch 维）
+        except Exception:
+            import traceback
+            print("[flux.sample] ERROR:", traceback.format_exc(), flush=True)
+            raise
+        finally:
+            for h in pulid_handles:
+                h.remove()
+        print(f"[flux.sample] done in {time.time()-t0:.1f}s {W}x{H} "
+              f"steps={steps} denoise={denoise} seed={seed}", flush=True)
+        return {"latent": {"samples": out.cpu(), "packed": True,
+                           "width": W, "height": H,
+                           "batch": out.shape[0]},
+                "seed": seed}
+
+    @registry.register(
+        "flux.kontext_edit",
+        inputs={"model": "MODEL", "vae": "VAE", "cond": "COND",
+                "image": "IMAGE", "seed": "INT", "steps": "INT",
+                "guidance": "FLOAT", "denoise": "FLOAT"},
+        outputs={"image": "IMAGE"},
+        description="FLUX.1-Kontext-dev 图像编辑（指令驱动）：输入图片 + "
+                    "编辑指令（cond 由 flux.encode 产出，文本描述编辑目标）→ "
+                    "编辑后图片。用于 Wan2.2-Animate 官方推荐的**参考图姿态"
+                    "重定向**（把参考图人物编辑成与视频第一帧同姿态）。"
+                    "与 img2img 的区别：Kontext 理解编辑指令语义，非简单加噪"
+                    "去噪。denoise 建议 0.6~0.8（保留原图结构）。")
+    def _op_flux_kontext_edit(model, vae, cond, image, seed=-1, steps=20,
+                              guidance=3.5, denoise=0.7):
+        import numpy as np
+        from diffusers import FluxKontextPipeline
+        from PIL import Image as _Image
+
+        if type(model).__name__ != "FluxTransformer2DModel":
+            raise ValueError("flux.kontext_edit: model 需为 flux.unet_load 的输出")
+        if not isinstance(cond, dict) or "prompt_embeds" not in cond:
+            raise ValueError("flux.kontext_edit: cond 需为 flux.encode 的输出")
+        if not torch.cuda.is_available():
+            raise ValueError("flux.kontext_edit 需要 CUDA")
+
+        seed = int(seed) if int(seed) >= 0 else random.randint(0, 2**32 - 1)
+        steps = int(steps)
+        denoise = float(denoise)
+        guidance = float(guidance)
+
+        # 图片预处理
+        if isinstance(image, dict):
+            image = image.get("frames", [image])[0]
+        if not isinstance(image, _Image.Image):
+            raise ValueError("flux.kontext_edit: image 需为 IMAGE 对象")
+        W, H = image.size
+
+        _move_vaes("cpu")
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # Kontext pipeline 装配（复用 txt2img 的组件，换 pipeline 类）
+        pipe = FluxKontextPipeline(
+            scheduler=_assemble_txt2img(model).scheduler,
+            vae=vae["vae"] if isinstance(vae, dict) else vae,
+            text_encoder=None, text_encoder_2=None,  # 用预计算 embeds
+            tokenizer=None, tokenizer_2=None,
+            transformer=model,
+            image_encoder=None, feature_extractor=None,
+        )
+        pipe.to("cuda")
+        torch.cuda.empty_cache()
+
+        pe = cond["prompt_embeds"].to("cuda", model.dtype)
+        ne = cond.get("negative_prompt_embeds")
+        if ne is not None:
+            ne = ne.to("cuda", model.dtype)
+        pooled = cond.get("pooled_prompt_embeds")
+        if pooled is not None:
+            pooled = pooled.to("cuda", model.dtype)
+
+        # Kontext 采样（以输入图片为条件）
+        generator = torch.Generator("cpu").manual_seed(seed)
+        result = pipe(
+            image=image,
+            prompt_embeds=pe,
+            negative_prompt_embeds=ne,
+            pooled_prompt_embeds=pooled,
+            negative_pooled_prompt_embeds=cond.get("negative_pooled_prompt_embeds"),
+            num_inference_steps=steps,
+            guidance_scale=guidance,
+            strength=denoise,
+            generator=generator,
+            output_type="pil",
+        )
+        out_img = result.images[0]
+        print(f"[flux.kontext_edit] done {steps}步 denoise={denoise} "
+              f"guidance={guidance}", flush=True)
+        return {"image": out_img}
+
+    @registry.register(
+        "flux.vae_decode",
+        inputs={"vae": "VAE", "latent": "LATENT"},
+        outputs={"image": "IMAGE"},
+        description="FLUX VAE Decode（对标 ComfyUI VAE Decode）：packed/unpacked "
+                    "latent → 图像（unpack + 反归一化 (z/scaling)+shift → decode）")
+    def _op_flux_vae_decode(vae, latent):
+        from diffusers import FluxPipeline
+        from diffusers.image_processor import VaeImageProcessor
+        if not isinstance(latent, dict) or latent.get("samples") is None:
+            raise ValueError("flux.vae_decode: latent 需为 flux.sample/"
+                             "flux.vae_encode 的输出（含 samples）")
+        # 相位切换：transformer 回 CPU 腾 VRAM（8GB 卡全分辨率解码必备），
+        # 采样算子自己会 model.to("cuda") 拉回，无需还原
+        _move_transformers("cpu")
+        vae.to("cuda")
+        s = latent["samples"]
+        if latent.get("packed", True):
+            z = FluxPipeline._unpack_latents(
+                s, int(latent["height"]), int(latent["width"]), 8)
+        else:
+            z = s
+        with torch.no_grad():
+            z = (z.to("cuda", vae.dtype) / vae.config.scaling_factor) \
+                + vae.config.shift_factor
+            try:
+                img = vae.decode(z, return_dict=False)[0]
+            except RuntimeError as e:
+                if "out of memory" not in str(e).lower():
+                    raise
+                e.__traceback__ = None
+                print(f"[flux.vae_decode] OOM，启用 tiled decode 重试: {e}",
+                      flush=True)
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                vae.enable_tiling()
+                img = vae.decode(z, return_dict=False)[0]
+        proc = VaeImageProcessor(vae_scale_factor=16)
+        pil = proc.postprocess(img, output_type="pil")
+        print(f"[flux.vae_decode] {latent['width']}x{latent['height']} -> IMAGE",
+              flush=True)
+        return {"image": pil[0] if len(pil) == 1 else pil}
+
+    @registry.register(
+        "flux.vae_encode",
+        inputs={"vae": "VAE", "image": "IMAGE"},
+        outputs={"latent": "LATENT"},
+        description="FLUX VAE Encode（对标 ComfyUI VAE Encode）：图像 → 未 pack "
+                    "归一化 latent（(z-shift)*scaling），供 flux.sample 以 "
+                    "denoise<1 做 img2img / hires-fix")
+    def _op_flux_vae_encode(vae, image):
+        from diffusers.image_processor import VaeImageProcessor
+        # 相位切换：transformer 回 CPU 腾 VRAM
+        _move_transformers("cpu")
+        vae.to("cuda")
+        proc = VaeImageProcessor(vae_scale_factor=16)
+        images = image if isinstance(image, list) else [image]
+        tensors = [proc.preprocess(img) for img in images]
+        img_t = torch.cat(tensors).to(device="cuda", dtype=vae.dtype)
+        with torch.no_grad():
+            try:
+                z = vae.encode(img_t).latent_dist.sample()
+            except RuntimeError as e:
+                if "out of memory" not in str(e).lower():
+                    raise
+                e.__traceback__ = None
+                print(f"[flux.vae_encode] OOM，启用 tiled encode 重试: {e}",
+                      flush=True)
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                vae.enable_tiling()
+                z = vae.encode(img_t).latent_dist.sample()
+        z = (z - vae.config.shift_factor) * vae.config.scaling_factor
+        W, H = images[0].size
+        print(f"[flux.vae_encode] {W}x{H} -> LATENT {tuple(z.shape)}", flush=True)
+        return {"latent": {"samples": z.float().cpu(), "packed": False,
+                           "width": W, "height": H, "batch": z.shape[0]}}
+
+    @registry.register(
+        "flux.detail_refine",
+        inputs={"model": "MODEL", "vae": "VAE", "cond": "COND", "image": "IMAGE",
+                "detector": "STRING", "conf": "FLOAT", "padding": "FLOAT",
+                "denoise": "FLOAT", "steps": "INT", "guidance": "FLOAT",
+                "seed": "INT", "guide_size": "INT", "max_targets": "INT",
+                "feather": "INT"},
+        outputs={"image": "IMAGE", "count": "INT"},
+        description="FLUX ADetailer 式局部重绘：YOLO 检测（detector=face/hand，"
+                    "模型在 DETECTOR_DIR）→ 裁剪外扩 → 放大到 guide_size → FLUX "
+                    "img2img 重绘（FluxImg2ImgPipeline 按组件装配；实际去噪步数"
+                    "≈steps×denoise，schnell 建议 steps=8）→ 羽化贴回原图。"
+                    "修脸/修手专用，同模型同风格")
+    def _op_flux_detail_refine(model, vae, cond, image, detector="face",
+                               conf=0.3, padding=0.4, denoise=0.4, steps=8,
+                               guidance=0.0, seed=-1, guide_size=512,
+                               max_targets=4, feather=16):
+        from diffusers import FluxImg2ImgPipeline
+        from PIL import Image, ImageDraw, ImageFilter
+        if type(model).__name__ != "FluxTransformer2DModel":
+            raise ValueError("flux.detail_refine: model 需为 flux.unet_load 输出")
+        if not isinstance(cond, dict) or "prompt_embeds" not in cond:
+            raise ValueError("flux.detail_refine: cond 需为 flux.encode 输出")
+        if not torch.cuda.is_available():
+            raise ValueError("flux.detail_refine 需要 CUDA")
+
+        seed = int(seed) if int(seed) >= 0 else random.randint(0, 2**32 - 1)
+        steps = int(steps)
+        job = execution.current()
+        rec = preview.recorder_for(job.id, 1) if job else None
+
+        yolo = _detector(detector)
+        results = yolo.predict(image, conf=float(conf), verbose=False)
+        boxes = results[0].boxes
+        if boxes is None or len(boxes) == 0:
+            print(f"[flux.detail_refine] {detector}: no target detected",
+                  flush=True)
+            if job:
+                job.set_progress(1, 1)
+            return {"image": image, "count": 0}
+
+        xyxy = boxes.xyxy.tolist()
+        confs = boxes.conf.tolist()
+        order = sorted(range(len(xyxy)), key=lambda i: -confs[i])[:int(max_targets)]
+
+        if rec:
+            dbg = image.copy()
+            d = ImageDraw.Draw(dbg)
+            for i in order:
+                x1, y1, x2, y2 = xyxy[i]
+                d.rectangle([x1, y1, x2, y2], outline=(34, 211, 238), width=3)
+                d.text((x1 + 4, y1 + 4), f"{detector} {confs[i]:.2f}",
+                       fill=(34, 211, 238))
+            rec.push_pil(_small(dbg), 0.0)
+
+        # 相位：transformer + VAE 上卡（采样相位后来零搬移）
+        model.to("cuda")
+        vae.to("cuda")
+        torch.cuda.empty_cache()
+        i2i = FluxImg2ImgPipeline(
+            scheduler=_fresh_scheduler(), vae=vae, text_encoder=None,
+            tokenizer=None, text_encoder_2=None, tokenizer_2=None,
+            transformer=model)
+        i2i.set_progress_bar_config(disable=True)
+
+        pe = cond["prompt_embeds"].to("cuda", model.dtype)
+        pooled = cond["pooled"].to("cuda", model.dtype)
+
+        img = image.copy()
+        W, H = img.size
+        n = 0
+        total = len(order)
+        for i in order:
+            execution.check_cancelled()
+            x1, y1, x2, y2 = xyxy[i]
+            bw, bh = x2 - x1, y2 - y1
+            px, py = bw * float(padding), bh * float(padding)
+            cx1, cy1 = max(0, int(x1 - px)), max(0, int(y1 - py))
+            cx2, cy2 = min(W, int(x2 + px)), min(H, int(y2 + py))
+            if cx2 - cx1 < 32 or cy2 - cy1 < 32:
+                continue
+            crop = img.crop((cx1, cy1, cx2, cy2))
+            scale = int(guide_size) / min(crop.size)
+            tw = max(64, round(crop.width * scale) // 16 * 16)
+            th = max(64, round(crop.height * scale) // 16 * 16)
+            crop_big = crop.resize((tw, th), Image.Resampling.LANCZOS)
+            t0 = time.time()
+
+            def _cb(p, si, t, kw):
+                execution.check_cancelled()
+                return kw
+
+            refined = i2i(
+                prompt_embeds=pe, pooled_prompt_embeds=pooled,
+                image=crop_big, strength=float(denoise),
+                num_inference_steps=steps, guidance_scale=float(guidance),
+                generator=torch.Generator("cpu").manual_seed(seed + n),
+                callback_on_step_end=_cb,
+                callback_on_step_end_tensor_inputs=[],
+            ).images[0]
+            refined = refined.resize(crop.size, Image.Resampling.LANCZOS)
+            mask = Image.new("L", crop.size, 0)
+            ImageDraw.Draw(mask).rectangle(
+                [feather, feather, crop.width - feather,
+                 crop.height - feather], fill=255)
+            mask = mask.filter(ImageFilter.GaussianBlur(feather / 2))
+            img.paste(refined, (cx1, cy1), mask)
+            n += 1
+            if job:
+                job.set_progress(n, total)
+            if rec:
+                rec.push_pil(_small(img), n / total)
+            print(f"[flux.detail_refine] {detector}#{n}/{total} "
+                  f"conf={confs[i]:.2f} box=({cx1},{cy1},{cx2},{cy2}) -> "
+                  f"{tw}x{th} strength={denoise} ({time.time()-t0:.1f}s)",
+                  flush=True)
+        return {"image": img, "count": n}

@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "02e7187cb268"
+OP_VERSION = "2658edce3b30"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1157,13 +1157,8 @@ def register(registry):
         # **Kontext 显存（2026-11-20）**：改 mmgp（Memory Management for
         # the GPU Poor）——比 diffusers offload 更智能的显存调度（智能
         # 加载/卸载/切片/异步传输），专为 24GB 卡设计。
-        # 模型先在 CPU（mmgp 量化在 CPU 上进行，避免 GPU OOM）
+        # 模型先在 CPU（mmgp 在 CPU 侧完成配置，避免 GPU OOM）
         pipe = pipe.to("cpu")
-        from mmgp import offload, profile_type
-        offload.profile(pipe, profile_type.HighRAM_LowVRAM,
-                        budgets={"*": 1000})  # 每模型 1GB VRAM 预算
-        print("[flux.kontext_edit] mmgp offload.profile(HighRAM_LowVRAM)",
-              flush=True)
         if hasattr(pipe.transformer, "enable_gradient_checkpointing"):
             pipe.transformer.enable_gradient_checkpointing()
             print("[flux.kontext_edit] gradient checkpointing 已开", flush=True)
@@ -1186,10 +1181,19 @@ def register(registry):
             print("[flux.kontext_edit] 完全 CPU 模式（慢但可行）", flush=True)
         else:
             # GPU 模式：mmgp offload
+            # **已量化不重复压（2026-11-20）**：FluxUnet 目录分支默认
+            # BitsAndBytes 8-bit（is_loaded_in_8bit=True），mmgp 再压
+            # quanto.qint8 会直接崩（job 静默失败、无 traceback）。
             from mmgp import offload, profile_type
+            _already_q = bool(getattr(pipe.transformer,
+                                      "is_loaded_in_8bit", False) or
+                              getattr(pipe.transformer,
+                                      "is_loaded_in_4bit", False))
             offload.profile(pipe, profile_type.HighRAM_LowVRAM,
-                            budgets={"*": 8000})  # 每模型 8GB VRAM 预算
-            print("[flux.kontext_edit] mmgp offload.profile", flush=True)
+                            budgets={"*": 8000},
+                            quantizeTransformer=not _already_q)
+            print(f"[flux.kontext_edit] mmgp offload.profile "
+                  f"(quantizeTransformer={not _already_q})", flush=True)
         # 诊断：输入设备
         print(f"[flux.kontext_edit] image device={image.device if hasattr(image,'device') else 'PIL'} "
               f"pe device={pe.device} vae device={next(_vae.parameters()).device}",

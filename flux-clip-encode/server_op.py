@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "a9c52e8bb133"
+OP_VERSION = "c02bb88c0346"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1169,7 +1169,7 @@ def register(registry):
                 pipe.transformer,
                 onload_device=torch.device("cuda"),
                 offload_device=torch.device("cpu"),
-                offload_type="block_level",
+                offload_type="leaf_level",
                 num_blocks_per_group=1,
                 use_stream=True,
                 low_cpu_mem_usage=True,

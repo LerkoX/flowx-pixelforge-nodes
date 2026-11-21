@@ -38,10 +38,14 @@ def main():
         "num_images": param("num_images", 1, int),
     }
 
+    image_id = param("image", "")
+    if image_id:
+        inputs["image"] = ref(image_id)
+
     t0 = time.time()
     jid = submit_job(url, {"name": "qwen_image.gen", "inputs": inputs}, tok)
     emit_preview(f"{pbase}/preview/{jid}", 0.0, tok, base=pbase, job_id=jid)
-    print(f"[qwen-image-gen] job={jid} {inputs['width']}x{inputs['height']} "
+    print(f"[qwen-image-gen] job={jid} mode={'edit' if image_id else 't2i'} {inputs['width']}x{inputs['height']} "
           f"steps={inputs['steps']} cfg={inputs['true_cfg_scale']} "
           f"seed={inputs['seed']}", flush=True)
     result = wait_job(url, jid, tok,

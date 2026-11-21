@@ -1,8 +1,8 @@
 {
   "name": "qwen-image-pipe",
   "displayName": "Qwen-Image 管道组装",
-  "description": "Qwen-Image 管道组装（分离式装配最后一步）：transformer / text_encoder / vae → QwenImagePipeline（+ FlowMatchEuler 调度器，官方 scheduler 目录缺失时按 2512 config 构造）。可挂 Lightning 等 diffusers 格式 LoRA（name@strength，逗号多挂；Lightning 8 步出图）。组件常驻模型池，换 LoRA/参数不必重装 39GB transformer。走异步 /jobs。",
-  "version": "1.0.0",
+  "description": "Qwen-Image 管道组装（分离式装配最后一步）：transformer / text_encoder / vae → 管道。task=t2i 文生图 QwenImagePipeline；task=edit 图像编辑（有 processor 用 QwenImageEditPlusPipeline[Edit-2511]，否则回退 QwenImageEditPipeline[2509]）。可挂 Lightning 等 diffusers 格式 LoRA（name@strength，逗号多挂）。组件常驻模型池，换 LoRA/参数不必重装 39GB transformer。走异步 /jobs。v1.1.0：新增 task 参数支持编辑模式。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "qwen",
@@ -79,6 +79,13 @@
       "required": false,
       "default": "Qwen-Image-2512",
       "description": "官方仓库目录名（用于找 scheduler 配置）"
+    },
+    {
+      "name": "task",
+      "type": "string",
+      "required": false,
+      "default": "t2i",
+      "description": "管道类型：t2i 文生图 / edit 图像编辑（Edit-2511 自动用 EditPlus）"
     },
     {
       "name": "lora",

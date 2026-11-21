@@ -12,5 +12,5 @@ const WIDGET_SPEC = {
     { key: 'max_sequence_length', label: '文本最大 token（0=装配值）', kind: 'number', advanced: true },
     { key: 'num_images', label: '张数', kind: 'number', advanced: true },
   ],
-  note: 'Qwen-Image 文生图（T2I）',
+  note: 'Qwen-Image 生成（T2I / 编辑——image 接线即编辑模式）',
 }

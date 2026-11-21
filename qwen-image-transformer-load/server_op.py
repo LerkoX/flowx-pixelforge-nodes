@@ -470,7 +470,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "4104b03b0fd1"
+OP_VERSION = "2b6fc536e7c5"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -644,7 +644,8 @@ def _build_transformer(model, transformer, dtype):
 
 
 def _build_text_encoder(model, dtype):
-    """Qwen2.5-VL-7B 文本编码器（**bf16**，fp16 会溢出）+ tokenizer。"""
+    """Qwen2.5-VL-7B 文本编码器（**bf16**，fp16 会溢出）+ tokenizer
+    + processor（Edit-2511 的 Qwen2VLProcessor，T2I 仓库没有 → None）。"""
     from transformers import (AutoTokenizer,
                               Qwen2_5_VLForConditionalGeneration)
 
@@ -664,7 +665,13 @@ def _build_text_encoder(model, dtype):
         raise ValueError(
             f"qwen_image: text_encoder 加载后仍有 {n_meta} 个 meta 参数")
     tokenizer = AutoTokenizer.from_pretrained(tok_dir)
-    return te, tokenizer, te_dir
+    processor = None
+    proc_dir = os.path.join(root, "processor")
+    if os.path.isdir(proc_dir):
+        from transformers import AutoProcessor
+        processor = AutoProcessor.from_pretrained(proc_dir)
+        print("[qwen-image] processor 已加载（EditPlus 需要）", flush=True)
+    return te, tokenizer, processor, te_dir
 
 
 def _build_vae(model, vae, device):
@@ -827,12 +834,13 @@ def register(registry):
                 return {"text_encoder": models._pipes[key]}
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        te, tokenizer, src = _build_text_encoder(model, dtype)
+        te, tokenizer, processor, src = _build_text_encoder(model, dtype)
         te = _offload(te, device, offload, "text_encoder")
         _budget_mode = "sequential" if str(offload).lower() in ("none", "") \
             else offload
         return {"text_encoder": _register(
-            key, {"model": te, "tokenizer": tokenizer}, _size(src),
+            key, {"model": te, "tokenizer": tokenizer,
+                  "processor": processor}, _size(src),
             "Qwen2_5_VLForConditionalGeneration", offload_mode=_budget_mode)}
 
     @registry.register(
@@ -856,42 +864,70 @@ def register(registry):
     @registry.register(
         "qwen_image.pipe",
         inputs={"transformer": "TRANSFORMER", "text_encoder": "TEXT_ENCODER",
-                "vae": "VAE", "model": "STRING", "lora": "STRING",
+                "vae": "VAE", "model": "STRING", "task": "STRING",
+                "lora": "STRING",
                 "lora_scale": "FLOAT", "max_sequence_length": "INT"},
         outputs={"model": "MODEL"},
-        description="Qwen-Image 管道组装：组件 → QwenImagePipeline（+ 可选 "
-                    "Lightning 等 LoRA，name@strength 逗号多挂）。组件常驻，"
-                    "换 LoRA/参数不必重装 39GB transformer。")
+        description="Qwen-Image 管道组装：组件 → 管道（+ 可选 Lightning 等 "
+                    "LoRA，name@strength 逗号多挂）。task=t2i 文生图 "
+                    "QwenImagePipeline；task=edit 图像编辑——有 processor "
+                    "用 QwenImageEditPlusPipeline（Edit-2511），否则回退 "
+                    "QwenImageEditPipeline（2509）。组件常驻，换 LoRA/参数 "
+                    "不必重装 39GB transformer。")
     def _op_pipe(transformer=None, text_encoder=None, vae=None,
-                 model="Qwen-Image-2512", lora="", lora_scale=1.0,
-                 max_sequence_length=512):
-        from diffusers import QwenImagePipeline
-
+                 model="Qwen-Image-2512", task="t2i", lora="",
+                 lora_scale=1.0, max_sequence_length=512):
         if transformer is None or text_encoder is None or vae is None:
             raise ValueError("qwen_image.pipe: transformer / text_encoder / "
                              "vae 三个组件必填")
+        task = (task or "t2i").lower()
+        if task not in ("t2i", "edit"):
+            raise ValueError(
+                f"qwen_image.pipe: task 须为 t2i/edit，得 {task}")
         tr_info, te_info, vae_info = transformer, text_encoder, vae
         key = (f"qwen-image:pipe:{id(tr_info.get('model')):x}|"
                f"{id(te_info.get('model')):x}|{id(vae_info.get('vae')):x}|"
-               f"{model}|{lora}|{lora_scale}|{max_sequence_length}")
+               f"{model}|{task}|{lora}|{lora_scale}|{max_sequence_length}")
         models = _models()
         with models._lock:
             if key in models._pipes:
                 models._last_used[key] = time.time()
                 return {"model": models._pipes[key]}
 
-        pipe = QwenImagePipeline(
-            scheduler=_build_scheduler(model),
-            vae=vae_info["vae"],
-            text_encoder=te_info["model"],
-            tokenizer=te_info["tokenizer"],
-            transformer=tr_info["model"])
+        scheduler = _build_scheduler(model)
+        if task == "edit":
+            processor = te_info.get("processor")
+            if processor is not None:
+                from diffusers import QwenImageEditPlusPipeline
+                pipe = QwenImageEditPlusPipeline(
+                    scheduler=scheduler, vae=vae_info["vae"],
+                    text_encoder=te_info["model"],
+                    tokenizer=te_info["tokenizer"], processor=processor,
+                    transformer=tr_info["model"])
+                pipe_cls = "QwenImageEditPlusPipeline"
+            else:
+                # 老版 Qwen-Image-Edit（2509）仓库无 processor
+                from diffusers import QwenImageEditPipeline
+                pipe = QwenImageEditPipeline(
+                    scheduler=scheduler, vae=vae_info["vae"],
+                    text_encoder=te_info["model"],
+                    tokenizer=te_info["tokenizer"],
+                    transformer=tr_info["model"])
+                pipe_cls = "QwenImageEditPipeline"
+        else:
+            from diffusers import QwenImagePipeline
+            pipe = QwenImagePipeline(
+                scheduler=scheduler, vae=vae_info["vae"],
+                text_encoder=te_info["model"],
+                tokenizer=te_info["tokenizer"],
+                transformer=tr_info["model"])
+            pipe_cls = "QwenImagePipeline"
         if lora:
             pipe = _load_loras(pipe, lora, lora_scale)
         pipe._qwen_max_seq = int(max_sequence_length)
-        print(f"[qwen-image] pipe assembled（model={model}"
+        print(f"[qwen-image] pipe assembled（{pipe_cls}，model={model}"
               f"{', lora=' + lora if lora else ''}）", flush=True)
-        return {"model": _register(key, pipe, 0, "QwenImagePipeline")}
+        return {"model": _register(key, pipe, 0, pipe_cls)}
 
     @registry.register(
         "qwen_image.gen",
@@ -899,14 +935,16 @@ def register(registry):
                 "negative_prompt": "STRING", "steps": "INT",
                 "true_cfg_scale": "FLOAT", "width": "INT", "height": "INT",
                 "seed": "INT", "max_sequence_length": "INT",
-                "num_images": "INT"},
+                "num_images": "INT", "image": "IMAGE"},
         outputs={"image": "IMAGE", "seed": "INT"},
-        description="Qwen-Image T2I 生成。true_cfg_scale>1 且给了负提示才走 "
-                    "CFG（官方默认 4.0）；挂 Lightning LoRA 时用 steps=4/8 + "
-                    "true_cfg_scale=1.0。宽高须 16 的倍数（自动对齐）。")
+        description="Qwen-Image 生成。不给 image → T2I；给 image → 图像编辑"
+                    "（须接 task=edit 装配的 pipe）。true_cfg_scale>1 且给了负"
+                    "提示才走 CFG（官方默认 4.0）；挂 Lightning LoRA 时用 "
+                    "steps=4/8 + true_cfg_scale=1.0。宽高 0=自动（T2I 默认 "
+                    "1328×1328，编辑跟随输入图）；>0 时 16 对齐。")
     def _op_gen(model, prompt="", negative_prompt="", steps=50,
                 true_cfg_scale=4.0, width=1328, height=1328, seed=-1,
-                max_sequence_length=0, num_images=1):
+                max_sequence_length=0, num_images=1, image=None):
         import random
 
         import numpy as np
@@ -920,27 +958,59 @@ def register(registry):
         if not prompt:
             raise ValueError("qwen_image.gen: prompt 必填")
 
+        def _to_pil(obj):
+            """IMAGE 对象 → PIL（兼容 {'frames':[...]} / {'path':...} / PIL）。"""
+            if obj is None:
+                return None
+            if isinstance(obj, Image.Image):
+                return obj
+            if isinstance(obj, dict):
+                frames = obj.get("frames")
+                if frames:
+                    return frames[0] if isinstance(frames, list) else frames
+                p = obj.get("path")
+                if p:
+                    return Image.open(p).convert("RGB")
+            if isinstance(obj, np.ndarray):
+                return Image.fromarray(obj.astype("uint8"))
+            return obj
+
+        img = _to_pil(image)
+        if img is not None and "Edit" not in type(pipe).__name__:
+            raise ValueError(
+                f"qwen_image.gen: 给了 image 但管道是 {type(pipe).__name__}"
+                f"（非编辑管线）——pipe 请用 task=edit 装配")
+
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)
-
-        # VAE 8 × patch 2 → 16 对齐（官方 aspect_ratio_resize 同款）
-        mod = 16
-        h = max(mod, round(int(height) / mod) * mod)
-        w = max(mod, round(int(width) / mod) * mod)
-        if (h, w) != (int(height), int(width)):
-            print(f"[qwen-image] {width}x{height} -> {w}x{h}（16 对齐）",
-                  flush=True)
 
         msl = int(max_sequence_length) or int(
             getattr(pipe, "_qwen_max_seq", 512))
         kwargs = dict(prompt=prompt,
                       negative_prompt=negative_prompt or None,
-                      height=h, width=w,
                       num_inference_steps=int(steps),
                       true_cfg_scale=float(true_cfg_scale),
                       num_images_per_prompt=max(1, int(num_images)),
                       max_sequence_length=msl,
                       generator=gen, output_type="np")
+        if img is not None:
+            kwargs["image"] = img
+        # VAE 8 × patch 2 → 16 对齐；0=自动（T2I 默认 1328，编辑跟随输入图）
+        w_in, h_in = int(width), int(height)
+        if w_in > 0 and h_in > 0:
+            mod = 16
+            h = max(mod, round(h_in / mod) * mod)
+            w = max(mod, round(w_in / mod) * mod)
+            if (h, w) != (h_in, w_in):
+                print(f"[qwen-image] {w_in}x{h_in} -> {w}x{h}（16 对齐）",
+                      flush=True)
+            kwargs["height"], kwargs["width"] = h, w
+        elif img is None:
+            kwargs["height"], kwargs["width"] = 1328, 1328
+            w, h = 1328, 1328
+        else:
+            w, h = img.size
+            print(f"[qwen-image] 宽高跟随输入图 {w}x{h}", flush=True)
         t0 = time.time()
         out = pipe(**kwargs)
         arr = np.asarray(out.images[0])  # (N,H,W,3) [0,1] → 取首张前判型

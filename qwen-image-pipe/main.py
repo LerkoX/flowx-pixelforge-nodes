@@ -32,6 +32,7 @@ def main():
         "text_encoder": ref(te),
         "vae": ref(va),
         "model": param("model", "Qwen-Image-2512"),
+        "task": param("task", "t2i"),
         "lora": param("lora", ""),
         "lora_scale": param("lora_scale", 1.0, float),
         "max_sequence_length": param("max_sequence_length", 512, int),
@@ -40,7 +41,7 @@ def main():
     t0 = time.time()
     jid = submit_job(url, {"name": "qwen_image.pipe", "inputs": inputs}, tok)
     emit_preview(f"{pbase}/preview/{jid}", 0.0, tok, base=pbase, job_id=jid)
-    print(f"[qwen-image-pipe] job={jid} lora={inputs['lora'] or 'none'}",
+    print(f"[qwen-image-pipe] job={jid} task={inputs['task']} lora={inputs['lora'] or 'none'}",
           flush=True)
     result = wait_job(url, jid, tok,
                       timeout=param("job_timeout", 3600, int),

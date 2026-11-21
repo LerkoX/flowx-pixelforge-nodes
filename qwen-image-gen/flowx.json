@@ -1,8 +1,8 @@
 {
   "name": "qwen-image-gen",
   "displayName": "Qwen-Image 生成",
-  "description": "Qwen-Image 文生图（T2I）。prompt 支持中英文（中文文本渲染是强项）。true_cfg_scale>1 且给了 negative_prompt 才走 CFG（官方默认 4.0）；挂 Lightning LoRA 时用 steps=4/8 + true_cfg_scale=1.0。宽高须 16 的倍数（自动对齐，官方推荐 1328×1328 / 1664×928 / 928×1664 等）。分钟级任务走异步 /jobs。",
-  "version": "1.0.0",
+  "description": "Qwen-Image 生成。不给 image → 文生图（T2I）；给 image → 图像编辑（须接 task=edit 装配的 pipe）。prompt 支持中英文。true_cfg_scale>1 且给了 negative_prompt 才走 CFG（官方默认 4.0）；挂 Lightning LoRA 时用 steps=4/8 + true_cfg_scale=1.0。宽高 0=自动（T2I 默认 1328×1328，编辑跟随输入图），>0 时 16 对齐。分钟级任务走异步 /jobs。v1.1.0：新增 image 输入支持编辑模式。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "qwen",
@@ -51,6 +51,17 @@
       "source": {
         "nodeRef": "qwen-image-pipe",
         "output": "model"
+      }
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "输入图像引用（接了就是图像编辑，须配 task=edit 的 pipe；接 load-image 输出）",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image"
       }
     },
     {

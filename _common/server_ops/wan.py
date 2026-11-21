@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "abc7e2f5a6bb"
+OP_VERSION = "ab44a8a75b1e"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2136,6 +2136,8 @@ def register(registry):
                      relight_scale=1.0, prompt_embeds_path="",
                      negative_embeds_path="", fbc_threshold=0.0):
         import random
+        print(f"[wan] animate2 入参诊断: fbc_threshold={fbc_threshold!r} "
+              f"steps={steps} seg={segment_frame_length}", flush=True)
         mk_out = None            # replace 分支填充（composite 合成的软 mask 源）
         _bg_orig_frames = None   # replace 分支填充（未抹除的原始背景）
 
@@ -3643,6 +3645,23 @@ def _assemble_animate_standalone(transformer_dir, te_dir, vae_file,
     if float(fbc_threshold) > 0:
         from diffusers.hooks import (FirstBlockCacheConfig,
                                      apply_first_block_cache)
+        # **WanAnimate 的 WanTransformerBlock 未在注册表**（diffusers 只
+        # 注册了 transformer_wan 的同名类，WanAnimate 是独立模块）→
+        # apply_first_block_cache 报 "not registered"（exec 1942 实证）。
+        # 两类的 forward 同构（返回单个 hidden_states），照抄 Wan 的
+        # metadata 注册。幂等（已注册则跳过）。
+        from diffusers.hooks._helpers import (TransformerBlockMetadata,
+                                              TransformerBlockRegistry)
+        from diffusers.models.transformers.transformer_wan_animate import (
+            WanTransformerBlock as _WanAnimBlock)
+        if _WanAnimBlock not in TransformerBlockRegistry._registry:
+            TransformerBlockRegistry.register(
+                _WanAnimBlock,
+                TransformerBlockMetadata(
+                    return_hidden_states_index=0,
+                    return_encoder_hidden_states_index=None))
+            print("[wan][standalone] 注册 WanAnimate block → FBC 注册表",
+                  flush=True)
         apply_first_block_cache(
             tr2, FirstBlockCacheConfig(threshold=float(fbc_threshold)))
         print(f"[wan][standalone] FirstBlockCache on "

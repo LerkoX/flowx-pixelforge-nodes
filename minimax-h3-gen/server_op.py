@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "b6b37c704011"
+OP_VERSION = "2369e1d84053"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -2228,14 +2228,30 @@ def register(registry):
             # 成 cuda buffer（VAE 常驻 cuda），官方 `torch.tensor(config.
             # latents_mean)` 保留 cuda → 与 .cpu() 后的 latents 相减报
             # "two devices cuda:0 and cpu"。钉回 list（幂等）。
+            def _to_float_list(_v, _name):
+                if isinstance(_v, torch.Tensor):
+                    return _v.detach().cpu().tolist(), "tensor"
+                if isinstance(_v, (list, tuple)):
+                    out, dirty = [], False
+                    for _x in _v:
+                        if isinstance(_x, torch.Tensor):
+                            out.append(float(_x.detach().cpu()))
+                            dirty = True
+                        else:
+                            out.append(float(_x))
+                    if dirty:
+                        return out, "list-of-tensor"
+                return _v, None
             for _attr in ("latents_mean", "latents_std"):
                 _v = getattr(pipe.vae.config, _attr, None)
-                if isinstance(_v, torch.Tensor):
-                    setattr(pipe.vae.config, _attr,
-                            _v.detach().cpu().tolist())
-                    print(f"[minimax-h3] vae.config.{_attr} 钉回 list"
-                          f"（原为 {type(_v).__name__} {_v.device}）",
-                          flush=True)
+                _nv, _kind = _to_float_list(_v, _attr)
+                if _kind:
+                    setattr(pipe.vae.config, _attr, _nv)
+                    print(f"[minimax-h3] vae.config.{_attr} 钉回 float list"
+                          f"（原为 {_kind}）", flush=True)
+                else:
+                    print(f"[minimax-h3] vae.config.{_attr} 类型 "
+                          f"{type(_v).__name__}（无需修）", flush=True)
             inpaint_ctx = _prepare_inpaint(
                 pipe, inpaint_video, inpaint_mask,
                 soft_alpha=inpaint_soft, lock_ratio=inpaint_lock,

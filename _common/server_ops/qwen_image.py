@@ -48,7 +48,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "770c33e13741"
+OP_VERSION = "4104b03b0fd1"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -328,6 +328,27 @@ def _load_loras(pipe, spec, default_scale):
         pipe.set_adapters(names, weights=scales)
     elif scales[0] != 1.0:
         pipe.set_adapters(names, weights=scales)
+    # **LoRA 参数必须钉在 GPU（真机教训）**：组件在加载时已挂
+    # _sequential_offload hook，PEFT 后注入的 lora_A/lora_B 子模块没有 hook
+    # → 留在 CPU；forward 时基础权重被 hook 搬上卡、LoRA 在 CPU →
+    # "mat2 is on cpu" 设备冲突。LoRA 参数量小（Lightning ~1GB），
+    # 全部常驻 GPU，不参与逐层 swap。
+    import torch
+    if torch.cuda.is_available():
+        n_lora, bytes_lora = 0, 0
+        for pname, p in pipe.transformer.named_parameters():
+            if "lora" in pname.lower() and p.device.type != "cuda":
+                p.data = p.data.to("cuda")
+                n_lora += 1
+                bytes_lora += p.numel() * p.element_size()
+        for bname, b in pipe.transformer.named_buffers():
+            if "lora" in bname.lower() and b.device.type != "cuda":
+                parent_path, _, attr = bname.rpartition(".")
+                parent = (pipe.transformer.get_submodule(parent_path)
+                          if parent_path else pipe.transformer)
+                parent._buffers[attr] = b.to("cuda")
+        print(f"[qwen-image] LoRA 参数钉卡：{n_lora} 个，"
+              f"{bytes_lora/2**30:.2f} GiB", flush=True)
     return pipe
 
 

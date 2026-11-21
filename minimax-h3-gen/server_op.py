@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "2369e1d84053"
+OP_VERSION = "1511316f436e"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -2223,6 +2223,14 @@ def register(registry):
                 "minimax.h3.gen: inpaint_video 与 inpaint_mask 必须同时提供")
         inpaint_ctx = None
         if inpaint_video is not None:
+            # **mmgp 默认设备污染（2026-11-21 三连崩根因实锤）**：
+            # Kontext 的 mmgp profile 结束时 torch.set_default_device(
+            # 'cuda')（offload.py:3920，故意保留）→ 进程内后续所有
+            # torch.tensor(list)（无 device 参数）产出 cuda tensor——
+            # 官方 encode_vae_condition 的 latents_mean 因此变 cuda，
+            # 与 .cpu() 的 latents 相减报 "two devices"（1950/1952/1954
+            # 三连）。H3 自己的 tensor 创建全带显式 device，恢复 cpu 安全。
+            torch.set_default_device("cpu")
             # **官方 encode_vae_condition 同款坑（exec 1953 完整栈实锤）**：
             # diffusers 在某些加载路径把 vae.config.latents_mean/std 物化
             # 成 cuda buffer（VAE 常驻 cuda），官方 `torch.tensor(config.

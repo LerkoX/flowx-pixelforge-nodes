@@ -11,7 +11,7 @@ from app import ops
 
 def register(registry):
     @registry.register(
-        "model.unload",
+        f"model.unload@{OP_VERSION}",
         inputs={"target": "STRING"},
         outputs={"unloaded": "STRING", "resident": "STRING"},
         description="卸载常驻模型腾显存：target 空/all/*=全部，否则按名字或缓存键匹配"

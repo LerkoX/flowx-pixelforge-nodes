@@ -1,8 +1,8 @@
 {
   "name": "qwen-image-gen",
   "displayName": "Qwen-Image 生成",
-  "description": "Qwen-Image 生成。不给 image → 文生图（T2I）；给 image → 图像编辑（须接 task=edit 装配的 pipe）。prompt 支持中英文。true_cfg_scale>1 且给了 negative_prompt 才走 CFG（官方默认 4.0）；挂 Lightning LoRA 时用 steps=4/8 + true_cfg_scale=1.0。宽高 0=自动（T2I 默认 1328×1328，编辑跟随输入图），>0 时 16 对齐。分钟级任务走异步 /jobs。v1.1.0：新增 image 输入支持编辑模式。",
-  "version": "1.1.0",
+  "description": "Qwen-Image 生成。不给 image → 文生图；给 image → 全图指令编辑（edit pipe）；再给 mask（白=重绘区）→ 遮罩局部重绘/物体去除（inpaint pipe）。strength=重绘强度 （inpaint 专用，默认 0.6）；padding_mask_crop>0 裁遮罩周边放大重绘再贴回（小区域细节）。true_cfg_scale>1 且给了 negative_prompt 才走 CFG（官方 4.0）；Lightning LoRA 用 steps=4/8 + true_cfg_scale=1.0。宽高 0=自动（T2I 默认 1328×1328，编辑/重绘跟随输入图）。分钟级任务走异步 /jobs。v1.2.0：新增 mask/strength/padding_mask_crop。",
+  "version": "1.2.0",
   "author": "flowx-team",
   "tags": [
     "qwen",
@@ -63,6 +63,31 @@
         "nodeRef": "load-image",
         "output": "image"
       }
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "重绘遮罩引用（白=重绘区，黑=保留；必须与 image 同给；接 load-image 输出；须配 task=inpaint 的 pipe）",
+      "source": {
+        "nodeRef": "load-image",
+        "output": "image"
+      }
+    },
+    {
+      "name": "strength",
+      "type": "float",
+      "required": false,
+      "default": 0.6,
+      "description": "重绘强度（仅 inpaint，0~1，官方默认 0.6；越大越脱离原图）"
+    },
+    {
+      "name": "padding_mask_crop",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "遮罩外扩裁剪像素（0=关闭；>0 时裁遮罩周边放大重绘再贴回，小区域细节更好）"
     },
     {
       "name": "prompt",

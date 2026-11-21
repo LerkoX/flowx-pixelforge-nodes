@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "13e1e9cf767f"
+OP_VERSION = "b6b37c704011"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -2223,6 +2223,19 @@ def register(registry):
                 "minimax.h3.gen: inpaint_video 与 inpaint_mask 必须同时提供")
         inpaint_ctx = None
         if inpaint_video is not None:
+            # **官方 encode_vae_condition 同款坑（exec 1953 完整栈实锤）**：
+            # diffusers 在某些加载路径把 vae.config.latents_mean/std 物化
+            # 成 cuda buffer（VAE 常驻 cuda），官方 `torch.tensor(config.
+            # latents_mean)` 保留 cuda → 与 .cpu() 后的 latents 相减报
+            # "two devices cuda:0 and cpu"。钉回 list（幂等）。
+            for _attr in ("latents_mean", "latents_std"):
+                _v = getattr(pipe.vae.config, _attr, None)
+                if isinstance(_v, torch.Tensor):
+                    setattr(pipe.vae.config, _attr,
+                            _v.detach().cpu().tolist())
+                    print(f"[minimax-h3] vae.config.{_attr} 钉回 list"
+                          f"（原为 {type(_v).__name__} {_v.device}）",
+                          flush=True)
             inpaint_ctx = _prepare_inpaint(
                 pipe, inpaint_video, inpaint_mask,
                 soft_alpha=inpaint_soft, lock_ratio=inpaint_lock,

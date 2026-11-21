@@ -1,4 +1,4 @@
-OP_VERSION = "v1"
+OP_VERSION = "a1b2c3d4e5f6"  # 12 位 hex（上传守卫要求 <family>_<hash12>.py）
 OP_FAMILY = "model_unload"
 
 """model-unload 节点的服务端算子插件（随节点包自注册）。

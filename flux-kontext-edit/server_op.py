@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "1c4f7b7b720f"
+OP_VERSION = "f09c717b7e18"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -389,6 +389,29 @@ def _move_vaes(device):
     if n:
         torch.cuda.empty_cache()
         print(f"[flux] {n} vae -> {device}", flush=True)
+
+
+def _strip_mmgp_hooks(m):
+    """摘除 mmgp 挂在模块实例上的搬运 hook，恢复原始方法。
+
+    mmgp hook 把原方法存 `_mm_<name>`（forward/encode/decode...）并替换；
+    `_mm_id`/`_mm_Id`/`_mm_manager` 是状态属性。manager release 后旧 hook
+    闭包指着死 manager，且防重挂检查（hasattr _mm_forward）会阻止新
+    profile 挂接 → 必须连根摘掉（exec 1931 第二次 kontext_edit 崩）。
+    """
+    n = 0
+    for mod in m.modules():
+        for attr in list(vars(mod)):
+            if not attr.startswith("_mm_"):
+                continue
+            orig = getattr(mod, attr)
+            target = attr[4:]  # "_mm_forward" -> "forward"
+            if callable(orig) and attr not in (
+                    "_mm_id", "_mm_Id", "_mm_manager"):
+                setattr(mod, target, orig)
+            delattr(mod, attr)
+            n += 1
+    return n
 
 
 def _load_t5(clip, device="cpu"):
@@ -1270,6 +1293,12 @@ def register(registry):
                     _tmu.safe_open = _st2._old_safe_open
                     print("[flux.kontext_edit] 已恢复 transformers "
                           "safe_open（mmgp patch 解除）", flush=True)
+            # 摘除 transformer/vae 上的 mmgp hook（完整复原，下次重挂）
+            _n1 = _strip_mmgp_hooks(model)
+            _n2 = _strip_mmgp_hooks(_vae)
+            if _n1 or _n2:
+                print(f"[flux.kontext_edit] 摘除 mmgp hook "
+                      f"transformer={_n1} vae={_n2}", flush=True)
         except Exception as _e:  # noqa: BLE001
             print(f"[flux.kontext_edit] WARN: mmgp release 失败（忽略）：{_e}",
                   flush=True)

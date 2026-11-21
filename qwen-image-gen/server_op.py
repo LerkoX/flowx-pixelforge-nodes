@@ -470,7 +470,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "2b6fc536e7c5"
+OP_VERSION = "07af57eb5a91"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -674,17 +674,24 @@ def _build_text_encoder(model, dtype):
     return te, tokenizer, processor, te_dir
 
 
-def _build_vae(model, vae, device):
-    """AutoencoderKLQwenImage（**fp32**，官方示例口径）。"""
+def _build_vae(model, vae, device, dtype="fp32"):
+    """AutoencoderKLQwenImage。
+
+    dtype 口径（真机教训）：T2I 官方示例 VAE fp32（解码质量）；但
+    **EditPlus 管线的 prepare_latents 会把预处理图像 cast 成 transformer
+    dtype（bf16）再 vae.encode** —— fp32 VAE 收到 bf16 输入直接
+    'Input type (c10::BFloat16) and bias type (float)'。
+    官方 Edit 示例整管 bf16（VAE 同）。故编辑模式 VAE 必须 bf16。"""
     import torch
     from diffusers import AutoencoderKLQwenImage
 
+    dt = torch.float32 if str(dtype).lower() in ("fp32", "float32", "auto") \
+        else _dtype(dtype)
     if vae:
         path = _resolve("vae", vae)
         _require_file(path, "vae")
         if os.path.isdir(path):
-            m = AutoencoderKLQwenImage.from_pretrained(
-                path, torch_dtype=torch.float32)
+            m = AutoencoderKLQwenImage.from_pretrained(path, torch_dtype=dt)
         else:
             cfg_dir = os.path.join(_model_root(model), "vae")
             m = AutoencoderKLQwenImage.from_single_file(
@@ -693,8 +700,7 @@ def _build_vae(model, vae, device):
     else:
         vae_dir = os.path.join(_model_root(model), "vae")
         _require_file(vae_dir, "vae 目录")
-        m = AutoencoderKLQwenImage.from_pretrained(
-            vae_dir, torch_dtype=torch.float32)
+        m = AutoencoderKLQwenImage.from_pretrained(vae_dir, torch_dtype=dt)
         src = vae_dir
     if device != "cpu" and torch.cuda.is_available():
         m = m.to("cuda")
@@ -845,19 +851,23 @@ def register(registry):
 
     @registry.register(
         "qwen_image.vae_load",
-        inputs={"model": "STRING", "vae": "STRING", "device": "STRING"},
+        inputs={"model": "STRING", "vae": "STRING", "device": "STRING",
+                "dtype": "STRING"},
         outputs={"vae": "VAE"},
-        description="Qwen-Image VAE 加载（AutoencoderKLQwenImage，**fp32**"
-                    " ~243MB，常驻上卡）。")
-    def _op_vae_load(model="Qwen-Image-2512", vae="", device="cuda"):
-        key = f"qwen-image:vae:{model}|{vae}"
+        description="Qwen-Image VAE 加载（AutoencoderKLQwenImage ~243MB，常驻"
+                    "上卡）。dtype：T2I 用 fp32（官方口径）；**编辑模式必须 "
+                    "bf16**——EditPlus 管线会把输入图 cast 成 transformer "
+                    "dtype 再 VAE encode，fp32 VAE 会 dtype 冲突。")
+    def _op_vae_load(model="Qwen-Image-2512", vae="", device="cuda",
+                     dtype="fp32"):
+        key = f"qwen-image:vae:{model}|{vae}|{dtype}"
         models = _models()
         with models._lock:
             if key in models._pipes:
                 models._last_used[key] = time.time()
                 return {"vae": models._pipes[key]}
 
-        m, src = _build_vae(model, vae, device)
+        m, src = _build_vae(model, vae, device, dtype)
         return {"vae": _register(key, {"vae": m}, _size(src),
                                  "AutoencoderKLQwenImage")}
 
@@ -896,6 +906,16 @@ def register(registry):
 
         scheduler = _build_scheduler(model)
         if task == "edit":
+            # EditPlus 的 prepare_latents 把输入图 cast 成 transformer dtype
+            # 再 vae.encode —— VAE 必须与 transformer 同 dtype（bf16），
+            # 否则 fp32 VAE 收 bf16 输入报 bias 类型冲突（真机实证）。
+            import torch as _torch
+            _vae = vae_info["vae"]
+            _vdt = next(_vae.parameters()).dtype
+            if _vdt != _torch.bfloat16:
+                print(f"[qwen-image] edit 模式 VAE {_vdt} → bf16（跟随 "
+                      f"transformer，管线 prepare_latents 口径）", flush=True)
+                _vae.to(_torch.bfloat16)
             processor = te_info.get("processor")
             if processor is not None:
                 from diffusers import QwenImageEditPlusPipeline

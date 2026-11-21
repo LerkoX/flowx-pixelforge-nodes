@@ -17,6 +17,7 @@ def main():
         "model": param("model", "Qwen-Image-2512"),
         "vae": param("vae", ""),
         "device": param("device", "cuda"),
+        "dtype": param("dtype", "fp32"),
     }
 
     t0 = time.time()

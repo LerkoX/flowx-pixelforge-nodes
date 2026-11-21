@@ -1,8 +1,8 @@
 {
   "name": "qwen-image-vae-load",
   "displayName": "Qwen-Image VAE 加载",
-  "description": "Qwen-Image VAE 加载（AutoencoderKLQwenImage，fp32 ≈243MB，官方示例口径fp32 解码）。常驻上卡。走异步 /jobs。",
-  "version": "1.0.0",
+  "description": "Qwen-Image VAE 加载（AutoencoderKLQwenImage ~243MB，常驻上卡）。dtype：T2I 用 fp32（官方口径）；**编辑模式必须 bf16**——EditPlus 管线会把输入图 cast 成 transformer dtype 再 VAE encode，fp32 VAE 会 dtype 冲突（pipe 的 edit 分支也有自动转换兜底）。走异步 /jobs。v1.1.0：新增 dtype 参数。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "qwen",
@@ -63,6 +63,13 @@
       "required": false,
       "default": "cuda",
       "description": "加载设备 cuda/cpu"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "required": false,
+      "default": "fp32",
+      "description": "VAE 精度：T2I 用 fp32；编辑模式用 bf16（必须）"
     },
     {
       "name": "service_token",

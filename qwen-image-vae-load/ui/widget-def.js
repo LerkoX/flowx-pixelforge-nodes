@@ -6,6 +6,7 @@ const WIDGET_SPEC = {
     { key: 'model', label: '官方仓库目录名', kind: 'text', mono: true, advanced: true },
     { key: 'vae', label: 'VAE 单文件（留空=目录）', kind: 'text', mono: true, advanced: true },
     { key: 'device', label: '设备（cuda/cpu）', kind: 'text', mono: true, advanced: false },
+    { key: 'dtype', label: '精度（T2I=fp32 / 编辑=bf16）', kind: 'text', mono: true, advanced: false },
   ],
   note: 'Qwen-Image VAE 加载（fp32）',
 }

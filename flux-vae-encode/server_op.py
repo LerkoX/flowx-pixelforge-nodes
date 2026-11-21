@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "23d342651bc0"
+OP_VERSION = "1c4f7b7b720f"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1257,6 +1257,19 @@ def register(registry):
                     model._flowx_mmgp_armed = False
                 print("[flux.kontext_edit] mmgp released（pinned RAM 归还）",
                       flush=True)
+            # **恢复被 mmgp patch 的 safe_open（2026-11-21）**：
+            # mmgp/safetensors2.py:624 把 transformers.modeling_utils
+            # .safe_open 换成它自己的（不收 backend 参数）→ 此后所有
+            # transformers from_pretrained 多分片加载全炸（exec 1927/1928
+            # 的 safe_open backend TypeError）。mmgp 内部走
+            # safetensors2.safe_open，恢复 transformers 的不影响它。
+            from mmgp import safetensors2 as _st2
+            if getattr(_st2, "_old_safe_open", None) is not None:
+                import transformers.modeling_utils as _tmu
+                if _tmu.safe_open is not _st2._old_safe_open:
+                    _tmu.safe_open = _st2._old_safe_open
+                    print("[flux.kontext_edit] 已恢复 transformers "
+                          "safe_open（mmgp patch 解除）", flush=True)
         except Exception as _e:  # noqa: BLE001
             print(f"[flux.kontext_edit] WARN: mmgp release 失败（忽略）：{_e}",
                   flush=True)

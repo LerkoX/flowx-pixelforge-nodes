@@ -45,7 +45,7 @@ img2img（latent + denoise<1）实现要点（对拍 diffusers 0.35.2 源码）�
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "8a2804168407"
+OP_VERSION = "23d342651bc0"
 OP_FAMILY = "flux"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1241,6 +1241,25 @@ def register(registry):
         out_img = result.images[0]
         print(f"[flux.kontext_edit] done {steps}步 denoise={denoise} "
               f"guidance={guidance}", flush=True)
+        # **出图后释放 mmgp pinned RAM（2026-11-21）**：quanto 化权重的
+        # pinned 副本 ~12GB 由 mmgp 全局 manager 持有，model_manager
+        # unload 删对象也释放不掉 → 后续 Wan 装配内存爆，OOM killer
+        # 静默杀 uvicorn（exec 1922/1923 教训）。此处上下文可控
+        # （采样刚结束），release 比 model_unload 里安全。
+        # 副作用：armed 标记清除，下次 kontext_edit 重新 profile
+        # （quanto 已量化会跳过重压，重 pin ~10s）。
+        try:
+            import mmgp.offload as _mmo
+            _mgr = getattr(_mmo, "last_offload_obj", None)
+            if _mgr is not None:
+                _mgr.release()
+                if hasattr(model, "_flowx_mmgp_armed"):
+                    model._flowx_mmgp_armed = False
+                print("[flux.kontext_edit] mmgp released（pinned RAM 归还）",
+                      flush=True)
+        except Exception as _e:  # noqa: BLE001
+            print(f"[flux.kontext_edit] WARN: mmgp release 失败（忽略）：{_e}",
+                  flush=True)
         return {"image": out_img}
 
     @registry.register(

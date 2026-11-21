@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "ab44a8a75b1e"
+OP_VERSION = "ef6a329539fd"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -3005,6 +3005,28 @@ def register(registry):
                   f"（原始背景混合）", flush=True)
         print(f"[wan] gen done {len(frames)}帧 {fps}fps "
               f"{time.time()-t0:.1f}s", flush=True)
+        # **跨执行内存释放（2026-11-21，exec 1946 OOM 复盘）**：
+        # standalone pipe 缓存（transformer 33GB CPU RAM）跨执行常驻，
+        # 与下一次执行的 Kontext mmgp（~36GB）在 64GB 机器上无法共存
+        # → uvicorn 被 OOM killer 杀掉。pipe 在同一执行内只装配/使用
+        # 一次，缓存只对跨执行复用有意义，而跨执行复用必撞 Kontext —— 清。
+        if os.environ.get("WAN_STANDALONE", "1") == "1" and _STANDALONE_PIPE:
+            _n = len(_STANDALONE_PIPE)
+            _STANDALONE_PIPE.clear()
+            try:
+                del pipe
+            except Exception:  # noqa: BLE001
+                pass
+            import gc as _gc2
+            _gc2.collect()
+            torch.cuda.empty_cache()
+            try:
+                import ctypes as _ct
+                _ct.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:  # noqa: BLE001
+                pass
+            print(f"[wan] standalone pipe 缓存已释放（{_n} 条，防跨执行 OOM）",
+                  flush=True)
         _bg_out = {"frames": bg_masked, "fps": fps} if bg_masked else None
         return {"video": {"frames": frames, "fps": fps,
                           "num_frames": len(frames)},

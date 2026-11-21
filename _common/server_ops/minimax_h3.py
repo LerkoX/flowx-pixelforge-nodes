@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "b710d9068319"
+OP_VERSION = "7d8099f4a8ca"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1850,6 +1850,11 @@ def register(registry):
                     hook.restore()
             else:
                 out = pipe(output=["videos", "audio", "sampling_rate"], **kwargs)
+        except Exception:
+            import traceback as _tb
+            print("[minimax-h3] gen 异常完整栈：" + chr(10) + _tb.format_exc(),
+                  flush=True)
+            raise
         finally:
             # 预编码 cond 的临时 text_encoder 必须恢复（异常也不能残留，否则
             # 后续执行会拿上一轮的 embeds 当条件）

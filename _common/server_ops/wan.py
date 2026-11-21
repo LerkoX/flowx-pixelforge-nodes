@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "b4eabefc3a6a"
+OP_VERSION = "e97b351416ae"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -3621,10 +3621,15 @@ def _assemble_animate_standalone(transformer_dir, te_dir, vae_file,
     # **LoRA / 打光合并（在挂 offload 之前，权重仍为 CPU 内存态）**
     if lora_config:
         _apply_lora_config(pipe, lora_config)
+    # **use_stream 开关（2026-11-21 提速）**：原先硬编码 False（3090 雪花
+    # 疑云），但 Kontext 路线证明 stream 在同机正常（3.2s/it vs 39s/it
+    # 的搬运等待）。WAN_OFFLOAD_STREAM=0 可回退同步搬运。
+    _use_stream = os.environ.get("WAN_OFFLOAD_STREAM", "1") != "0"
     apply_group_offloading(
         tr2, onload_device=torch.device("cuda"),
         offload_device=torch.device("cpu"), offload_type="block_level",
-        num_blocks_per_group=1, use_stream=False, low_cpu_mem_usage=True)
+        num_blocks_per_group=1, use_stream=_use_stream,
+        low_cpu_mem_usage=True)
     pipe.vae.to("cuda")
     # **VAE tiling（2026-11-16 长视频）**：124 帧 512×288 的整段解码会把
     # 24GB 显存打爆（服务被 OOM killer 重启，job 随之丢失 → 节点报 404）。
@@ -3650,7 +3655,7 @@ def _assemble_animate_standalone(transformer_dir, te_dir, vae_file,
                 _cc, onload_device=torch.device("cuda"),
                 offload_device=torch.device("cpu"),
                 offload_type="block_level", num_blocks_per_group=_npg,
-                use_stream=False, low_cpu_mem_usage=True)
+                use_stream=_use_stream, low_cpu_mem_usage=True)
         print("[wan][standalone] TE/CLIP 走块级 offload（省 12GB 给 KV cache）",
               flush=True)
     print(f"[wan][standalone] 装配完成 {time.time()-t0:.1f}s "

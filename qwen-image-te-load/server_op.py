@@ -470,7 +470,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "720c28933669"
+OP_VERSION = "7c578947d636"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -973,25 +973,28 @@ def register(registry):
                 "true_cfg_scale": "FLOAT", "width": "INT", "height": "INT",
                 "seed": "INT", "max_sequence_length": "INT",
                 "num_images": "INT", "image": "IMAGE", "mask": "IMAGE",
-                "strength": "FLOAT", "padding_mask_crop": "INT"},
+                "strength": "FLOAT", "padding_mask_crop": "INT",
+                "mask_feather": "INT"},
         outputs={"image": "IMAGE", "seed": "INT"},
         description="Qwen-Image 生成。不给 image → T2I；给 image → 全图编辑"
-                    "（edit pipe）；再给 mask（白=重绘区）→ 遮罩局部重绘/物"
-                    "体去除（inpaint pipe）。strength=重绘强度（inpaint 专用，"
-                    "默认 0.6）；padding_mask_crop>0 时裁遮罩周边放大重绘再贴"
-                    "回（小区域细节，强制 PIL 输出）。true_cfg_scale>1 且给了"
-                    "负提示才走 CFG（官方 4.0）；Lightning LoRA 用 steps=4/8 "
-                    "+ true_cfg_scale=1.0。宽高 0=自动（T2I 默认 1328×1328，"
-                    "编辑/重绘跟随输入图）；>0 时 16 对齐。")
+                    "（edit pipe）；再给 mask（白=改动区）时按管道分两种语义："
+                    "edit pipe → 全图指令编辑 + 输出端合成（编辑图×mask+原图"
+                    "×(1-mask)，ComfyUI 式，mask_feather 羽化像素，推荐——区域"
+                    "像素级锁定且不受参考一致性锁死）；inpaint pipe → 管线级"
+                    "遮罩重绘（strength/padding_mask_crop 生效）。"
+                    "true_cfg_scale>1 且给了负提示才走 CFG（官方 4.0）；"
+                    "Lightning LoRA 用 steps=4/8 + true_cfg_scale=1.0。宽高 0="
+                    "自动（T2I 默认 1328×1328，编辑/重绘跟随输入图）；>0 时 "
+                    "16 对齐。")
     def _op_gen(model, prompt="", negative_prompt="", steps=50,
                 true_cfg_scale=4.0, width=1328, height=1328, seed=-1,
                 max_sequence_length=0, num_images=1, image=None, mask=None,
-                strength=0.6, padding_mask_crop=0):
+                strength=0.6, padding_mask_crop=0, mask_feather=8):
         import random
 
         import numpy as np
         import torch
-        from PIL import Image
+        from PIL import Image, ImageFilter
 
         pipe = model
         if not hasattr(pipe, "transformer"):
@@ -1024,14 +1027,21 @@ def register(registry):
             raise ValueError(
                 f"qwen_image.gen: 给了 image 但管道是 {pipe_name}"
                 f"（非编辑管线）——pipe 请用 task=edit/inpaint 装配")
+        composite = False  # edit + mask：输出端合成模式（ComfyUI 语义）
         if msk is not None:
-            if "Inpaint" not in pipe_name:
-                raise ValueError(
-                    f"qwen_image.gen: 给了 mask 但管道是 {pipe_name}"
-                    f"（非重绘管线）——pipe 请用 task=inpaint 装配")
             if img is None:
                 raise ValueError("qwen_image.gen: mask 必须与 image 同给")
-            # 遮罩统一为 L 模式白=重绘区（VaeImageProcessor 标准口径），
+            if "Inpaint" in pipe_name:
+                pass  # 管线级遮罩重绘
+            elif "Edit" in pipe_name:
+                composite = True
+                print("[qwen-image] edit+mask → 输出端合成模式（全图指令编辑 "
+                      "+ mask 像素级锁定）", flush=True)
+            else:
+                raise ValueError(
+                    f"qwen_image.gen: 给了 mask 但管道是 {pipe_name}"
+                    f"（非编辑管线）——pipe 请用 task=edit/inpaint 装配")
+            # 遮罩统一为 L 模式白=改动区（VaeImageProcessor 标准口径），
             # 并与输入图同尺寸
             msk = msk.convert("L")
             if msk.size != img.size:
@@ -1054,7 +1064,7 @@ def register(registry):
                       generator=gen)
         if img is not None:
             kwargs["image"] = img
-        if msk is not None:
+        if msk is not None and not composite:
             kwargs["mask_image"] = msk
             kwargs["strength"] = float(strength)
             if pmc > 0:
@@ -1094,6 +1104,16 @@ def register(registry):
                 arr = np.transpose(arr, (0, 2, 3, 1))
             if arr.min() < -0.05:
                 arr = (arr + 1.0) / 2.0
+            if composite:
+                # 输出端合成：编辑图×mask + 原图×(1-mask)（羽化 mask_feather）
+                feather = int(mask_feather or 0)
+                m = msk
+                if feather > 0:
+                    m = m.filter(ImageFilter.GaussianBlur(radius=feather))
+                m_np = (np.asarray(m, dtype=np.float32) / 255.0)[None, ..., None]
+                orig = np.asarray(img, dtype=np.float32)[None] / 255.0
+                arr = arr * m_np + orig * (1.0 - m_np)
+                print(f"[qwen-image] 合成完成 feather={feather}px", flush=True)
             images = [Image.fromarray(
                 (np.clip(f, 0, 1) * 255).round().astype("uint8"))
                 for f in arr]

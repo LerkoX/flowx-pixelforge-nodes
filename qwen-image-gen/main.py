@@ -46,11 +46,12 @@ def main():
         inputs["mask"] = ref(mask_id)
         inputs["strength"] = param("strength", 0.6, float)
         inputs["padding_mask_crop"] = param("padding_mask_crop", 0, int)
+        inputs["mask_feather"] = param("mask_feather", 8, int)
 
     t0 = time.time()
     jid = submit_job(url, {"name": "qwen_image.gen", "inputs": inputs}, tok)
     emit_preview(f"{pbase}/preview/{jid}", 0.0, tok, base=pbase, job_id=jid)
-    print(f"[qwen-image-gen] job={jid} mode={'inpaint' if mask_id else 'edit' if image_id else 't2i'} {inputs['width']}x{inputs['height']} "
+    print(f"[qwen-image-gen] job={jid} mode={'masked' if mask_id else 'edit' if image_id else 't2i'} {inputs['width']}x{inputs['height']} "
           f"steps={inputs['steps']} cfg={inputs['true_cfg_scale']} "
           f"seed={inputs['seed']}", flush=True)
     result = wait_job(url, jid, tok,

@@ -116,5 +116,12 @@
     "preferredType": "local",
     "bundled": true
   },
-  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  }
 }

@@ -99,5 +99,12 @@
       "type": "string",
       "description": "TRANSFORMER 组件引用（供 qwen-image-pipe）"
     }
-  ]
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  }
 }

@@ -204,5 +204,12 @@
     ],
     "preferredType": "local",
     "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320,
+    "height": 620,
+    "collapsed": false,
+    "apiVersion": 1
   }
 }

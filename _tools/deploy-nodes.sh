@@ -64,13 +64,13 @@ clip-text-encode-task" ;;
 FAMILIES=(); NODES=()
 for a in "$@"; do
   case "$a" in
-    wan|video_mask|video_enhance|video_flow|preprocess|flux|brushnet) FAMILIES+=("$a") ;;
+    wan|video_mask|video_enhance|video_flow|preprocess|flux|brushnet|qwen_image) FAMILIES+=("$a") ;;
     *) NODES+=("$a") ;;
   esac
 done
 [[ ${#FAMILIES[@]} -eq 0 && ${#NODES[@]} -eq 0 ]] && {
   echo "用法: $0 <族名|节点目录>..."
-  echo "族: wan video_mask video_enhance video_flow preprocess flux brushnet"; exit 1; }
+  echo "族: wan video_mask video_enhance video_flow preprocess flux brushnet qwen_image"; exit 1; }
 
 for f in ${FAMILIES[@]+"${FAMILIES[@]}"}; do
   for n in $(family_nodes "$f"); do NODES+=("$n"); done

@@ -129,5 +129,12 @@
       "type": "string",
       "description": "Qwen-Image MODEL 管道引用（供 qwen-image-gen）"
     }
-  ]
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 380,
+    "collapsed": false,
+    "apiVersion": 1
+  }
 }

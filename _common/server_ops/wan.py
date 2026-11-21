@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "e97b351416ae"
+OP_VERSION = "abc7e2f5a6bb"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -2100,7 +2100,8 @@ def register(registry):
                 "lora": "STRING", "relight_lora": "STRING",
                 "relight_scale": "FLOAT",
                 "prompt_embeds_path": "STRING",
-                "negative_embeds_path": "STRING"},
+                "negative_embeds_path": "STRING",
+                "fbc_threshold": "FLOAT"},
         outputs={"video": "VIDEO", "seed": "INT", "fps": "INT"},
         description="Wan-Animate 角色动画迁移（**WanAnimatePipeline 路线**，"
                     "2026-11-14 重构）：角色图 image（自动 pad 保比例）+ "
@@ -2133,7 +2134,7 @@ def register(registry):
                      scheduler="", flow_shift=3.0,
                      lora="", relight_lora="",
                      relight_scale=1.0, prompt_embeds_path="",
-                     negative_embeds_path=""):
+                     negative_embeds_path="", fbc_threshold=0.0):
         import random
         mk_out = None            # replace 分支填充（composite 合成的软 mask 源）
         _bg_orig_frames = None   # replace 分支填充（未抹除的原始背景）
@@ -2173,6 +2174,7 @@ def register(registry):
                 te_on_cuda=os.environ.get("WAN_TE_ON_CUDA", "0") == "1",
                 skip_te=bool(prompt_embeds_path and
                              os.path.isfile(prompt_embeds_path)),
+                fbc_threshold=float(fbc_threshold or 0.0),
                 prompt_embeds_path=prompt_embeds_path,
                 negative_embeds_path=negative_embeds_path,
                 lora_config=_lora_cfg,
@@ -3525,7 +3527,8 @@ _STANDALONE_PIPE = {}
 def _assemble_animate_standalone(transformer_dir, te_dir, vae_file,
                                  img_enc_file, flow_shift, te_on_cuda,
                                  skip_te=False, prompt_embeds_path="",
-                                 negative_embeds_path="", lora_config=""):
+                                 negative_embeds_path="", lora_config="",
+                                 fbc_threshold=0.0):
     import torch
     from diffusers import (AutoencoderKLWan, WanAnimatePipeline,
                            WanAnimateTransformer3DModel)
@@ -3537,7 +3540,8 @@ def _assemble_animate_standalone(transformer_dir, te_dir, vae_file,
                               UMT5EncoderModel)
 
     key = (transformer_dir, te_dir, vae_file, img_enc_file,
-           float(flow_shift), bool(te_on_cuda), bool(skip_te), lora_config)
+           float(flow_shift), bool(te_on_cuda), bool(skip_te), lora_config,
+           float(fbc_threshold))
     if key in _STANDALONE_PIPE:
         print("[wan][standalone] 复用已装配 pipeline", flush=True)
         return _STANDALONE_PIPE[key]
@@ -3630,6 +3634,19 @@ def _assemble_animate_standalone(transformer_dir, te_dir, vae_file,
         offload_device=torch.device("cpu"), offload_type="block_level",
         num_blocks_per_group=1, use_stream=_use_stream,
         low_cpu_mem_usage=True)
+    # **FirstBlockCache（2026-11-21 提速，官方 hook）**：用第一个
+    # transformer block 输出的 absmean 残差变化量决定是否跳过中间全部
+    # block 的前向。threshold=0 关闭；0.05~0.2 是官方经验区间。
+    # **必须在 group_offloading 之后挂**：diffusers hook 后注册者在
+    # 最外层——FBC 判定跳过时直接返回缓存残差，连 offload 的权重
+    # 搬运一起省掉。
+    if float(fbc_threshold) > 0:
+        from diffusers.hooks import (FirstBlockCacheConfig,
+                                     apply_first_block_cache)
+        apply_first_block_cache(
+            tr2, FirstBlockCacheConfig(threshold=float(fbc_threshold)))
+        print(f"[wan][standalone] FirstBlockCache on "
+              f"(threshold={float(fbc_threshold)})", flush=True)
     pipe.vae.to("cuda")
     # **VAE tiling（2026-11-16 长视频）**：124 帧 512×288 的整段解码会把
     # 24GB 显存打爆（服务被 OOM killer 重启，job 随之丢失 → 节点报 404）。

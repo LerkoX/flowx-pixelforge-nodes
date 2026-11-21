@@ -94,6 +94,9 @@ def main():
         if _v:
             inputs[_k] = _v
     inputs["relight_scale"] = param("relight_scale", 1.0, float)
+    _fbc = param("fbc_threshold", 0.0, float)
+    if _fbc:
+        inputs["fbc_threshold"] = _fbc
     if bg_id:
         inputs["background_video"] = ref(bg_id)
     if mask_id:

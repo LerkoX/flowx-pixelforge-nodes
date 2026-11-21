@@ -392,6 +392,13 @@
       "type": "float",
       "default": 3.0,
       "description": "scheduler 覆盖时的 flow_shift（480p→3.0 / 720p→5.0）"
+    },
+    {
+      "name": "fbc_threshold",
+      "label": "FirstBlockCache 阈值(0=关)",
+      "type": "float",
+      "default": 0.0,
+      "description": "官方 FBC 跳步缓存：0.05~0.2 提速 2~3 倍，越大越快但质量降"
     }
   ],
   "outputs": [

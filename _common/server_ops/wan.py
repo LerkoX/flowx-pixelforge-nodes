@@ -63,7 +63,7 @@ from comfy_quant import (_Int8DequantLinear, _sequential_offload,
                         _split_quant_sd)
 # --- 内联点结束 ---
 
-OP_VERSION = "8a942d05747f"
+OP_VERSION = "b4eabefc3a6a"
 OP_FAMILY = "wan"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1223,8 +1223,12 @@ def _assemble_pipe(task, tr_info, te_info, vae_info, img_enc_info,
             # prompt/参考图嵌入会被污染 → 采样全程朝随机方向 → 雪花。
             # WAN_TE_ON_CUDA=0 可回到"全部 offload"的旧行为。
             _te_cuda = os.environ.get("WAN_TE_ON_CUDA", "0") == "1"
-            _pairs = ([("transformer", 1)] if _te_cuda else
-                      [("transformer", 1), ("text_encoder", 2),
+            # blocks_per_group 环境开关（2026-11-21 提速实验）：
+            # =2 在 4090 上曾死锁，但 3090 值得再试（搬运次数减半）。
+            # WAN_TR_BPG=2 开启；死锁则回退默认 1。
+            _tr_bpg = int(os.environ.get("WAN_TR_BPG", "1"))
+            _pairs = ([("transformer", _tr_bpg)] if _te_cuda else
+                      [("transformer", _tr_bpg), ("text_encoder", 2),
                        ("image_encoder", 1)])
             if _te_cuda:
                 for _cn in ("text_encoder", "image_encoder"):

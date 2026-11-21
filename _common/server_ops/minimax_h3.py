@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "7d8099f4a8ca"
+OP_VERSION = "13e1e9cf767f"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1139,8 +1139,16 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
     # 真机六次 OOM 实锤差 0.7G）。bf16 峰值减半；官方收尾本就 round fp16
     # （encoders.py:135），精度路径不变。其余步骤与官方逐项对齐。
     seed = int(getattr(pipe, "keyframe_encode_seed", 42))
-    latents_mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1)
-    latents_std = torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1)
+    # **设备防御（2026-11-21，exec 1950/1952 cuda:0 and cpu）**：
+    # vae.config.latents_mean/std 在某些加载路径下是 cuda buffer（VAE
+    # 常驻 cuda），torch.tensor() 保留设备 → 与 .cpu() 后的 latents
+    # 相减即 "two devices"。as_tensor 显式钉 cpu。
+    latents_mean = torch.as_tensor(
+        vae.config.latents_mean, dtype=torch.float32,
+        device="cpu").view(1, -1, 1, 1, 1)
+    latents_std = torch.as_tensor(
+        vae.config.latents_std, dtype=torch.float32,
+        device="cpu").view(1, -1, 1, 1, 1)
     pixel_mean = torch.tensor(
         pipe.pixel_mean, device=device, dtype=torch.bfloat16).view(1, -1, 1, 1, 1)
     pixel_std = torch.tensor(

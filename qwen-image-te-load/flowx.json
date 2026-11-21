@@ -1,0 +1,96 @@
+{
+  "name": "qwen-image-te-load",
+  "displayName": "Qwen-Image 文本编码器加载",
+  "description": "Qwen-Image 文本编码器组件加载（Qwen2.5-VL-7B，bf16 ≈16.5GB）+ Qwen2Tokenizer。⚠️ TE 必须 bf16——fp16 会 LayerNorm 溢出（Wan T5 真机教训）。默认逐层 offload。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "qwen",
+    "qwen-image",
+    "inference"
+  ],
+  "icon": "🔤",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": false,
+      "default": "Qwen-Image-2512",
+      "description": "官方 Diffusers 仓库目录名（读 <model>/text_encoder 与 <model>/tokenizer）"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "required": false,
+      "default": "bf16",
+      "description": "权重精度（建议 bf16；fp16 有溢出风险）"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "required": false,
+      "default": "sequential",
+      "description": "offload 策略：sequential=逐层 swap / cuda=全量上卡 / none"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "description": "TEXT_ENCODER 组件引用（供 qwen-image-pipe）"
+    }
+  ]
+}

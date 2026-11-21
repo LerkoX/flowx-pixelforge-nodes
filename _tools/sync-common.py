@@ -158,6 +158,10 @@ OP_FAMILIES = {
                "wan-image-encoder-load", "wan-pipe",
                "wan-lora-load", "wan-te-cache",
            ],
+    # Qwen-Image 图像族（通义千问 20B T2I）：组件装配 + 生成
+    "qwen_image.py": ["qwen-image-transformer-load", "qwen-image-te-load",
+                      "qwen-image-vae-load", "qwen-image-pipe",
+                      "qwen-image-gen"],
 }
 
 

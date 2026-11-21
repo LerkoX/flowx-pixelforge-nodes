@@ -1,0 +1,103 @@
+{
+  "name": "qwen-image-transformer-load",
+  "displayName": "Qwen-Image Transformer 加载",
+  "description": "Qwen-Image transformer 组件加载（20B MMDiT，60 层）。官方 Diffusers 目录（model 参数，默认 Qwen-Image-2512，权重优先共享盘软链）或 Comfy 单文件（transformer 参数，bf16/fp8_e4m3fn 尽力转换）。bf16 ≈39GB 走逐层 offload（CPU 常驻，24GB 卡可跑）。组件常驻模型池，换 LoRA/采样参数不重装。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "qwen",
+    "qwen-image",
+    "inference"
+  ],
+  "icon": "🧱",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": false,
+      "default": "Qwen-Image-2512",
+      "description": "官方 Diffusers 仓库目录名（/models/qwen-image/<model>/{transformer,text_encoder,tokenizer,vae,scheduler}）"
+    },
+    {
+      "name": "transformer",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Comfy 单文件名（/models/qwen-image/diffusion_models 下，留空=用 model 目录的 transformer/）"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "required": false,
+      "default": "bf16",
+      "description": "权重精度 bf16/fp16/fp32"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "required": false,
+      "default": "sequential",
+      "description": "offload 策略：sequential=逐层 swap（39GB>24GB 必选）/ cuda=全量上卡 / none"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "transformer",
+      "type": "string",
+      "description": "TRANSFORMER 组件引用（供 qwen-image-pipe）"
+    }
+  ]
+}

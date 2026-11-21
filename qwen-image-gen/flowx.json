@@ -1,0 +1,153 @@
+{
+  "name": "qwen-image-gen",
+  "displayName": "Qwen-Image 生成",
+  "description": "Qwen-Image 文生图（T2I）。prompt 支持中英文（中文文本渲染是强项）。true_cfg_scale>1 且给了 negative_prompt 才走 CFG（官方默认 4.0）；挂 Lightning LoRA 时用 steps=4/8 + true_cfg_scale=1.0。宽高须 16 的倍数（自动对齐，官方推荐 1328×1328 / 1664×928 / 928×1664 等）。分钟级任务走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "qwen",
+    "qwen-image",
+    "inference"
+  ],
+  "icon": "🖼️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": true,
+      "description": "MODEL 管道引用（接 qwen-image-pipe 的 model 输出）",
+      "source": {
+        "nodeRef": "qwen-image-pipe",
+        "output": "model"
+      }
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "正向提示词（中英文皆可；prompt 模板由 pipeline 内部处理）"
+    },
+    {
+      "name": "negative_prompt",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "负向提示词（true_cfg_scale>1 时生效）"
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "required": false,
+      "default": 50,
+      "description": "采样步数（官方 50；Lightning LoRA 用 4/8）"
+    },
+    {
+      "name": "true_cfg_scale",
+      "type": "float",
+      "required": false,
+      "default": 4.0,
+      "description": "True CFG 强度（官方 4.0；Lightning LoRA 用 1.0）"
+    },
+    {
+      "name": "width",
+      "type": "integer",
+      "required": false,
+      "default": 1328,
+      "description": "宽（16 的倍数，自动对齐）"
+    },
+    {
+      "name": "height",
+      "type": "integer",
+      "required": false,
+      "default": 1328,
+      "description": "高（16 的倍数，自动对齐）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "required": false,
+      "default": -1,
+      "description": "随机种子（-1=随机）"
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "文本最大 token 数（0=装配值，≤1024）"
+    },
+    {
+      "name": "num_images",
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "description": "生成张数（>1 时输出首张列表——v1 建议保持 1）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "生成图像（IMAGE 引用）"
+    },
+    {
+      "name": "seed",
+      "type": "integer",
+      "description": "实际使用的随机种子"
+    }
+  ]
+}

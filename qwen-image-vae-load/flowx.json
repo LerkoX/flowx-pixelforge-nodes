@@ -1,0 +1,96 @@
+{
+  "name": "qwen-image-vae-load",
+  "displayName": "Qwen-Image VAE 加载",
+  "description": "Qwen-Image VAE 加载（AutoencoderKLQwenImage，fp32 ≈243MB，官方示例口径fp32 解码）。常驻上卡。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "qwen",
+    "qwen-image",
+    "inference"
+  ],
+  "icon": "🎛️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": false,
+      "default": "Qwen-Image-2512",
+      "description": "官方 Diffusers 仓库目录名（读 <model>/vae）"
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "VAE 单文件名（/models/qwen-image/vae 下，留空=用 model 目录的 vae/）"
+    },
+    {
+      "name": "device",
+      "type": "string",
+      "required": false,
+      "default": "cuda",
+      "description": "加载设备 cuda/cpu"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "vae",
+      "type": "string",
+      "description": "VAE 组件引用（供 qwen-image-pipe）"
+    }
+  ]
+}

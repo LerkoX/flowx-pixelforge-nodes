@@ -1,0 +1,133 @@
+{
+  "name": "qwen-image-pipe",
+  "displayName": "Qwen-Image 管道组装",
+  "description": "Qwen-Image 管道组装（分离式装配最后一步）：transformer / text_encoder / vae → QwenImagePipeline（+ FlowMatchEuler 调度器，官方 scheduler 目录缺失时按 2512 config 构造）。可挂 Lightning 等 diffusers 格式 LoRA（name@strength，逗号多挂；Lightning 8 步出图）。组件常驻模型池，换 LoRA/参数不必重装 39GB transformer。走异步 /jobs。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "qwen",
+    "qwen-image",
+    "inference"
+  ],
+  "icon": "🔧",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）"
+    },
+    {
+      "name": "transformer",
+      "type": "string",
+      "required": true,
+      "description": "TRANSFORMER 组件引用（接 qwen-image-transformer-load）",
+      "source": {
+        "nodeRef": "qwen-image-transformer-load",
+        "output": "transformer"
+      }
+    },
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "required": true,
+      "description": "TEXT_ENCODER 组件引用（接 qwen-image-te-load）",
+      "source": {
+        "nodeRef": "qwen-image-te-load",
+        "output": "text_encoder"
+      }
+    },
+    {
+      "name": "vae",
+      "type": "string",
+      "required": true,
+      "description": "VAE 组件引用（接 qwen-image-vae-load）",
+      "source": {
+        "nodeRef": "qwen-image-vae-load",
+        "output": "vae"
+      }
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "required": false,
+      "default": "Qwen-Image-2512",
+      "description": "官方仓库目录名（用于找 scheduler 配置）"
+    },
+    {
+      "name": "lora",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "LoRA 文件名（/models/qwen-image/loras 下；name@strength，逗号多挂，如 Qwen-Image-Lightning-8steps-V1.1-bf16.safetensors@1）"
+    },
+    {
+      "name": "lora_scale",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "LoRA 默认强度（lora 未带 @strength 时用）"
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "integer",
+      "required": false,
+      "default": 512,
+      "description": "文本最大 token 数（≤1024）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "推理服务令牌（可空，默认读 INFERENCE_TOKEN）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 3600,
+      "description": "job 超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "model",
+      "type": "string",
+      "description": "Qwen-Image MODEL 管道引用（供 qwen-image-gen）"
+    }
+  ]
+}

@@ -117,5 +117,12 @@
   "files": [
     "flowx_client.py",
     "server_op.py"
-  ]
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 400,
+    "collapsed": false,
+    "apiVersion": 1
+  }
 }

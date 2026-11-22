@@ -29,6 +29,7 @@ def main():
         "feather": param("feather", 24, int),
         "full_fix_below": param("full_fix_below", 0, int),
         "no_fix_above": param("no_fix_above", 0, int),
+        "color_match": param("color_match", 1, int),
     }
     print(f"[video-face-stitch] feather={inputs['feather']} "
           f"fade=({inputs['full_fix_below']},{inputs['no_fix_above']})",

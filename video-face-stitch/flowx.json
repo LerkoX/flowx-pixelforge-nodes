@@ -73,6 +73,12 @@
       "description": "脸高 ≥ 此值保持原样（近景脸不动）；须 > full_fix_below 才生效"
     },
     {
+      "name": "color_match",
+      "type": "integer",
+      "default": 1,
+      "description": "颜色匹配（治蓝色方块闪动）：patch 外环 mean/std 对齐源帧同区域外环，1=开（默认）0=关"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "推理服务访问令牌",
@@ -103,5 +109,12 @@
   "files": [
     "flowx_client.py",
     "server_op.py"
-  ]
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 400,
+    "collapsed": false,
+    "apiVersion": 1
+  }
 }

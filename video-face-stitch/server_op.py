@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "e9c415f8fa7d"
+OP_VERSION = "811d0cdab653"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -223,7 +223,7 @@ def register(registry):
         "video.face_stitch",
         inputs={"video": "VIDEO", "crop_video": "VIDEO", "boxes": "STRING",
                 "feather": "INT", "full_fix_below": "INT",
-                "no_fix_above": "INT"},
+                "no_fix_above": "INT", "color_match": "INT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="脸部修复回贴（PixelAI FaceFix 末段）：把重绘后的脸部"
                     "特写按 boxes 逐帧缩放贴回原视频，高斯羽化 feather px "
@@ -232,7 +232,7 @@ def register(registry):
                     "脸不动，不多添皱纹），中间线性过渡；两者为 0 关闭。"
                     "音轨从源视频透传。")
     def _op_face_stitch(video, crop_video, boxes, feather=24,
-                        full_fix_below=0, no_fix_above=0):
+                        full_fix_below=0, no_fix_above=0, color_match=1):
         import base64
         from PIL import Image, ImageFilter
 
@@ -254,12 +254,41 @@ def register(registry):
         feather = max(0, int(feather))
         ffb, nfa = int(full_fix_below), int(no_fix_above)
 
+        def _ring_stats(arr, ring_frac=0.25):
+            """外环区域的逐通道 mean/std（patch 边缘应与源背景衔接的颜色口径）。"""
+            import numpy as np
+            h, w = arr.shape[:2]
+            rw, rh = max(2, int(w * ring_frac)), max(2, int(h * ring_frac))
+            ring = np.zeros((h, w), dtype=bool)
+            ring[:rw, :] = ring[-rw:, :] = True
+            ring[:, :rh] = ring[:, -rh:] = True
+            sel = arr[ring]  # (K,3)
+            return sel.mean(axis=0), sel.std(axis=0)
+
         out_frames = []
         for i in range(n):
             b = boxes_l[i]
             base = frames[i].convert("RGB")
             patch = crops[i].convert("RGB").resize((b["w"], b["h"]),
                                                    Image.LANCZOS)
+            # **颜色匹配（治蓝色方块闪动）**：H3 重绘的裁片与源帧存在色温/
+            # 曝光漂移（实测偏蓝），直接贴回就是一块可见的方形 patch 且逐帧
+            # 闪。把 patch 外环的 mean/std 对齐到源帧同区域外环（Reinhard
+            # 式，逐通道）——内部脸部的新肤色不受影响，边缘颜色与源背景
+            # 无缝衔接；逐帧独立计算同时消除帧间色温闪动。
+            if int(color_match):
+                import numpy as np
+                src_np = np.asarray(
+                    base.crop((b["x"], b["y"], b["x"] + b["w"],
+                               b["y"] + b["h"])), dtype=np.float32)
+                pat_np = np.asarray(patch, dtype=np.float32)
+                s_m, s_s = _ring_stats(src_np)
+                p_m, p_s = _ring_stats(pat_np)
+                gain = np.where(p_s > 1e-3, s_s / np.maximum(p_s, 1e-3), 1.0)
+                gain = np.clip(gain, 0.5, 2.0)  # 防爆：极端纹理差异不限幅
+                pat_np = (pat_np - p_m) * gain + s_m
+                patch = Image.fromarray(
+                    np.clip(pat_np, 0, 255).astype(np.uint8))
             # 羽化 alpha：盒内全白，边缘高斯过渡
             alpha = Image.new("L", (b["w"], b["h"]), 255)
             if feather > 0:

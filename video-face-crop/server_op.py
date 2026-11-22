@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "811d0cdab653"
+OP_VERSION = "73dca8961082"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -266,26 +266,46 @@ def register(registry):
             return sel.mean(axis=0), sel.std(axis=0)
 
         out_frames = []
+        # **颜色匹配（治蓝色方块闪动）两遍法**：H3 重绘的裁片与源帧存在
+        # 色温/曝光漂移（实测偏蓝）。第一遍对全视频收集外环 mean/std，
+        # 取**中位数**聚合成一组恒定 gain/bias（对齐官方 color_match 的
+        # “逐子轨”口径——整条轨迹同一变换，时序恒定）；第二遍应用。
+        # ⚠ 逐帧独立计算会引入新的闪动源（每帧增益不同），已踩坑修复。
+        # 外环统计只影响 patch 边缘与源背景的衔接颜色，内部脸部的新肤色
+        # 不受影响。
+        cm_transform = None
+        if int(color_match):
+            import numpy as np
+            src_ms, src_ss, pat_ms, pat_ss = [], [], [], []
+            for i in range(n):
+                b = boxes_l[i]
+                src_np = np.asarray(
+                    frames[i].convert("RGB").crop(
+                        (b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"])),
+                    dtype=np.float32)
+                pat_np = np.asarray(
+                    crops[i].convert("RGB").resize(
+                        (b["w"], b["h"]), Image.LANCZOS), dtype=np.float32)
+                m, s = _ring_stats(src_np); src_ms.append(m); src_ss.append(s)
+                m, s = _ring_stats(pat_np); pat_ms.append(m); pat_ss.append(s)
+            s_m = np.median(np.stack(src_ms), axis=0)
+            s_s = np.median(np.stack(src_ss), axis=0)
+            p_m = np.median(np.stack(pat_ms), axis=0)
+            p_s = np.median(np.stack(pat_ss), axis=0)
+            gain = np.where(p_s > 1e-3, s_s / np.maximum(p_s, 1e-3), 1.0)
+            gain = np.clip(gain, 0.5, 2.0)  # 防爆：极端纹理差异不限幅
+            cm_transform = (p_m, s_m, gain)
+            print(f"[video-face] color_match(逐视频): gain={gain.round(3)} "
+                  f"bias={(s_m - p_m * gain).round(1)}", flush=True)
         for i in range(n):
             b = boxes_l[i]
             base = frames[i].convert("RGB")
             patch = crops[i].convert("RGB").resize((b["w"], b["h"]),
                                                    Image.LANCZOS)
-            # **颜色匹配（治蓝色方块闪动）**：H3 重绘的裁片与源帧存在色温/
-            # 曝光漂移（实测偏蓝），直接贴回就是一块可见的方形 patch 且逐帧
-            # 闪。把 patch 外环的 mean/std 对齐到源帧同区域外环（Reinhard
-            # 式，逐通道）——内部脸部的新肤色不受影响，边缘颜色与源背景
-            # 无缝衔接；逐帧独立计算同时消除帧间色温闪动。
-            if int(color_match):
+            if cm_transform is not None:
                 import numpy as np
-                src_np = np.asarray(
-                    base.crop((b["x"], b["y"], b["x"] + b["w"],
-                               b["y"] + b["h"])), dtype=np.float32)
+                p_m, s_m, gain = cm_transform
                 pat_np = np.asarray(patch, dtype=np.float32)
-                s_m, s_s = _ring_stats(src_np)
-                p_m, p_s = _ring_stats(pat_np)
-                gain = np.where(p_s > 1e-3, s_s / np.maximum(p_s, 1e-3), 1.0)
-                gain = np.clip(gain, 0.5, 2.0)  # 防爆：极端纹理差异不限幅
                 pat_np = (pat_np - p_m) * gain + s_m
                 patch = Image.fromarray(
                     np.clip(pat_np, 0, 255).astype(np.uint8))

@@ -48,6 +48,7 @@ family_nodes() {
     wan) echo "wan-animate wan-animate2 wan-gen wan-image-encoder-load wan-pipe \
 wan-te-load wan-text-encode wan-transformer-load wan-vace wan-vae-load" ;;
     video_mask)    echo "video-person-mask" ;;
+    video_face)    echo "video-face-crop video-face-stitch" ;;
     qwen_image)    echo "qwen-image-transformer-load qwen-image-te-load \
 qwen-image-vae-load qwen-image-pipe qwen-image-gen" ;;
     video_enhance) echo "video-enhance" ;;
@@ -64,13 +65,13 @@ clip-text-encode-task" ;;
 FAMILIES=(); NODES=()
 for a in "$@"; do
   case "$a" in
-    wan|video_mask|video_enhance|video_flow|preprocess|flux|brushnet|qwen_image) FAMILIES+=("$a") ;;
+    wan|video_mask|video_face|video_enhance|video_flow|preprocess|flux|brushnet|qwen_image) FAMILIES+=("$a") ;;
     *) NODES+=("$a") ;;
   esac
 done
 [[ ${#FAMILIES[@]} -eq 0 && ${#NODES[@]} -eq 0 ]] && {
   echo "用法: $0 <族名|节点目录>..."
-  echo "族: wan video_mask video_enhance video_flow preprocess flux brushnet qwen_image"; exit 1; }
+  echo "族: wan video_mask video_face video_enhance video_flow preprocess flux brushnet qwen_image"; exit 1; }
 
 for f in ${FAMILIES[@]+"${FAMILIES[@]}"}; do
   for n in $(family_nodes "$f"); do NODES+=("$n"); done

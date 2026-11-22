@@ -1,0 +1,121 @@
+{
+  "name": "video-face-crop",
+  "version": "1.0.0",
+  "displayName": "脸部追踪裁切（FaceFix）",
+  "description": "PixelAI H3 FaceFix 第一段：遮罩逐帧出脸部包围盒（EMA 平滑防抖），按 crop_factor 取方形盒裁切放大到 out_size。输出脸部特写视频（接 H3Gen.inpaint_video）+ 全白遮罩（接 inpaint_mask）+ boxes（接 face-stitch）+ 脸部参考图",
+  "category": "video",
+  "language": "python",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "crop",
+      "type": "VIDEO",
+      "description": "脸部特写视频（接 H3Gen.inpaint_video）"
+    },
+    {
+      "name": "mask_white",
+      "type": "VIDEO",
+      "description": "全白遮罩视频（接 H3Gen.inpaint_mask；整裁片重绘语义，源锚定靠 soft 调度）"
+    },
+    {
+      "name": "boxes",
+      "type": "string",
+      "description": "逐帧包围盒 JSON（接 video-face-stitch.boxes）"
+    },
+    {
+      "name": "face_ref",
+      "type": "IMAGE",
+      "description": "脸部参考图（脸部最大帧的裁片，可作 ref2va 参考图）"
+    },
+    {
+      "name": "num_frames",
+      "type": "int",
+      "description": "帧数"
+    },
+    {
+      "name": "fps",
+      "type": "int",
+      "description": "帧率"
+    },
+    {
+      "name": "face_h_max",
+      "type": "int",
+      "description": "全片最大脸高（px，face-size fade 参考）"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）",
+      "required": false
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "description": "源视频对象 ID（load-video / H3Gen 输出）",
+      "required": true
+    },
+    {
+      "name": "mask",
+      "type": "string",
+      "description": "脸部遮罩视频对象 ID（video-person-mask 输出，prompt 用 face 类描述）",
+      "required": true
+    },
+    {
+      "name": "crop_factor",
+      "type": "float",
+      "default": 2.5,
+      "description": "裁切盒边长 = 脸高 × crop_factor（社区默认 2.5，含发型额头）"
+    },
+    {
+      "name": "out_size",
+      "type": "integer",
+      "default": 768,
+      "description": "裁片输出边长（方形，社区默认 768——脸部细节 = 768px 级渲染）"
+    },
+    {
+      "name": "ema",
+      "type": "float",
+      "default": 0.75,
+      "description": "包围盒 EMA 平滑系数（0=完全跟随当帧，越大越稳；0.7~0.85 防抖）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务访问令牌",
+      "required": false
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "default": 1800,
+      "description": "任务超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ]
+}

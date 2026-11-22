@@ -1,0 +1,107 @@
+{
+  "name": "video-face-stitch",
+  "version": "1.0.0",
+  "displayName": "脸部修复回贴（FaceFix）",
+  "description": "PixelAI H3 FaceFix 末段：把重绘后的脸部特写按 boxes 逐帧缩放贴回原视频，高斯羽化消边缘；脸部大小渐隐（远脸全修/近脸不动）；音轨从源视频透传",
+  "category": "video",
+  "language": "python",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "VIDEO",
+      "description": "修复后视频（音轨透传）"
+    },
+    {
+      "name": "fps",
+      "type": "int",
+      "description": "帧率"
+    },
+    {
+      "name": "num_frames",
+      "type": "int",
+      "description": "帧数"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）",
+      "required": false
+    },
+    {
+      "name": "video",
+      "type": "string",
+      "description": "源视频对象 ID（与 face-crop 输入同一路）",
+      "required": true
+    },
+    {
+      "name": "crop_video",
+      "type": "string",
+      "description": "重绘后的脸部特写视频对象 ID（H3Gen.video）",
+      "required": true
+    },
+    {
+      "name": "boxes",
+      "type": "string",
+      "description": "逐帧包围盒 JSON（video-face-crop.boxes）",
+      "required": true
+    },
+    {
+      "name": "feather",
+      "type": "integer",
+      "default": 24,
+      "description": "贴回边缘羽化像素（社区默认 24）"
+    },
+    {
+      "name": "full_fix_below",
+      "type": "integer",
+      "default": 0,
+      "description": "脸高 ≤ 此值全量修复（Face Size Fade，0=关闭渐隐）"
+    },
+    {
+      "name": "no_fix_above",
+      "type": "integer",
+      "default": 0,
+      "description": "脸高 ≥ 此值保持原样（近景脸不动）；须 > full_fix_below 才生效"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务访问令牌",
+      "required": false
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "default": 1800,
+      "description": "任务超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ]
+}

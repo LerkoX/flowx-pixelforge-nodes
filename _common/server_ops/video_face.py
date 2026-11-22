@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "cac55ac70f7b"
+OP_VERSION = "63f28a5814c6"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -287,7 +287,9 @@ def register(registry):
         "video.face_stitch",
         inputs={"video": "VIDEO", "crop_video": "VIDEO", "boxes": "STRING",
                 "feather": "INT", "full_fix_below": "INT",
-                "no_fix_above": "INT", "color_match": "INT"},
+                "no_fix_above": "INT", "color_match": "INT",
+                "tone_mode": "STRING", "lowpass_frac": "FLOAT",
+                "detail_gain": "FLOAT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="脸部修复回贴（PixelAI FaceFix 末段）：把重绘后的脸部"
                     "特写按 boxes 逐帧缩放贴回原视频，高斯羽化 feather px "
@@ -296,7 +298,8 @@ def register(registry):
                     "脸不动，不多添皱纹），中间线性过渡；两者为 0 关闭。"
                     "音轨从源视频透传。")
     def _op_face_stitch(video, crop_video, boxes, feather=24,
-                        full_fix_below=0, no_fix_above=0, color_match=1):
+                        full_fix_below=0, no_fix_above=0, color_match=1,
+                        tone_mode="ema", lowpass_frac=0.1, detail_gain=1.0):
         import base64
         from PIL import Image, ImageFilter
 
@@ -330,16 +333,17 @@ def register(registry):
             return sel.mean(axis=0), sel.std(axis=0)
 
         out_frames = []
-        # **颜色匹配（治蓝色方块闪动 + 帧级色偏）**：H3 重绘的裁片与源帧
-        # 存在色温/曝光漂移。统计量逐帧收集（中位数抗手臂入侵污染），
-        # 再对 gain/bias 序列做 **时序 EMA 平滑**——折中方案：
-        # - 纯逐帧（第一版）：每帧增益不同 → 色温闪动（1991 踩坑）
-        # - 纯全局常量（第二版）：治不了生成侧的帧级色偏（运动模糊帧
-        #   整片泛紫，1996 踩坑）
-        # - EMA 平滑（本版）：跟随慢速光照变化 + 修正帧级色偏，
-        #   平滑掉帧间跳变不引入新闪动
+        # **色调模式**（对齐 FaceRefine-Plus 的 Stitch Plus）：
+        # - freq_sep（推荐）：频率分离，out = blur(源) + detail_gain×
+        #   (重绘 − blur(重绘))——光照/色调全部取源帧，只有五官/皮肤
+        #   细节从重绘裁片取。从根上消除重绘侧的色漂（偏蓝/偏紫/
+        #   洋红唇），天然无逐帧色温闪动，也无需 color_match。
+        # - ema：Reinhard 外环 mean/std 对齐 + 时序 EMA 平滑（折中版，
+        #   见下方注释）。
+        # - none：直接贴（调试对照用）。
+        tone_mode = str(tone_mode or "ema").lower()
         cm_series = None
-        if int(color_match):
+        if tone_mode == "ema" and int(color_match):
             import numpy as np
             per_frame = []  # (p_m, s_m, gain) per frame
             for i in range(n):
@@ -375,7 +379,24 @@ def register(registry):
             base = frames[i].convert("RGB")
             patch = crops[i].convert("RGB").resize((b["w"], b["h"]),
                                                    Image.LANCZOS)
-            if cm_series is not None:
+            if tone_mode == "freq_sep":
+                import numpy as np
+                from PIL import ImageFilter as _IF
+                fh = float(b.get("face_h") or b["h"] / 2.5)
+                rad = max(2.0, fh * float(lowpass_frac))
+                base_reg = base.crop(
+                    (b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]))
+                bl_b = np.asarray(
+                    base_reg.filter(_IF.GaussianBlur(radius=rad)),
+                    dtype=np.float32)
+                pat_np = np.asarray(patch, dtype=np.float32)
+                bl_p = np.asarray(
+                    patch.filter(_IF.GaussianBlur(radius=rad)),
+                    dtype=np.float32)
+                out_np = bl_b + float(detail_gain) * (pat_np - bl_p)
+                patch = Image.fromarray(
+                    np.clip(out_np, 0, 255).astype(np.uint8))
+            elif cm_series is not None:
                 import numpy as np
                 p_m, s_m, gain = cm_series[i]
                 pat_np = np.asarray(patch, dtype=np.float32)
@@ -416,6 +437,87 @@ def register(registry):
             result["audio"] = audio
             result["sample_rate"] = sr
         print(f"[video-face] stitch done {time.time()-t0:.1f}s: {n} 帧 "
-              f"feather={feather} fade=({ffb},{nfa}) audio="
+              f"feather={feather} fade=({ffb},{nfa}) tone={tone_mode} audio="
               f"{'yes' if audio is not None else 'no'}", flush=True)
+        return {"video": result, "fps": int(round(fps)), "num_frames": n}
+
+    @registry.register(
+        "video.flow_lock",
+        inputs={"base": "VIDEO", "refined": "VIDEO",
+                "sigma_frac": "FLOAT", "threshold": "FLOAT"},
+        outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
+        description="脸部光流锁定（移植 FaceRefine-Plus 的 H3 Face Flow "
+                    "Lock，抗摆动）：重绘的脸与原脸五官有 1~2px 逐帧错位"
+                    "（摆动/闪烁根因——跟踪再准也救不了，因为漂移发生在 "
+                    "H3 重绘内部）。逐帧：DIS 稠密光流（base→refined，轻模糊"
+                    "灰度图上算，跟结构不跟纹理）→ 只在 stitch 改动区（阈值化"
+                    "差分+膨胀+羽化）内空间平滑 → 按流场 warp 重绘帧混回。"
+                    "官方实测摆动 0.73%→0.19% 且锐度不降。接在 stitch 之后："
+                    "base=源视频，refined=stitch 输出。sigma_frac 默认 "
+                    "1/150（帧高比例），threshold=4（0-255 差分阈值）。")
+    def _op_flow_lock(base, refined, sigma_frac=0.0067, threshold=4.0):
+        import numpy as np
+        import cv2
+        from PIL import Image
+
+        t0 = time.time()
+        bframes, fps = _video_to_frames(base, 0)
+        rframes, _ = _video_to_frames(refined, 0)
+        n = len(rframes)
+        if len(bframes) != n:
+            raise ValueError(
+                f"video.flow_lock: base 帧数 {len(bframes)} != refined {n}")
+        W, H = rframes[0].size
+        sigma = max(1.0, float(sigma_frac) * H)
+        thr = float(threshold)
+        dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+
+        def _grey(im):
+            return cv2.GaussianBlur(
+                cv2.cvtColor(im, cv2.COLOR_RGB2GRAY), (0, 0), 1.2)
+
+        out_frames = []
+        mags = []
+        n_locked = 0
+        for i in range(n):
+            b = np.asarray(bframes[i].convert("RGB"))
+            r = np.asarray(rframes[i].convert("RGB"))
+            # 改动区遮罩：|差分| 模糊后阈值化 → 膨胀 → 羽化
+            d = cv2.GaussianBlur(
+                cv2.absdiff(b, r).max(2).astype(np.float32), (0, 0), 3)
+            m = (d > thr).astype(np.float32)
+            if m.sum() < 50:
+                out_frames.append(rframes[i])
+                continue
+            m = cv2.dilate(m, np.ones((15, 15), np.uint8))
+            m = cv2.GaussianBlur(m, (0, 0), sigma)
+            # DIS 光流 base→refined，遮罩加权空间平滑（不跟新细节）
+            f = dis.calc(_grey(b), _grey(r), None)
+            w = cv2.GaussianBlur(m, (0, 0), sigma) + 1e-4
+            f = np.dstack([
+                cv2.GaussianBlur(f[..., k] * m, (0, 0), sigma) / w
+                for k in range(2)]) * (m[..., None] > 0.02)
+            gx, gy = np.meshgrid(np.arange(W, dtype=np.float32),
+                                 np.arange(H, dtype=np.float32))
+            warped = cv2.remap(r, gx + f[..., 0], gy + f[..., 1],
+                               cv2.INTER_CUBIC,
+                               borderMode=cv2.BORDER_REFLECT)
+            mk = np.clip(m * 1.5, 0, 1)[..., None]
+            out = np.clip(r * (1 - mk) + warped * mk, 0, 255)
+            core = mk[..., 0] > 0.5
+            if core.any():
+                mags.append(float(np.percentile(
+                    np.hypot(f[..., 0], f[..., 1])[core], 95)))
+            out_frames.append(Image.fromarray(out.astype(np.uint8)))
+            n_locked += 1
+
+        audio, sr = _extract_audio(refined)
+        result = {"frames": out_frames, "fps": fps}
+        if audio is not None:
+            result["audio"] = audio
+            result["sample_rate"] = sr
+        print(f"[video-face] flow_lock done {time.time()-t0:.1f}s: "
+              f"{n_locked}/{n} 帧锁定 sigma={sigma:.1f}px "
+              f"校正量 p95 均值={np.mean(mags) if mags else 0:.2f}px "
+              f"最大={max(mags) if mags else 0:.2f}px", flush=True)
         return {"video": result, "fps": int(round(fps)), "num_frames": n}

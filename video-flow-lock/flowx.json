@@ -1,0 +1,102 @@
+{
+  "name": "video-flow-lock",
+  "version": "1.0.0",
+  "displayName": "脸部光流锁定（Flow Lock）",
+  "description": "FaceRefine-Plus 抗摆动：DIS 稠密光流把重绘脸部逐帧锁定回源视频五官位置（治\"脸在头上跳舞\"），接在 face-stitch 之后",
+  "category": "video",
+  "language": "python",
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "video",
+      "type": "VIDEO",
+      "description": "修复后视频（音轨透传）"
+    },
+    {
+      "name": "fps",
+      "type": "int",
+      "description": "帧率"
+    },
+    {
+      "name": "num_frames",
+      "type": "int",
+      "description": "帧数"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧可达的服务地址（留空则同 service_url）",
+      "required": false
+    },
+    {
+      "name": "base",
+      "type": "string",
+      "required": true,
+      "description": "源视频对象 ID（stitch 的底图，LoadVideo.video）"
+    },
+    {
+      "name": "refined",
+      "type": "string",
+      "required": true,
+      "description": "stitch 输出视频对象 ID"
+    },
+    {
+      "name": "sigma_frac",
+      "type": "float",
+      "default": 0.0067,
+      "description": "光流平滑（帧高比例，默认 1/150；大=只跟全局偏移，小=会抵消故意改动）"
+    },
+    {
+      "name": "threshold",
+      "type": "float",
+      "default": 4.0,
+      "description": "改动像素阈值（0-255 差分，默认 4；未变区域直通）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "推理服务访问令牌",
+      "required": false
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "default": 1800,
+      "description": "任务超时秒数"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "default": 5,
+      "description": "轮询间隔秒数"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 400,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

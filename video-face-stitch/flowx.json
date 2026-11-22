@@ -79,6 +79,24 @@
       "description": "颜色匹配（治蓝色方块闪动）：patch 外环 mean/std 对齐源帧同区域外环，1=开（默认）0=关"
     },
     {
+      "name": "tone_mode",
+      "type": "string",
+      "default": "freq_sep",
+      "description": "色调口径：freq_sep（推荐，频率分离：光/色取源帧、细节取重绘，根除色漂）/ ema（Reinhard 外环匹配+时序平滑）/ none（直贴）"
+    },
+    {
+      "name": "lowpass_frac",
+      "type": "float",
+      "default": 0.1,
+      "description": "freq_sep 低通截止（脸高比例，默认 0.1）"
+    },
+    {
+      "name": "detail_gain",
+      "type": "float",
+      "default": 1.0,
+      "description": "freq_sep 细节增益（1.0=原样，>1 更锐）"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "推理服务访问令牌",

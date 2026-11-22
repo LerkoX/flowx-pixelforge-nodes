@@ -48,7 +48,7 @@ family_nodes() {
     wan) echo "wan-animate wan-animate2 wan-gen wan-image-encoder-load wan-pipe \
 wan-te-load wan-text-encode wan-transformer-load wan-vace wan-vae-load" ;;
     video_mask)    echo "video-person-mask" ;;
-    video_face)    echo "video-face-crop video-face-stitch" ;;
+    video_face)    echo "video-face-crop video-face-stitch video-flow-lock" ;;
     qwen_image)    echo "qwen-image-transformer-load qwen-image-te-load \
 qwen-image-vae-load qwen-image-pipe qwen-image-gen" ;;
     video_enhance) echo "video-enhance" ;;

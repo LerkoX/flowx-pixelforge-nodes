@@ -148,7 +148,7 @@ OP_FAMILIES = {
     "sd_face.py": ["video-face-detail"],
     # H3 脸部修复（PixelAI FaceFix 路线）：脸部追踪裁切放大 → H3 ref2va
     # 裁片重绘（走 minimax.h3.gen inpaint）→ 羽化回贴（音轨透传）
-    "video_face.py": ["video-face-crop", "video-face-stitch"],
+    "video_face.py": ["video-face-crop", "video-face-stitch", "video-flow-lock"],
     # BrushNet / PowerPaint 族（SD1.x 局部重绘）：vendor BrushNetModel +
     # hook 块内注入（纯插件层），task prompt 文本编码
     "brushnet.py": ["brushnet-load", "brushnet-apply", "ksampler-brushnet",

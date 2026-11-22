@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "1511316f436e"
+OP_VERSION = "f3ff5fd5d0e5"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1512,6 +1512,7 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
     """
     import numpy as np
     import torch
+    from PIL import Image
     from diffusers.modular_pipelines.minimax_h3.before_denoise import (
         patchify_video_latents)
     from diffusers.modular_pipelines.minimax_h3.encoders import (
@@ -1527,7 +1528,11 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
         frames = _decode_video_reference(path)["frames"]
 
     mdata = inpaint_mask
-    if isinstance(mdata, dict) and mdata.get("frames"):
+    if mdata is None:
+        # **全帧二次采样（V2V）**：无遮罩 → 全白（全帧都是编辑区，
+        # 源约束完全交给 soft 调度）
+        mframes = [Image.new("L", f.size, 255) for f in frames]
+    elif isinstance(mdata, dict) and mdata.get("frames"):
         mframes = mdata["frames"]
     elif isinstance(mdata, dict) and mdata.get("path"):
         # 对象仓库存贮形态：VIDEO 统一落盘 mp4（{path, fps, num_frames}）
@@ -2218,9 +2223,12 @@ def register(registry):
         # 局部编辑（人物替换）：源视频 latent + SAM 遮罩 → denoise 每步
         # 遮罩外拉回源轨迹（Relay denoise-mask 语义）。尺寸/帧数必须与
         # 生成参数一致（hook 首次调用时校验行数）。
-        if (inpaint_video is None) != (inpaint_mask is None):
+        # 只给 inpaint_video 不给遮罩 = **全帧二次采样（V2V）**：遮罩
+        # 按全白处理，配合 inpaint_soft + mask_schedule=const 控制重绘
+        # 强度——无裁切/贴回接缝，治 FaceFix 裁片方案的边界闪动。
+        if inpaint_mask is not None and inpaint_video is None:
             raise ValueError(
-                "minimax.h3.gen: inpaint_video 与 inpaint_mask 必须同时提供")
+                "minimax.h3.gen: inpaint_mask 必须配合 inpaint_video 使用")
         inpaint_ctx = None
         if inpaint_video is not None:
             # **mmgp 默认设备污染（2026-11-21 三连崩根因实锤）**：

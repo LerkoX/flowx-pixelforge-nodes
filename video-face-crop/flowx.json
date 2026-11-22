@@ -20,7 +20,12 @@
     {
       "name": "boxes",
       "type": "string",
-      "description": "逐帧包围盒 JSON（接 video-face-stitch.boxes）"
+      "description": "逐帧包围盒（base64 JSON，兼容旧链路；新链路请用 boxes_file）"
+    },
+    {
+      "name": "boxes_file",
+      "type": "string",
+      "description": "逐帧包围盒 JSON 的服务端文件路径（推荐，接 video-face-stitch.boxes；手绘蒙版 strokes_ref 同构：存文件传路径，避免大 JSON 文本被模板引擎重渲染）"
     },
     {
       "name": "face_ref",

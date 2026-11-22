@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "63f28a5814c6"
+OP_VERSION = "b91c852766b7"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -148,6 +148,7 @@ def register(registry):
         inputs={"video": "VIDEO", "mask": "VIDEO",
                 "crop_factor": "FLOAT", "out_size": "INT", "ema": "FLOAT"},
         outputs={"crop": "VIDEO", "mask_white": "VIDEO", "boxes": "STRING",
+                 "boxes": "STRING", "boxes_file": "STRING",
                  "face_ref": "IMAGE", "num_frames": "INT", "fps": "INT",
                  "face_h_max": "INT"},
         description="脸部追踪裁切（PixelAI FaceFix 第一段）：遮罩逐帧出脸部"
@@ -272,13 +273,22 @@ def register(registry):
               f"boxes[0]={boxes[0]}", flush=True)
         import base64
         boxes_json = json.dumps(boxes)
-        # Studio 字符串模板引擎会把合法 JSON 文本当结构化值重新渲染
-        # （实测输出 '<[]interface {} Value>'）——boxes 一律 base64 传输，
-        # stitch 端自动解码（兼容原始 JSON）。
+        # **boxes 存文件不传大 JSON 文本**（手绘蒙版 strokes_ref 同构）：
+        # Studio 字符串模板引擎会把 JSON 文本当结构化值重渲染（实测输出
+        # '<[]interface {} Value>'），且大字符串在 yaml/画布里不可读。
+        # 改为落服务端文件、输出路径（纯路径字符串过模板零风险），
+        # stitch 端见到存在的文件路径直接读；同时保留 b64 输出兼容旧链路。
+        vdir = os.environ.get("VIDEO_DIR") or "/var/lib/flowx-inference/videos"
+        os.makedirs(vdir, exist_ok=True)
+        boxes_path = os.path.join(
+            vdir, f"facecrop_boxes_{int(t0)}_{os.getpid()}.json")
+        with open(boxes_path, "w") as f:
+            f.write(boxes_json)
         boxes_b64 = base64.b64encode(boxes_json.encode()).decode()
         return {"crop": {"frames": crops, "fps": fps},
                 "mask_white": {"frames": mask_white, "fps": fps},
                 "boxes": boxes_b64,
+                "boxes_file": boxes_path,
                 "face_ref": face_ref,
                 "num_frames": n, "fps": int(round(fps)),
                 "face_h_max": int(face_h_max)}
@@ -311,9 +321,20 @@ def register(registry):
             raise ValueError(
                 f"video.face_stitch: 裁片帧数 {len(crops)} != 源视频帧数 {n}")
         boxes_s = boxes if isinstance(boxes, str) else boxes.decode()
+        # boxes 三种形态：服务端文件路径（推荐，crop 的 boxes_file 输出）
+        # / base64 / 原始 JSON。路径形态直接读文件（防穿越：必须在
+        # VIDEO_DIR 下）。
+        if boxes_s.startswith("/") and os.path.isfile(boxes_s):
+            vdir = os.path.realpath(
+                os.environ.get("VIDEO_DIR") or "/var/lib/flowx-inference/videos")
+            if os.path.realpath(boxes_s).startswith(vdir + os.sep):
+                boxes_s = open(boxes_s).read()
+            else:
+                raise ValueError(
+                    f"video.face_stitch: boxes 文件路径越界 {boxes_s}")
         try:
             boxes_l = json.loads(boxes_s)
-        except Exception:  # noqa: BLE001 — base64 传输形态（见 face_crop）
+        except Exception:  # noqa: BLE001 — base64 传输形态
             boxes_l = json.loads(base64.b64decode(boxes_s).decode())
         if len(boxes_l) != n:
             raise ValueError(

@@ -60,13 +60,15 @@ def main():
     if refs.strip():
         inputs["references"] = refs
     # 局部编辑（人物替换）：源视频对象 + SAM 遮罩对象（video-person-mask）
+    # 只接 inpaint_video 不接遮罩 = 全帧二次采样（V2V，服务端按全白处理）
     ipv = param("inpaint_video", "")
     ipm = param("inpaint_mask", "")
     if ipv or ipm:
-        if not (ipv and ipm):
-            raise RuntimeError("inpaint_video 与 inpaint_mask 必须同时接线")
+        if ipm and not ipv:
+            raise RuntimeError("inpaint_mask 必须配合 inpaint_video 接线")
         inputs["inpaint_video"] = ref(ipv)
-        inputs["inpaint_mask"] = ref(ipm)
+        if ipm:
+            inputs["inpaint_mask"] = ref(ipm)
         # 源约束强度旋钮：soft（遮罩内生成权重）/ lock（前期全图锁源占比）
         inputs["inpaint_soft"] = float(param("inpaint_soft", "1") or "1")
         inputs["inpaint_lock"] = float(param("inpaint_lock", "0") or "0")

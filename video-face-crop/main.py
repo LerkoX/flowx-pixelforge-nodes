@@ -42,6 +42,7 @@ def main():
     crop_id = outs["crop"].get("id")
     mask_id = outs["mask_white"].get("id")
     boxes = outs["boxes"].get("value")
+    boxes_file = (outs.get("boxes_file") or {}).get("value") or boxes
     face_ref_id = outs["face_ref"].get("id")
     n = outs["num_frames"].get("value")
     fps = outs["fps"].get("value")
@@ -51,7 +52,8 @@ def main():
           flush=True)
     if crop_id:
         emit_result_preview(pbase, crop_id, tok, kind="videos")
-    emit(crop=crop_id, mask_white=mask_id, boxes=boxes, face_ref=face_ref_id,
+    emit(crop=crop_id, mask_white=mask_id, boxes=boxes,
+         boxes_file=boxes_file, face_ref=face_ref_id,
          num_frames=n, fps=fps, face_h_max=fh)
 
 

@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "73dca8961082"
+OP_VERSION = "cac55ac70f7b"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -80,11 +80,28 @@ def _video_to_frames(video_data, max_frames=0):
 
 
 def _mask_bbox(mask_img):
-    """单帧灰度遮罩 → 白色区包围盒 (x, y, w, h)；空遮罩返回 None。"""
+    """单帧灰度遮罩 → **最大连通白区**的包围盒 (x, y, w, h)；空遮罩返回 None。
+
+    ⚠ 必须用最大连通域而非全局 bbox：SAM3 遮罩偶发伪影（实测一条
+    1~2px 宽、贯穿全帧高的竖线），全局 bbox 会被它冲爆（face_h
+    116→913）→ 裁窗瞬间变全身 → 该帧重绘整个场景 → 贴回后闪动/偏色
+    （1997 根因）。cv2 不可用时回退全局 bbox（旧行为）。
+    """
     import numpy as np
     m = np.asarray(mask_img.convert("L")) > 127
     if not m.any():
         return None
+    try:
+        import cv2
+        n_lab, _lab, stats, _cent = cv2.connectedComponentsWithStats(
+            m.astype(np.uint8), connectivity=8)
+        if n_lab > 1:
+            # stats[:, 4] = area；跳过背景（label 0）取最大
+            k = 1 + int(np.argmax(stats[1:, 4]))
+            x, y, w, h = (int(v) for v in stats[k, :4])
+            return (x, y, w, h)
+    except ImportError:
+        pass
     rows = np.where(m.any(axis=1))[0]
     cols = np.where(m.any(axis=0))[0]
     x0, x1 = int(cols[0]), int(cols[-1]) + 1
@@ -157,29 +174,75 @@ def register(registry):
         out = max(64, int(out_size))
         ema_f = min(0.99, max(0.0, float(ema)))
 
-        # 逐帧脸部包围盒 + EMA 平滑（丢帧沿用上一盒）
-        boxes = []       # 平滑后（贴回/裁切用）
-        raw_face_h = []  # 原始脸高（face-size fade 判定用）
-        prev = None      # (cx, cy, side)
+        # 第一遍：收集原始包围盒（不做任何平滑）
+        raw = []  # (cx, cy, w, h) 或 None
         for i in range(n):
             bb = _mask_bbox(mframes[i])
             if bb is None:
-                if prev is None:
-                    raise ValueError(
-                        "video.face_crop: 第 0 帧就检不到脸（遮罩全空）——"
-                        "检查上游遮罩（prompt 是否命中脸部）")
-                cx, cy, side = prev
-                raw_face_h.append(int(prev[2] / cf))
+                raw.append(None)
             else:
                 x, y, w, h = bb
-                raw_face_h.append(h)
-                side = max(w, h) * cf
-                cx, cy = x + w / 2.0, y + h / 2.0
-                if prev is not None:
-                    cx = ema_f * prev[0] + (1 - ema_f) * cx
-                    cy = ema_f * prev[1] + (1 - ema_f) * cy
-                    side = ema_f * prev[2] + (1 - ema_f) * side
-                prev = (cx, cy, side)
+                raw.append((x + w / 2.0, y + h / 2.0, float(w), float(h)))
+        if raw[0] is None and not any(r is not None for r in raw):
+            raise ValueError(
+                "video.face_crop: 全程检不到脸（遮罩全空）——"
+                "检查上游遮罩（prompt 是否命中脸部）")
+
+        # **尺寸离群值剔除**（1997 根因修复）：SAM3 的 face 遮罩会偶发
+        # 吞掉整个人（实测 face_h 116→913 尖峰），EMA 根本拦不住，裁窗
+        # 瞬间变成全身 → 该帧重绘整个场景 → 贴回后紫色调+内容突变=闪动。
+        # 对齐官方 AutoContext 的轨迹仲裁思路：rolling 中位数窗口，
+        # 偏离 [0.55×, 1.8×] 的帧判为检测失败 → 走缺口插值。
+        hs = np.array([r[3] if r else np.nan for r in raw])
+        valid = ~np.isnan(hs)
+        win = 9
+        for i in range(n):
+            if not valid[i]:
+                continue
+            lo, hi = max(0, i - win // 2), min(n, i + win // 2 + 1)
+            med = np.nanmedian(hs[lo:hi][valid[lo:hi]]) \
+                if valid[lo:hi].any() else np.nan
+            if np.isnan(med):
+                continue
+            if hs[i] < 0.55 * med or hs[i] > 1.8 * med:
+                raw[i] = None  # 离群 → 判失败，交给缺口插值
+                valid[i] = False
+        n_outlier = int((~valid).sum())
+
+        # 缺口插值（含丢帧）：最近有效帧之间线性插值 cx/cy/w/h；
+        # 首尾缺口用最近有效帧填充
+        vidx = np.where(valid)[0]
+        if len(vidx) == 0:
+            raise ValueError("video.face_crop: 离群剔除后无有效帧")
+        interp = []
+        for i in range(n):
+            if valid[i]:
+                interp.append(raw[i])
+                continue
+            j = np.searchsorted(vidx, i)
+            if j == 0:
+                interp.append(raw[vidx[0]])
+            elif j >= len(vidx):
+                interp.append(raw[vidx[-1]])
+            else:
+                a, b = vidx[j - 1], vidx[j]
+                t = (i - a) / float(b - a)
+                interp.append(tuple(
+                    raw[a][k] * (1 - t) + raw[b][k] * t for k in range(4)))
+
+        # 第二遍：EMA 平滑（位置+尺寸同源序列）
+        boxes = []
+        raw_face_h = []
+        prev = None
+        for i in range(n):
+            cx, cy, w, h = interp[i]
+            raw_face_h.append(int(round(h)))
+            side = max(w, h) * cf
+            if prev is not None:
+                cx = ema_f * prev[0] + (1 - ema_f) * cx
+                cy = ema_f * prev[1] + (1 - ema_f) * cy
+                side = ema_f * prev[2] + (1 - ema_f) * side
+            prev = (cx, cy, side)
             # 方形盒 clamp 到帧内
             side = min(side, W, H)
             x0 = int(round(min(max(cx - side / 2, 0), W - side)))
@@ -205,7 +268,8 @@ def register(registry):
         face_ref = crops[ref_idx]
         print(f"[video-face] crop done {time.time()-t0:.1f}s: {n} 帧 "
               f"{W}x{H} → {out}x{out} | 脸高 {min(raw_face_h)}~{face_h_max}px "
-              f"| 参考帧={ref_idx} boxes[0]={boxes[0]}", flush=True)
+              f"| 离群剔除 {n_outlier} 帧 | 参考帧={ref_idx} "
+              f"boxes[0]={boxes[0]}", flush=True)
         import base64
         boxes_json = json.dumps(boxes)
         # Studio 字符串模板引擎会把合法 JSON 文本当结构化值重新渲染
@@ -266,17 +330,18 @@ def register(registry):
             return sel.mean(axis=0), sel.std(axis=0)
 
         out_frames = []
-        # **颜色匹配（治蓝色方块闪动）两遍法**：H3 重绘的裁片与源帧存在
-        # 色温/曝光漂移（实测偏蓝）。第一遍对全视频收集外环 mean/std，
-        # 取**中位数**聚合成一组恒定 gain/bias（对齐官方 color_match 的
-        # “逐子轨”口径——整条轨迹同一变换，时序恒定）；第二遍应用。
-        # ⚠ 逐帧独立计算会引入新的闪动源（每帧增益不同），已踩坑修复。
-        # 外环统计只影响 patch 边缘与源背景的衔接颜色，内部脸部的新肤色
-        # 不受影响。
-        cm_transform = None
+        # **颜色匹配（治蓝色方块闪动 + 帧级色偏）**：H3 重绘的裁片与源帧
+        # 存在色温/曝光漂移。统计量逐帧收集（中位数抗手臂入侵污染），
+        # 再对 gain/bias 序列做 **时序 EMA 平滑**——折中方案：
+        # - 纯逐帧（第一版）：每帧增益不同 → 色温闪动（1991 踩坑）
+        # - 纯全局常量（第二版）：治不了生成侧的帧级色偏（运动模糊帧
+        #   整片泛紫，1996 踩坑）
+        # - EMA 平滑（本版）：跟随慢速光照变化 + 修正帧级色偏，
+        #   平滑掉帧间跳变不引入新闪动
+        cm_series = None
         if int(color_match):
             import numpy as np
-            src_ms, src_ss, pat_ms, pat_ss = [], [], [], []
+            per_frame = []  # (p_m, s_m, gain) per frame
             for i in range(n):
                 b = boxes_l[i]
                 src_np = np.asarray(
@@ -286,25 +351,33 @@ def register(registry):
                 pat_np = np.asarray(
                     crops[i].convert("RGB").resize(
                         (b["w"], b["h"]), Image.LANCZOS), dtype=np.float32)
-                m, s = _ring_stats(src_np); src_ms.append(m); src_ss.append(s)
-                m, s = _ring_stats(pat_np); pat_ms.append(m); pat_ss.append(s)
-            s_m = np.median(np.stack(src_ms), axis=0)
-            s_s = np.median(np.stack(src_ss), axis=0)
-            p_m = np.median(np.stack(pat_ms), axis=0)
-            p_s = np.median(np.stack(pat_ss), axis=0)
-            gain = np.where(p_s > 1e-3, s_s / np.maximum(p_s, 1e-3), 1.0)
-            gain = np.clip(gain, 0.5, 2.0)  # 防爆：极端纹理差异不限幅
-            cm_transform = (p_m, s_m, gain)
-            print(f"[video-face] color_match(逐视频): gain={gain.round(3)} "
-                  f"bias={(s_m - p_m * gain).round(1)}", flush=True)
+                s_m, s_s = _ring_stats(src_np)
+                p_m, p_s = _ring_stats(pat_np)
+                gain = np.where(p_s > 1e-3, s_s / np.maximum(p_s, 1e-3), 1.0)
+                gain = np.clip(gain, 0.5, 2.0)  # 防爆
+                per_frame.append((p_m, s_m, gain))
+            # 时序 EMA（alpha=0.3：响应 ~5 帧时间尺度，快于光照变化、
+            # 慢于单帧抖动）；首尾用前向/后向填充
+            alpha = 0.3
+            smoothed = []
+            acc = per_frame[0]
+            for pf in per_frame:
+                acc = tuple(alpha * cur + (1 - alpha) * prev
+                            for cur, prev in zip(pf, acc))
+                smoothed.append(acc)
+            cm_series = smoothed
+            g = np.stack([s[2] for s in smoothed])
+            print(f"[video-face] color_match(EMA): gain范围 "
+                  f"[{g.min(axis=0).round(2)},{g.max(axis=0).round(2)}]",
+                  flush=True)
         for i in range(n):
             b = boxes_l[i]
             base = frames[i].convert("RGB")
             patch = crops[i].convert("RGB").resize((b["w"], b["h"]),
                                                    Image.LANCZOS)
-            if cm_transform is not None:
+            if cm_series is not None:
                 import numpy as np
-                p_m, s_m, gain = cm_transform
+                p_m, s_m, gain = cm_series[i]
                 pat_np = np.asarray(patch, dtype=np.float32)
                 pat_np = (pat_np - p_m) * gain + s_m
                 patch = Image.fromarray(

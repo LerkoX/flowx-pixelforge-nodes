@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "563ade398266"
+OP_VERSION = "5f6d0b34c865"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1081,7 +1081,8 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
                      soft_alpha=1.0, lock_ratio=0.0, num_steps=8,
                      cond_aug=0.999, mask_schedule="linear",
                      window_start=0.0, window_end=1.0,
-                     mask_threshold=0.5, mask_smooth=3, mask_feather=0):
+                     mask_threshold=0.5, mask_smooth=3, mask_feather=0,
+                     native=0):
     """源视频 latent + 遮罩 → packed 混合上下文（人物替换等局部编辑）。
 
     机制（对齐 Relay/Comfy denoise-mask 语义）：denoise 每步后把遮罩外
@@ -1222,6 +1223,7 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
     print(f"[minimax-h3] inpaint: src {tuple(src_latent.shape)} "
           f"packed={src_packed.shape[0]} rows, 编辑区 "
           f"{mask_packed.mean()*100:.1f}% patches | "
+          f"native={native} "
           f"soft={soft_alpha}→1.0 升温 lock={lock_ratio} aug={cond_aug} "
           f"thr={mask_threshold} smooth={mask_smooth} feather={mask_feather}"
           f"({max(1, round(num_steps * lock_ratio))}/{num_steps}步)",
@@ -1237,7 +1239,8 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
             "window_end": float(window_end),
             "mask_threshold": float(mask_threshold),
             "mask_smooth": int(mask_smooth),
-            "mask_feather": int(mask_feather)}
+            "mask_feather": int(mask_feather),
+            "native": int(native)}
 
 
 def _sched_value(ctx, step_i):
@@ -1316,16 +1319,68 @@ class _InpaintHook:
                 # 捕获与生成区同一份初始噪声（所有条件共用同一 RNG 流，
                 # 对齐 ComfyUI minimax `_cond_video_rows` 的注释语义）
                 ctx["noise_eps"] = block_state.latents[n_cond:].clone()
-            # **输入混合**（对齐 ComfyUI KSamplerX0Inpaint：模型前向前把
-            # 保留区拉回条件强度）——模型因此看到"保留区是干净的"，
-            # 而不是只看输出被覆盖。
-            hook._mix(block_state, components, n_cond, mask_t, sigma_idx=0,
-                      step_i=i, phase="in")
-            components, block_state = hook._orig(
-                loop_self, components, block_state, i=i, t=t)
-            # **输出混合**：预测结果里保留区强制回到条件强度
-            hook._mix(block_state, components, n_cond, mask_t,
-                      sigma_idx=None, step_i=i, phase="out")
+
+            if bool(ctx.get("native", 0)):
+                # ══ 原生 inpaint（ComfyUI denoise_mask 机制的逐行移植）══
+                # 回拉钩子的根治替代：旧方案每步强制拉回保留区，但模型被
+                # 告知「所有 token 都在流 σ」——干净内容挂着噪声标签，分布
+                # 外输入导致遮罩内生成崩塌（碎玻璃/几何马赛克纹理，2020
+                # 纯 ref2va 实验证实与 LoRA 无关，根因在栈）。
+                # 原生机制三件套（comfy-src/minimax/model.py:637-700）：
+                # ① 保留行时间戳钉在 max(t, 0.999)（=cond 行的
+                #    keyframe_noise_aug，"just short of clean"）——
+                #    模型知道保留区是干净的；
+                # ② 保留行速度置零（out *= denoise_mask）——永不更新，
+                #    无需每步回拉；
+                # ③ 初始值 = aug·src+(1-aug)·noise（与钉住值语义一致）。
+                if i == 0:
+                    aug = float(ctx.get("cond_aug", 0.999))
+                    injected = (aug * ctx["_gpu_src"]
+                                + (1.0 - aug) * ctx["noise_eps"])
+                    cur = block_state.latents[n_cond:]
+                    block_state.latents[n_cond:] = (
+                        cur * mask_t + injected * (1.0 - mask_t))
+                # 步前快照：step 后按行恢复（见下方"恢复"注释）
+                pre_rows = block_state.latents[n_cond:].clone()
+                # 逐行时间戳：改写本步 row_timestep_plan
+                unique_t, t_idx = block_state.row_timestep_plan[i]
+                row_t = unique_t[t_idx].clone()
+                dif = getattr(block_state, "denoiser_input_fields", None)
+                vidx = (dif.get("video_indices")
+                        if isinstance(dif, dict) else None)
+                if vidx is None:  # 兜底：video 行在打包序列最前
+                    vidx = torch.arange(rows_total, device=row_t.device)
+                gen_pos = vidx[n_cond:].to(row_t.device)
+                preserved = (mask_t.squeeze(1) < 0.5).to(row_t.device)
+                # pin 与 before_denoise 的 cond 行表达式逐字一致：
+                # max(float(t), keyframe_noise_aug=0.999)
+                row_t[gen_pos[preserved]] = max(float(t), 0.999)
+                new_unique, new_idx = torch.unique(
+                    row_t, sorted=True, return_inverse=True)
+                block_state.row_timestep_plan[i] = (new_unique, new_idx)
+                components, block_state = hook._orig(
+                    loop_self, components, block_state, i=i, t=t)
+                # **冻结恢复**（2022 背景涂污事故修复）：loop_step 里
+                # denoiser 和 scheduler step 是顺序执行的整体，步后拿到的
+                # noise_pred 已经被消费过——"速度置零"写在步后是无效操作。
+                # 而且 t=0.999 的钉住行在 x0 形式更新 x'=r·x+(1-r)·x0_est
+                # 下仍会每步向模型重估的 x0 漂移（=背景涂污的根因）。
+                # ComfyUI 的 out *= denoise_mask 本质是"保留行零更新"，
+                # 与其等价的正确实现 = 步后把保留行恢复为步前快照。
+                lat = block_state.latents[n_cond:]
+                block_state.latents[n_cond:] = (
+                    lat * mask_t + pre_rows * (1.0 - mask_t))
+            else:
+                # **输入混合**（对齐 ComfyUI KSamplerX0Inpaint：模型前向前把
+                # 保留区拉回条件强度）——模型因此看到"保留区是干净的"，
+                # 而不是只看输出被覆盖。
+                hook._mix(block_state, components, n_cond, mask_t,
+                          sigma_idx=0, step_i=i, phase="in")
+                components, block_state = hook._orig(
+                    loop_self, components, block_state, i=i, t=t)
+                # **输出混合**：预测结果里保留区强制回到条件强度
+                hook._mix(block_state, components, n_cond, mask_t,
+                          sigma_idx=None, step_i=i, phase="out")
             # 末步：decode 前把 VAE 挪回卡（inpaint 期间被挪 CPU 让显存）
             if i == len(block_state.timesteps) - 1 and ctx.get("_vae_cpu"):
                 components.vae.to("cuda")
@@ -1784,7 +1839,8 @@ def register(registry):
                 "references": "STRING",
                 "inpaint_video": "VIDEO", "inpaint_mask": "VIDEO",
                 "inpaint_soft": "FLOAT", "inpaint_lock": "FLOAT",
-                "inpaint_aug": "FLOAT", "mask_schedule": "STRING",
+                "inpaint_aug": "FLOAT", "inpaint_native": "INT",
+                "mask_schedule": "STRING",
                 "window_start": "FLOAT", "window_end": "FLOAT",
                 "mask_threshold": "FLOAT", "mask_smooth": "INT",
                 "mask_feather": "INT",
@@ -1807,6 +1863,7 @@ def register(registry):
                 seed=-1, steps=4, preview_every=0, references="",
                 height=0, width=0, inpaint_video=None, inpaint_mask=None,
                 inpaint_soft=1.0, inpaint_lock=0.0, inpaint_aug=0.999,
+                inpaint_native=0,
                 mask_schedule="linear", window_start=0.0, window_end=1.0,
                 mask_threshold=0.5, mask_smooth=3, mask_feather=0,
                 sampler="euler", eta=1.0):
@@ -1919,7 +1976,8 @@ def register(registry):
                 num_steps=int(steps), cond_aug=inpaint_aug,
                 mask_schedule=mask_schedule, window_start=window_start,
                 window_end=window_end, mask_threshold=mask_threshold,
-                mask_smooth=mask_smooth, mask_feather=mask_feather)
+                mask_smooth=mask_smooth, mask_feather=mask_feather,
+                native=inpaint_native)
 
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)

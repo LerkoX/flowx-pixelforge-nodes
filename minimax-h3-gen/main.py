@@ -73,6 +73,7 @@ def main():
         inputs["inpaint_soft"] = float(param("inpaint_soft", "1") or "1")
         inputs["inpaint_lock"] = float(param("inpaint_lock", "0") or "0")
         inputs["inpaint_aug"] = float(param("inpaint_aug", "0.999") or "0.999")
+        inputs["inpaint_native"] = param("inpaint_native", 0, int)
         inputs["mask_schedule"] = param("mask_schedule", "linear")
         inputs["window_start"] = float(param("window_start", "0") or "0")
         inputs["window_end"] = float(param("window_end", "1") or "1")

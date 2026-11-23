@@ -128,6 +128,13 @@
       "description": "条件注入强度（仅 inpaint 生效）：保留区按 aug·源 + (1-aug)·噪声 注入，**与采样步无关**（对齐 ComfyUI 的 VISUAL_COND_TIMESTEP=0.999）。0.999≈几乎干净源=正确冻结语义；-1=旧行为（按当前 sigma 加噪，供 A/B 对比）"
     },
     {
+      "name": "inpaint_native",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "原生 inpaint（ComfyUI denoise_mask 移植）：保留行时间戳钉 0.999 + 速度置零，替代每步回拉钩子——治遮罩内分布外碎裂纹理。1=开（人物替换推荐），0=旧回拉（脸部修复等已定版链路保持）"
+    },
+    {
       "name": "mask_schedule",
       "type": "string",
       "required": false,

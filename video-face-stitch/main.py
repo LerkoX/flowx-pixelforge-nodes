@@ -37,6 +37,8 @@ def main():
         "degate_thresh": param("degate_thresh", 1.5, float),
         "degate_sat": param("degate_sat", 1.5, float),
         "degate_blur": param("degate_blur", 0.6, float),
+        "degate_face": param("degate_face", 1, int),
+        "freq_temporal": param("freq_temporal", 0.25, float),
     }
     print(f"[video-face-stitch] feather={inputs['feather']} "
           f"fade=({inputs['full_fix_below']},{inputs['no_fix_above']})",

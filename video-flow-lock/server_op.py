@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "8b8d3fefe68a"
+OP_VERSION = "aea74d31e093"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -301,7 +301,8 @@ def register(registry):
                 "tone_mode": "STRING", "lowpass_frac": "FLOAT",
                 "detail_gain": "FLOAT",
                 "degate": "INT", "degate_thresh": "FLOAT",
-                "degate_sat": "FLOAT", "degate_blur": "FLOAT"},
+                "degate_sat": "FLOAT", "degate_blur": "FLOAT",
+                "degate_face": "INT", "freq_temporal": "FLOAT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="脸部修复回贴（PixelAI FaceFix 末段）：把重绘后的脸部"
                     "特写按 boxes 逐帧缩放贴回原视频，高斯羽化 feather px "
@@ -313,7 +314,7 @@ def register(registry):
                         full_fix_below=0, no_fix_above=0, color_match=1,
                         tone_mode="ema", lowpass_frac=0.1, detail_gain=1.0,
                         degate=1, degate_thresh=1.5, degate_sat=1.5,
-                        degate_blur=0.6):
+                        degate_blur=0.6, degate_face=1, freq_temporal=0.25):
         import base64
         from PIL import Image, ImageFilter
 
@@ -461,6 +462,45 @@ def register(registry):
                           f"{np.nonzero(blur_bad)[0].tolist()[:12]}",
                           flush=True)
                 bad = bad | blur_bad
+            # 脸检门（YuNet）：重绘裁片里检不出脸 = 遮挡穿透重绘失败
+            # （2018 实证帧 126/133：手臂扫脸段模型画不出脸，而亮度/
+            # 饱和度/模糊门都抓不到——重绘在那些帧局部统计完全正常）。
+            # 权重软链共享盘 FaceFusion 的 yunet_2023mar.onnx（~340KB）。
+            if int(degate_face):
+                _mdl = None
+                for _cand in (
+                        os.path.join(os.environ.get("MODELS_DIR")
+                                     or "/var/lib/flowx-inference/models",
+                                     "yunet_2023mar.onnx"),
+                        "/models/yunet_2023mar.onnx"):
+                    if os.path.isfile(_cand) or os.path.islink(_cand):
+                        _mdl = _cand
+                        break
+                if _mdl is None:
+                    print("[video-face] degate_face: 未找到 "
+                          "yunet_2023mar.onnx，跳过脸检门", flush=True)
+                else:
+                    try:
+                        import cv2 as _cv
+                        _det = _cv.FaceDetectorYN_create(
+                            _mdl, "", (crops[0].size[0], crops[0].size[1]))
+                        noface = np.zeros(n, dtype=bool)
+                        for i in range(n):
+                            _fr = _cv.cvtColor(
+                                np.asarray(crops[i].convert("RGB")),
+                                _cv.COLOR_RGB2BGR)
+                            _, _faces = _det.detect(_fr)
+                            if _faces is None or len(_faces) == 0:
+                                noface[i] = True
+                        if noface.any():
+                            print(f"[video-face] degate 脸检门命中 "
+                                  f"{int(noface.sum())} 帧："
+                                  f"{np.nonzero(noface)[0].tolist()[:12]}",
+                                  flush=True)
+                        bad = bad | noface
+                    except Exception as _e:
+                        print(f"[video-face] degate_face 异常跳过：{_e}",
+                              flush=True)
             g = np.where(bad, 0.0, 1.0)
             # 3 帧滑动平均软化开关沿
             g = np.convolve(g, [1 / 3, 1 / 3, 1 / 3], mode="same")
@@ -474,6 +514,40 @@ def register(registry):
                       f"回退源帧（亮度>{thr:g}×/饱和度>{sthr:g}×离群）："
                       f"{idxs[:12]}{'...' if len(idxs) > 12 else ''}",
                       flush=True)
+
+        # freq_sep 细节层时序平滑（抗闪）：裁片空间脸居中大稳，
+        # 3 帧加权（freq_temporal=邻居权重）压掉重绘细节的逐帧抖动。
+        # 在裁片原始尺寸上做（box 尺寸逐帧不同，没法直接平滑）。
+        _sdetail = None
+        if tone_mode == "freq_sep" and float(freq_temporal) > 0:
+            import numpy as np
+            from PIL import ImageFilter as _IF0
+            cw0, ch0 = crops[0].size
+            details = []
+            for i in range(n):
+                b = boxes_l[i]
+                fh = float(b.get("face_h") or b["h"] / 2.5)
+                # 半径从源像素域换算到裁片像素域（窗口放大 768/w 倍）
+                rad768 = max(2.0, fh * float(lowpass_frac)
+                             * cw0 / max(1, b["w"]))
+                cnp = np.asarray(crops[i].convert("RGB"), dtype=np.float32)
+                blp = np.asarray(
+                    crops[i].convert("RGB").filter(
+                        _IF0.GaussianBlur(radius=rad768)),
+                    dtype=np.float32)
+                details.append(cnp - blp)
+            w_nb = float(freq_temporal)
+            _sdetail = []
+            for i in range(n):
+                acc = details[i].copy()
+                wsum = 1.0
+                for j in (i - 1, i + 1):
+                    if 0 <= j < n:
+                        acc += w_nb * details[j]
+                        wsum += w_nb
+                _sdetail.append(acc / wsum)
+            print(f"[video-face] freq_sep 时序平滑 w={w_nb:g}",
+                  flush=True)
 
         for i in range(n):
             b = boxes_l[i]
@@ -490,11 +564,17 @@ def register(registry):
                 bl_b = np.asarray(
                     base_reg.filter(_IF.GaussianBlur(radius=rad)),
                     dtype=np.float32)
-                pat_np = np.asarray(patch, dtype=np.float32)
-                bl_p = np.asarray(
-                    patch.filter(_IF.GaussianBlur(radius=rad)),
-                    dtype=np.float32)
-                out_np = bl_b + float(detail_gain) * (pat_np - bl_p)
+                if _sdetail is not None:
+                    import cv2 as _cv2
+                    det_np = _cv2.resize(_sdetail[i], (b["w"], b["h"]),
+                                         interpolation=_cv2.INTER_LINEAR)
+                else:
+                    pat_np = np.asarray(patch, dtype=np.float32)
+                    bl_p = np.asarray(
+                        patch.filter(_IF.GaussianBlur(radius=rad)),
+                        dtype=np.float32)
+                    det_np = pat_np - bl_p
+                out_np = bl_b + float(detail_gain) * det_np
                 patch = Image.fromarray(
                     np.clip(out_np, 0, 255).astype(np.uint8))
             elif cm_series is not None:

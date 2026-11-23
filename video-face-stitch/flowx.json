@@ -125,6 +125,20 @@
       "description": "质量门模糊阈值：重绘 Laplacian 方差 < 源同区域×此值 判退化回退源帧（治快速动作帧重绘画糊而源清晰的情况）；0=关闭"
     },
     {
+      "name": "degate_face",
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "description": "质量门脸检（YuNet）：重绘裁片检不出脸=遮挡穿透画崩，回退源帧；0=关闭"
+    },
+    {
+      "name": "freq_temporal",
+      "type": "float",
+      "required": false,
+      "default": 0.25,
+      "description": "freq_sep 细节层时序平滑（邻居权重 0~1）：压重绘细节逐帧抖动抗小闪动；0=关闭；裁片空间脸居中对齐所以运动安全"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "推理服务访问令牌",

@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "cc30547b280f"
+OP_VERSION = "8b8d3fefe68a"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -301,7 +301,7 @@ def register(registry):
                 "tone_mode": "STRING", "lowpass_frac": "FLOAT",
                 "detail_gain": "FLOAT",
                 "degate": "INT", "degate_thresh": "FLOAT",
-                "degate_sat": "FLOAT"},
+                "degate_sat": "FLOAT", "degate_blur": "FLOAT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="脸部修复回贴（PixelAI FaceFix 末段）：把重绘后的脸部"
                     "特写按 boxes 逐帧缩放贴回原视频，高斯羽化 feather px "
@@ -312,7 +312,8 @@ def register(registry):
     def _op_face_stitch(video, crop_video, boxes, feather=24,
                         full_fix_below=0, no_fix_above=0, color_match=1,
                         tone_mode="ema", lowpass_frac=0.1, detail_gain=1.0,
-                        degate=1, degate_thresh=1.5, degate_sat=1.5):
+                        degate=1, degate_thresh=1.5, degate_sat=1.5,
+                        degate_blur=0.6):
         import base64
         from PIL import Image, ImageFilter
 
@@ -432,6 +433,34 @@ def register(registry):
             sratio = sats / _rmed(sats)
             bad = ((ratio > thr) | (ratio < 1.0 / thr)
                    | (sratio > sthr) | (sratio < 1.0 / sthr))
+            # 模糊通道：重绘显著比源糊（Laplacian 方差 <degate_blur×源）
+            # 即回退——快速动作/裁窗过渡帧 H3 重绘会画糊，而此时源帧
+            # 往往清晰（2016 帧 118~126 实证：源清晰重绘糊）。
+            bthr = float(degate_blur)
+            if bthr > 0:
+                import cv2 as _cv
+
+                def _sharp(im):
+                    return float(_cv.Laplacian(
+                        np.asarray(im.convert("L")), _cv.CV_32F).var())
+
+                sharp_r = np.array([_sharp(c) for c in crops])
+                # 源帧按同一 box 裁出对应区域并缩放到裁片尺寸，保证可比
+                cw, ch = crops[0].size
+                sharp_s = np.array([
+                    _sharp(frames[i].crop(
+                        (boxes_l[i]["x"], boxes_l[i]["y"],
+                         boxes_l[i]["x"] + boxes_l[i]["w"],
+                         boxes_l[i]["y"] + boxes_l[i]["h"])).resize(
+                             (cw, ch), Image.BILINEAR))
+                    for i in range(n)])
+                blur_bad = sharp_r < np.maximum(sharp_s, 1e-3) * bthr
+                if blur_bad.any():
+                    print(f"[video-face] degate 模糊门命中 "
+                          f"{int(blur_bad.sum())} 帧："
+                          f"{np.nonzero(blur_bad)[0].tolist()[:12]}",
+                          flush=True)
+                bad = bad | blur_bad
             g = np.where(bad, 0.0, 1.0)
             # 3 帧滑动平均软化开关沿
             g = np.convolve(g, [1 / 3, 1 / 3, 1 / 3], mode="same")

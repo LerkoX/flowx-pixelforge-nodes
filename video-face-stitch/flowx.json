@@ -118,6 +118,13 @@
       "description": "质量门饱和度离群阈值：过曝紫/洋红块亮度不突出但饱和度突出（1.5=饱和度超 ±5 帧中位数 1.5 倍判退化）；与亮度门任一触发即回退"
     },
     {
+      "name": "degate_blur",
+      "type": "float",
+      "required": false,
+      "default": 0.6,
+      "description": "质量门模糊阈值：重绘 Laplacian 方差 < 源同区域×此值 判退化回退源帧（治快速动作帧重绘画糊而源清晰的情况）；0=关闭"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "推理服务访问令牌",

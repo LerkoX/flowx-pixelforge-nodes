@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "0f4b60635b06"
+OP_VERSION = "571848892c4d"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -1014,7 +1014,7 @@ def register(registry):
         inputs={"video": "VIDEO", "mask": "VIDEO", "dilate": "INT",
                 "radius": "INT", "method": "STRING", "color_match": "INT",
                 "mask_threshold": "INT", "temporal_union": "INT",
-                "mosaic_size": "INT"},
+                "mosaic_size": "INT", "median_window": "INT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="**流派A 第一阶段（Clean Plate）**：把 mask 区域从视频里"
                     "抹除，输出空无一人的纯净背景视频。method=telea（默认，"
@@ -1022,12 +1022,16 @@ def register(registry):
                     "抹除）/mosaic（**Wan2.2 官方 replace 预处理**：人物区域"
                     "打审查式马赛克像素块——模型看到一个'被 censorship 的人"
                     "形'，天然知道要在那里重画一个人，比黑洞/telea 的语义"
-                    "更明确）。mosaic_size=像素块宽（默认 16，建议 12~24）。"
+                    "更明确）/median（**时序滑窗中位数**：每帧取 ±W 窗口内"
+                    "未遮挡像素的中位数——动态灯光背景（霓虹闪烁）也能跟踪，"
+                    "且天然时序连续无闪烁；window 内全程被遮的像素回退 "
+                    "telea。median_window=半窗帧数，默认 8）。"
+                    "mosaic_size=像素块宽（默认 16，建议 12~24）。"
                     "dilate 保证覆盖人物所有像素（原人残留会在下游生成时"
                     "变成鬼影）。")
     def _op_bg_erase(video, mask, dilate=20, radius=15, method="telea",
                      color_match=1, mask_threshold=15, temporal_union=1,
-                     mosaic_size=16):
+                     mosaic_size=16, median_window=8):
         import cv2
         import numpy as np
         from PIL import Image as _Image
@@ -1058,6 +1062,49 @@ def register(registry):
             _raw = _tu
             print(f"[video-bg-erase] 时序并集(±1帧) 遮罩均值 "
                   f"{np.mean([r.mean() for r in _raw])*100:.1f}%", flush=True)
+        if _meth == "median":
+            # ── 时序滑窗中位数 Clean Plate ──────────────────────────
+            # 静态/微动镜头：每像素在 ±W 帧窗口内取未遮挡帧的中位数。
+            # 相比逐帧 telea/lama：① 像素全部来自真实帧（零幻觉纹理）
+            # ② 窗口滑动 → 霓虹灯等动态背景自然跟踪且时序连续（无闪烁）
+            # ③ 人物移动快，窗口内任一背景像素多数帧无遮挡 → 稳健。
+            W = max(1, int(median_window or 8))
+            arr = np.stack([np.asarray(f.convert("RGB"), dtype=np.float32)
+                            for f in frames])                 # (T,H,W,3)
+            msk = np.stack([mb.astype(bool) for mb in _raw])  # (T,H,W)
+            kd = int(dilate or 0)
+            if kd > 0:
+                ker = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE, (kd * 2 + 1, kd * 2 + 1))
+                msk = np.stack([cv2.dilate(m.astype(np.uint8), ker)
+                                .astype(bool) for m in msk])
+            print(f"[video-bg-erase] median 窗 ±{W} 准备 "
+                  f"{time.time()-t0:.1f}s", flush=True)
+            out = []
+            for i in range(n):
+                lo, hi = max(0, i - W), min(n, i + W + 1)
+                win_a = arr[lo:hi].copy()                    # (w,H,W,3)
+                win_m = msk[lo:hi]
+                win_a[win_m] = np.nan
+                med = np.nanmedian(win_a, axis=0)            # (H,W,3)
+                hole = np.isnan(med[:, :, 0])
+                if hole.any():
+                    # 窗口内全程被遮：用当前帧 telea 兜底
+                    img = arr[i].astype(np.uint8)
+                    fill = cv2.inpaint(img, hole.astype(np.uint8) * 255,
+                                       max(1, int(radius)),
+                                       cv2.INPAINT_TELEA)
+                    med[hole] = fill[hole]
+                out.append(_Image.fromarray(
+                    np.clip(med, 0, 255).astype(np.uint8)))
+                if i % 30 == 0:
+                    print(f"[video-bg-erase] median {i}/{n} "
+                          f"{time.time()-t0:.1f}s", flush=True)
+            print(f"[video-bg-erase] done {n}帧 median "
+                  f"{time.time()-t0:.1f}s", flush=True)
+            return {"video": {"frames": out, "fps": fps},
+                    "fps": int(round(fps)), "num_frames": n}
+
         out = []
         for f, mbin, m in zip(frames, _raw, masks):
             img = np.asarray(f.convert("RGB"), dtype=np.uint8)

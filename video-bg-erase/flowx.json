@@ -76,6 +76,13 @@
       "type": "integer",
       "default": 16,
       "description": "mosaic 专用：像素块宽（建议 12~24）"
+    },
+    {
+      "name": "median_window",
+      "type": "integer",
+      "required": false,
+      "default": 8,
+      "description": "median 方法的时序半窗帧数：每帧取 ±W 未遮挡像素中位数（动态背景可跟踪、零幻觉、无闪烁）"
     }
   ],
   "outputs": [

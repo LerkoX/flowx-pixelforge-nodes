@@ -19,6 +19,7 @@ def main():
     inputs["mask_threshold"] = param("mask_threshold", 15, int)
     inputs["temporal_union"] = param("temporal_union", 1, int)
     inputs["mosaic_size"] = param("mosaic_size", 16, int)
+    inputs["median_window"] = param("median_window", 8, int)
     inputs["video"] = ref(inputs["video"])
     inputs["mask"] = ref(inputs["mask"])
     jid = submit_job(url, {"name": actual_op, "inputs": inputs}, tok)

@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "b91c852766b7"
+OP_VERSION = "cc30547b280f"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -299,7 +299,9 @@ def register(registry):
                 "feather": "INT", "full_fix_below": "INT",
                 "no_fix_above": "INT", "color_match": "INT",
                 "tone_mode": "STRING", "lowpass_frac": "FLOAT",
-                "detail_gain": "FLOAT"},
+                "detail_gain": "FLOAT",
+                "degate": "INT", "degate_thresh": "FLOAT",
+                "degate_sat": "FLOAT"},
         outputs={"video": "VIDEO", "fps": "INT", "num_frames": "INT"},
         description="脸部修复回贴（PixelAI FaceFix 末段）：把重绘后的脸部"
                     "特写按 boxes 逐帧缩放贴回原视频，高斯羽化 feather px "
@@ -309,7 +311,8 @@ def register(registry):
                     "音轨从源视频透传。")
     def _op_face_stitch(video, crop_video, boxes, feather=24,
                         full_fix_below=0, no_fix_above=0, color_match=1,
-                        tone_mode="ema", lowpass_frac=0.1, detail_gain=1.0):
+                        tone_mode="ema", lowpass_frac=0.1, detail_gain=1.0,
+                        degate=1, degate_thresh=1.5, degate_sat=1.5):
         import base64
         from PIL import Image, ImageFilter
 
@@ -395,6 +398,54 @@ def register(registry):
             print(f"[video-face] color_match(EMA): gain范围 "
                   f"[{g.min(axis=0).round(2)},{g.max(axis=0).round(2)}]",
                   flush=True)
+        # ── 重绘质量门（degenerate gate）────────────────────────────
+        # 遮挡/出画帧（手臂挡脸、侧脸出画）SAM3 仍会裁出"脸"区，H3 拿着
+        # 脸部参考在没有脸的裁片上硬画 → 过曝紫白色块（2004 成片帧 126~
+        # 136 闪白实证）。裁片阶段无法预知画崩，这里用**重绘亮度相对
+        # 时序中位数的离群**判退化：退化帧贴回权重→0（=回退源帧），
+        # 门值 3 帧滑动平均避免开关跳变。源视频这些帧本身有运动模糊，
+        # 观众看不出没修。
+        gate = None
+        if int(degate):
+            import numpy as np
+            means = np.array([
+                float(np.asarray(c.convert("L"), dtype=np.float32).mean())
+                for c in crops])
+            # 饱和度通道：HSV 的 S 均值。过曝紫/洋红块亮度比值往往
+            # 不突出（0.81），但饱和度冲到 1.7×（2012 帧 134/139 实证）
+            sats = np.array([
+                float(np.asarray(c.convert("HSV"), dtype=np.float32)
+                      [:, :, 1].mean())
+                for c in crops])
+            thr = max(1.01, float(degate_thresh))
+            sthr = max(1.01, float(degate_sat))
+            win = 11
+
+            def _rmed(arr):
+                med = np.array([
+                    float(np.median(arr[max(0, i - win // 2):
+                                        min(n, i + win // 2 + 1)]))
+                    for i in range(n)])
+                return np.maximum(med, 1e-3)
+
+            ratio = means / _rmed(means)
+            sratio = sats / _rmed(sats)
+            bad = ((ratio > thr) | (ratio < 1.0 / thr)
+                   | (sratio > sthr) | (sratio < 1.0 / sthr))
+            g = np.where(bad, 0.0, 1.0)
+            # 3 帧滑动平均软化开关沿
+            g = np.convolve(g, [1 / 3, 1 / 3, 1 / 3], mode="same")
+            g[0] = max(g[0], g[1] if n > 1 else g[0])
+            if n > 1:
+                g[-1] = max(g[-1], g[-2])
+            gate = g
+            if bad.any():
+                idxs = [int(i) for i in np.nonzero(bad)[0]]
+                print(f"[video-face] degate: {int(bad.sum())}/{n} 帧退化"
+                      f"回退源帧（亮度>{thr:g}×/饱和度>{sthr:g}×离群）："
+                      f"{idxs[:12]}{'...' if len(idxs) > 12 else ''}",
+                      flush=True)
+
         for i in range(n):
             b = boxes_l[i]
             base = frames[i].convert("RGB")
@@ -438,6 +489,8 @@ def register(registry):
                     ImageFilter.GaussianBlur(radius=max(1, feather / 2)))
             # Face Size Fade：远脸全修 / 近脸不动 / 中间线性
             scale = 1.0
+            if gate is not None:
+                scale *= float(gate[i])
             if ffb > 0 and nfa > ffb:
                 fh = float(b.get("face_h") or 0)
                 if fh >= nfa:

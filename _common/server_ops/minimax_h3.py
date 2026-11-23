@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "f3ff5fd5d0e5"
+OP_VERSION = "563ade398266"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1401,6 +1401,67 @@ class _InpaintHook:
         self._cls.loop_step = self._orig
 
 
+def _install_ancestral_step(pipe, eta, s_noise=1.0):
+    """把 pipe.scheduler.step 换成 ancestral（ComfyUI er_sde 语义）版本。
+
+    动机：H3 官方/akatz 人物替换配方用 er_sde（Euler 随机搅动）——
+    纯 Euler η=0 的确定性轨迹里，遮罩内生成被 patch 硬边界反复"纠正"，
+    高频妥协纹理（碎片/豹纹）没有机会在多步间重新协商。ancestral
+    每步注入新噪声，让各块反复重试（k-diffusion sample_euler_ancestral）。
+
+    数学（对齐 k-diffusion get_ancestral_step，适配 H3 的 data-ward
+    velocity：denoised = x + σ_t·v，σ∈[0,1]，x=(1-σ)·x0+σ·ε）：
+      σ_up   = min(σ_next, η·√(σ_next²·(σ²−σ_next²)/σ²))
+      σ_down = √(σ_next² − σ_up²)      # 确定性段只走到 σ_down
+      x'     = (σ_down/σ)·x + (1−σ_down/σ)·x0   # Euler 混合（同原式）
+      x_next = x' + σ_up·ε_new          # 补新噪声
+    方差守恒 σ_down²+σ_up²=σ_next²，边际分布与确定性版一致——
+    只改变"路径"，不改变目标噪声水平。末步 σ_next=0 自动退化为纯 Euler。
+    只换视频 scheduler；audio_scheduler 保持确定性（音频不需要搅动）。
+    """
+    import torch
+    sched = pipe.scheduler
+    orig_step = sched.step
+    eta = float(eta)
+    s_noise = float(s_noise)
+
+    def ancestral_step(model_output, timestep, sample, return_dict=False):
+        if not isinstance(timestep, torch.Tensor):
+            timestep = torch.tensor(timestep, dtype=sample.dtype,
+                                    device=sample.device)
+        timestep = timestep.to(device=sample.device, dtype=sample.dtype)
+        if sched._step_index is None:
+            sched._step_index = (sched.index_for_timestep(timestep)
+                                 if sched._begin_index is None
+                                 else sched._begin_index)
+        sft = 1 - timestep
+        while sft.ndim < sample.ndim:
+            sft = sft.unsqueeze(-1)
+        denoised = sample + sft * model_output
+        cd = (torch.float32 if sample.dtype in (torch.float16, torch.bfloat16)
+              else sample.dtype)
+        sig = float(sched.sigmas[sched._step_index])
+        sig_n = float(sched.sigmas[sched._step_index + 1])
+        s_up = 0.0
+        s_down = sig_n
+        if eta > 0.0 and sig_n > 0.0 and sig > sig_n:
+            s_up = min(sig_n, eta * (sig_n ** 2 * (sig ** 2 - sig_n ** 2)
+                                     / sig ** 2) ** 0.5)
+            s_down = (sig_n ** 2 - s_up ** 2) ** 0.5
+        ratio = s_down / sig
+        prev = (ratio * sample.to(cd)
+                + (1.0 - ratio) * denoised.to(cd))
+        if s_up > 0.0:
+            prev = prev + s_noise * s_up * torch.randn(
+                prev.shape, dtype=cd, device=prev.device)
+        prev = prev.to(dtype=sample.dtype)
+        sched._step_index += 1
+        return (prev,)
+
+    sched.step = ancestral_step  # 实例属性遮蔽类方法，restore 用 orig 恢复
+    return sched, orig_step
+
+
 def _sz_path(p):
     """文件/目录体积（目录递归 walk）。"""
     if os.path.isdir(p):
@@ -1729,6 +1790,7 @@ def register(registry):
                 "mask_feather": "INT",
                 "num_frames": "INT", "seed": "INT", "steps": "INT",
                 "height": "INT", "width": "INT",
+                "sampler": "STRING", "eta": "FLOAT",
                 "preview_every": "INT"},
         outputs={"video": "VIDEO", "seed": "INT"},
         description="MiniMax-H3 生成：fl2va（首/末帧）或 t2va（纯文本）或 "
@@ -1746,7 +1808,8 @@ def register(registry):
                 height=0, width=0, inpaint_video=None, inpaint_mask=None,
                 inpaint_soft=1.0, inpaint_lock=0.0, inpaint_aug=0.999,
                 mask_schedule="linear", window_start=0.0, window_end=1.0,
-                mask_threshold=0.5, mask_smooth=3, mask_feather=0):
+                mask_threshold=0.5, mask_smooth=3, mask_feather=0,
+                sampler="euler", eta=1.0):
         import random
 
         import torch
@@ -1893,6 +1956,14 @@ def register(registry):
         t0 = time.time()
         if execution.check_cancelled is not None:
             execution.check_cancelled()
+        # er_sde（ComfyUI 官方人物替换配方的采样器）：把视频 scheduler
+        # 的 step 换成 ancestral 版本（末步自动退化为 Euler）。
+        sampler = str(sampler or "euler").lower()
+        anc = None
+        if sampler in ("er_sde", "ancestral", "euler_ancestral"):
+            anc = _install_ancestral_step(pipe, eta=float(eta))
+            print(f"[minimax-h3] sampler=er_sde eta={float(eta):g}（视频路，"
+                  f"音频保持确定性）", flush=True)
         try:
             if inpaint_ctx is not None:
                 hook = _InpaintHook(inpaint_ctx).install()
@@ -1913,6 +1984,8 @@ def register(registry):
             # 后续执行会拿上一轮的 embeds 当条件）
             if restore_te is not None:
                 pipe.text_encoder = restore_te
+            if anc is not None:
+                anc[0].step = anc[1]  # 恢复确定性 scheduler.step
         if execution.check_cancelled is not None:
             execution.check_cancelled()
 

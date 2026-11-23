@@ -170,6 +170,20 @@
       "description": "遮罩软边次数（仅 inpaint）：0=硬边；1~2=对 latent 遮罩做 3×3 均值模糊再阈值化，产生过渡带，消除硬切产生的破碎灰块（会轻微扩大编辑区）"
     },
     {
+      "name": "sampler",
+      "type": "string",
+      "required": false,
+      "default": "euler",
+      "description": "采样器：euler=确定性（默认）；er_sde=Euler ancestral 随机搅动（ComfyUI akatz 官方替换配方同款——每步注入新噪声让遮罩内各块反复重新协商，治确定性采样下的大编辑区碎片/豹纹；末步自动退化 Euler，音频保持确定性）"
+    },
+    {
+      "name": "eta",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "er_sde 噪声强度（仅 sampler=er_sde 生效）：0=等价纯 euler；0.5 温和搅动；1.0=标准 ancestral（官方替换配方口径）"
+    },
+    {
       "name": "num_frames",
       "type": "integer",
       "description": "帧数（24fps：125 帧≈5.2s，365 帧≈15.2s；自动对齐 17n+5）",

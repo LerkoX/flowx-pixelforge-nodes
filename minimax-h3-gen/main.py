@@ -79,6 +79,8 @@ def main():
         inputs["mask_threshold"] = float(param("mask_threshold", "0.5") or "0.5")
         inputs["mask_smooth"] = int(param("mask_smooth", "3") or "3")
         inputs["mask_feather"] = int(param("mask_feather", "0") or "0")
+    inputs["sampler"] = param("sampler", "euler")
+    inputs["eta"] = float(param("eta", "1.0") or "1.0")
     mode = ("inpaint" if (ipv and ipm)
             else "ref2va" if refs.strip()
             else ("fl2va" if (image_id or last_id) else "t2va"))

@@ -33,6 +33,9 @@ def main():
         "tone_mode": param("tone_mode", "freq_sep"),
         "lowpass_frac": param("lowpass_frac", 0.1, float),
         "detail_gain": param("detail_gain", 1.0, float),
+        "degate": param("degate", 1, int),
+        "degate_thresh": param("degate_thresh", 1.5, float),
+        "degate_sat": param("degate_sat", 1.5, float),
     }
     print(f"[video-face-stitch] feather={inputs['feather']} "
           f"fade=({inputs['full_fix_below']},{inputs['no_fix_above']})",

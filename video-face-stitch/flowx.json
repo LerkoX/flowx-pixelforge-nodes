@@ -97,6 +97,27 @@
       "description": "freq_sep 细节增益（1.0=原样，>1 更锐）"
     },
     {
+      "name": "degate",
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "description": "重绘质量门：1=开启——重绘亮度相对 ±5 帧中位数离群的退化帧（遮挡/出画帧 H3 硬画出过曝色块）自动回退源帧，门值 3 帧平滑防跳变；0=关闭"
+    },
+    {
+      "name": "degate_thresh",
+      "type": "float",
+      "required": false,
+      "default": 1.5,
+      "description": "质量门离群阈值（亮度比值）：1.5=重绘亮度高于时序中位数 1.5 倍（过曝）或低于 1/1.5 倍判退化；调大更宽松"
+    },
+    {
+      "name": "degate_sat",
+      "type": "float",
+      "required": false,
+      "default": 1.5,
+      "description": "质量门饱和度离群阈值：过曝紫/洋红块亮度不突出但饱和度突出（1.5=饱和度超 ±5 帧中位数 1.5 倍判退化）；与亮度门任一触发即回退"
+    },
+    {
       "name": "service_token",
       "type": "string",
       "description": "推理服务访问令牌",

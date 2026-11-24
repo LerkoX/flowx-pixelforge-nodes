@@ -18,7 +18,7 @@ import time
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "571848892c4d"
+OP_VERSION = "e8c9d873e027"
 OP_FAMILY = "video_mask"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 class _VersionedRegistry:
@@ -208,6 +208,27 @@ def _aug_mask_grid(mask_np, w_len=1, h_len=1):
             y2 = min(wy + hs, y1)
             if m[wy:y2, wx:x2].sum() > 0:
                 out[wy:y2, wx:x2] = 1
+    return out
+
+
+def _convex_rectify(masks):
+    """(T,H,W) bool → 凸包 mask（2026-11-24 新增）：cv2.convexHull 填满。
+    介于 contour 与 bbox 之间：保留躯干/四肢方向与大幅动作的几何提示
+    （姿态跟随），但磨平发髻/飘带等轮廓细节（防外观泄露）。
+    bbox 实验（exec 2033）证明洞形状既是外观泄露源又是姿态引导，
+    凸包是两者的折中。"""
+    import cv2
+    import numpy as np
+    out = np.zeros_like(masks)
+    for t in range(len(masks)):
+        ys, xs = np.nonzero(masks[t])
+        if len(xs) < 3:
+            out[t] = masks[t]
+            continue
+        pts = np.stack([xs, ys], axis=1).astype(np.int32)
+        canvas = np.zeros(masks[t].shape, np.uint8)
+        cv2.fillConvexPoly(canvas, cv2.convexHull(pts), 1)
+        out[t] = canvas.astype(bool)
     return out
 
 
@@ -1326,6 +1347,8 @@ def register(registry):
             merged = _dilate_masks(merged, int(dilate))
             if str(shape).lower() == "bbox":
                 merged = _bbox_rectify(merged, smooth=int(bbox_smooth))
+            elif str(shape).lower() == "convex":
+                merged = _convex_rectify(merged)
             elif str(shape).lower() == "aug":
                 # 官方 get_aug_mask 网格块化（w_len/h_len 从 mask_refine_radius 借道）
                 import numpy as _np_aug
@@ -1562,6 +1585,8 @@ def register(registry):
         # 黑影与"人物图层感"的关键。shape=bbox 时启用。
         if str(shape).lower() == "bbox":
             merged = _bbox_rectify(merged, smooth=int(bbox_smooth))
+        elif str(shape).lower() == "convex":
+            merged = _convex_rectify(merged)
         empty = int((~merged.any(axis=(1, 2))).sum())
         if empty:
             print(f"[video-mask] 警告：{empty}/{n} 帧无遮罩（目标未检出/跟丢）",

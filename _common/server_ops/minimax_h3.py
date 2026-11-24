@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "12d40dd3c8f4"
+OP_VERSION = "504476817395"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1921,7 +1921,7 @@ def register(registry):
                 raise ValueError(
                     "minimax.h3.encode: text_cond_file 缺 prompt_embeds / "
                     "text_token_tags 张量")
-            cond = {"kind": "h3", "mode": "ref2va",
+            cond = {"kind": "h3", "mode": "ref2va", "frozen": True,
                     "prompt": prompt or "<viggle frozen text>",
                     "prompt_embeds": embeds,
                     "text_token_tags": tags,
@@ -2056,9 +2056,39 @@ def register(registry):
                 raise ValueError("minimax.h3.gen: cond 缺 prompt 原文")
             _ensure_exec_device_robust()
             restore_te = pipe.text_encoder
-            pipe.text_encoder = _PrecomputedTextEncoder(cond["prompt_embeds"])
-            print(f"[minimax-h3] gen 用预编码 cond（{cmode} "
-                  f"tokens={cond.get('num_text_tokens')}）", flush=True)
+            if cond.get("frozen"):
+                # **冻结文本（Viggle-Animate，2026-11-24）**：ref2va 文本
+                # 编码块会把参考像素过 Qwen3-VL 视觉编码器拼进呈现（124 帧
+                # 视频参考直接 OOM，且与 Viggle finetune 训练分布不符——
+                # 训练时参考只以 VAE latent 行进入 transformer，文本侧是
+                # 固定 362 token）。类级补丁绕过整个块：prompt_embeds/tags
+                # 直接用冻结文件。参考的 VAE 编码在独立的
+                # Ref2VAReferenceEncoderStep 照常运行。
+                from diffusers.modular_pipelines.minimax_h3.encoders import (
+                    MiniMaxH3Ref2VATextEncoderStep)
+                _fz_emb = cond["prompt_embeds"]
+                _fz_tag = cond.get("text_token_tags")
+                _orig_step_call = MiniMaxH3Ref2VATextEncoderStep.__call__
+
+                def _frozen_step_call(self, components, state,
+                                      _e=_fz_emb, _t=_fz_tag):
+                    bs = self.get_block_state(state)
+                    bs.prompt_embeds = _e
+                    bs.text_token_tags = (
+                        _t if _t is not None else
+                        torch.ones(_e.shape[-2], dtype=torch.long))
+                    self.set_block_state(state, bs)
+                    return components, state
+
+                MiniMaxH3Ref2VATextEncoderStep.__call__ = _frozen_step_call
+                print(f"[minimax-h3] gen 用冻结文本 cond（tokens="
+                      f"{cond.get('num_text_tokens')}，TE/呈现全跳过）",
+                      flush=True)
+            else:
+                pipe.text_encoder = _PrecomputedTextEncoder(
+                    cond["prompt_embeds"])
+                print(f"[minimax-h3] gen 用预编码 cond（{cmode} "
+                      f"tokens={cond.get('num_text_tokens')}）", flush=True)
 
         if not prompt:
             raise ValueError("minimax.h3.gen: prompt 必填（H3 是强文本引导模型）")
@@ -2196,6 +2226,14 @@ def register(registry):
             # 后续执行会拿上一轮的 embeds 当条件）
             if restore_te is not None:
                 pipe.text_encoder = restore_te
+            if cond is not None and cond.get("frozen"):
+                # 冻结文本的类级补丁恢复（同 restore_te 纪律）
+                try:
+                    from diffusers.modular_pipelines.minimax_h3.encoders import (
+                        MiniMaxH3Ref2VATextEncoderStep)
+                    MiniMaxH3Ref2VATextEncoderStep.__call__ = _orig_step_call
+                except Exception:
+                    pass
             if anc is not None:
                 anc[0].step = anc[1]  # 恢复确定性 scheduler.step
         if execution.check_cancelled is not None:

@@ -94,6 +94,13 @@
       "default": 0
     },
     {
+      "name": "num_frames",
+      "type": "integer",
+      "description": "生成帧数（视频参考的 ref2va 计划必填，17n+5；0=不传）",
+      "required": false,
+      "default": 0
+    },
+    {
       "name": "service_url_host",
       "type": "string",
       "description": "容器内回退地址（可空）",

@@ -41,6 +41,9 @@ def main():
     tcf = param("text_cond_file", "")
     if tcf.strip():
         inputs["text_cond_file"] = tcf.strip()
+    nf = param("num_frames", 0, int)
+    if nf > 0:
+        inputs["num_frames"] = nf
 
     mode = ("ref2va" if inputs.get("references")
             else "fl2va" if ("image" in inputs or "last_image" in inputs)

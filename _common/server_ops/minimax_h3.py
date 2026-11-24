@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "471cbf8d1f0c"
+OP_VERSION = "12d40dd3c8f4"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1886,7 +1886,7 @@ def register(registry):
         inputs={"model": "MODEL", "prompt": "STRING",
                 "image": "IMAGE", "last_image": "IMAGE",
                 "references": "STRING", "height": "INT", "width": "INT",
-                "text_cond_file": "STRING"},
+                "text_cond_file": "STRING", "num_frames": "INT"},
         outputs={"cond": "COND", "image": "IMAGE", "last_image": "IMAGE"},
         description="H3 文本编码（prompt → COND）：按 image/last_image/references "
                     "自动分派 t2va / fl2va / ref2va 三种呈现方式，输出 "
@@ -1895,7 +1895,8 @@ def register(registry):
                     "同一 prompt 多次生成可复用同一 cond，省掉重复编码。"
                     "开投影 TE 后本算子产出近似条件（不能逐字节验证）")
     def _op_encode(model, prompt="", image=None, last_image=None,
-                   references="", height=0, width=0, text_cond_file=""):
+                   references="", height=0, width=0, text_cond_file="",
+                   num_frames=0):
         from diffusers.modular_pipelines import PipelineState
 
         if text_cond_file:
@@ -1949,6 +1950,9 @@ def register(registry):
 
         state = PipelineState()
         state.set("prompt", prompt)
+        if int(num_frames) > 0:
+            # 视频参考的 ref2va 计划需要生成帧数（17n+5 对齐与参考归一化）
+            state.set("num_frames", int(num_frames))
         if image is not None:
             state.set("image", image)
         if last_image is not None:

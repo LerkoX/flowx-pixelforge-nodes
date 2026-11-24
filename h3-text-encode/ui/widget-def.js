@@ -10,6 +10,7 @@ const WIDGET_SPEC = {
     { key: 'text_cond_file', label: '冻结文本条件（Viggle 专用，可选）', kind: 'text', mono: true },
     { key: 'height', label: '高（0=自动，须与 gen 一致）', kind: 'text', default: 0 },
     { key: 'width', label: '宽（0=自动）', kind: 'text', default: 0 },
+    { key: 'num_frames', label: '帧数（视频参考必填，17n+5）', kind: 'text', default: 0 },
     { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 1800 },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],

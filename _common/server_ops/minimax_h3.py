@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "61c22f3fd04e"
+OP_VERSION = "4a382be61b99"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -261,6 +261,15 @@ def _build_transformer(path, dtype):
     print(f"[minimax-h3] transformer 读盘 {len(base)} keys "
           f"（量化 {len(scales)} 层，convrot {len(convrot)} 层）"
           f"{time.time()-t0:.1f}s", flush=True)
+    # pruned（adaln curves）检测：有 adaln_t_table 即 curve 格式
+    _curve_table = base.pop("adaln_t_table", None)
+    if _curve_table is not None:
+        # time_embedder 权重在 curve 模式下不参与前向 → 丢弃防误配
+        for _k in [k for k in base if k.startswith("time_embedder.")]:
+            base.pop(_k)
+        print(f"[minimax-h3] pruned checkpoint：adaln_t_table "
+              f"{tuple(_curve_table.shape)}，time_embedder 权重已跳过",
+              flush=True)
 
     # 官方转换函数对 base+scale 一起跑：scale 的 key 会被同一 RENAME_DICT 改名；
     # 特殊键（.attn.qkv_proj.weight / .ff.net.0.proj.weight）不匹配 *_scale，
@@ -310,6 +319,10 @@ def _build_transformer(path, dtype):
 
     with torch.device("meta"):
         model = MiniMaxH3Transformer3DModel.from_config(cfg)
+    if _curve_table is not None:
+        _enable_adaln_curves(model, grid=int(_curve_table.shape[0]),
+                             curve_dim=int(_curve_table.shape[1]))
+        base_sd["adaln_t_table"] = _curve_table.to("cpu")
     n_q, missing = _materialize_mixed(model, base_sd, scale_sd, "transformer",
                                       convrot_sd=convrot_sd)
     del base_sd, scale_sd, convrot_sd
@@ -319,6 +332,80 @@ def _build_transformer(path, dtype):
     print(f"[minimax-h3] transformer ready（int8 动态 {n_q} 层）"
           f" {time.time()-t0:.1f}s", flush=True)
     return model
+
+
+def _enable_adaln_curves(model, grid=1025, curve_dim=8):
+    """Comfy-Org pruned（adaln curves）checkpoint 结构适配（2026-11-24，
+
+    为 Viggle-Animate pruned 权重加入）。pruned 格式把全模型的时间嵌入
+    换成 (grid, curve_dim) 查找表：t∈[0,1] → 表行线性插值 → 所有 adaln
+    投影直接消费 curve_dim 维向量且**不再过 SiLU**（表值已是曲线终值）。
+    与 ComfyUI 的 use_adaln_curves 分支逐字一致
+    （comfy/ldm/minimax/model.py:744-751）。time_embedder 的 4 个权重
+    在 pruned checkpoint 里保留但不参与前向（加载时过滤）。
+    """
+    import types
+    import torch
+    import torch.nn as nn
+
+    model.register_buffer(
+        "adaln_t_table",
+        torch.zeros(grid, curve_dim, dtype=torch.float32))
+    owner = model
+
+    class _CurveEmbed(nn.Module):
+        """t∈[0,1] → lerp(table[i0], table[i0+1])（ComfyUI 逐字复刻）。"""
+
+        def __init__(self):
+            super().__init__()
+            # get_parameter_dtype 需要至少一个参数
+            self.dummy = nn.Parameter(torch.zeros((), dtype=torch.float32),
+                                      requires_grad=False)
+
+        def forward(self, t):
+            table = owner.adaln_t_table
+            pos = (t.detach().to(torch.float32).clamp(0.0, 1.0)
+                   * (table.shape[0] - 1))
+            i0 = pos.floor().long().clamp(max=table.shape[0] - 2)
+            frac = (pos - i0.to(pos.dtype)).unsqueeze(-1)
+            return torch.lerp(table[i0], table[i0 + 1], frac)
+
+    model.time_proj = nn.Identity()
+    model.time_embedder = _CurveEmbed()
+
+    def _patch_adaln(mod):
+        """adaln 投影：输入维度换 curve_dim，forward 去掉 SiLU。"""
+        lin = mod.linear
+        mod.linear = nn.Linear(curve_dim, lin.out_features,
+                               bias=lin.bias is not None)
+
+        def _fwd(self, temb):
+            out = self.linear(temb.to(self.linear.weight.dtype))
+            out = out.view(-1, 6 * self.hidden_size)
+            return out.chunk(6, dim=-1)
+
+        mod.forward = types.MethodType(_fwd, mod)
+
+    for blk in model.transformer_blocks:
+        _patch_adaln(blk.adaln_proj)
+
+    # norm_out（MiniMaxH3AdaLayerNormOut）：linear 换 8 输入 + 去 SiLU
+    no = model.norm_out
+    lin = no.linear
+    no.linear = nn.Linear(curve_dim, lin.out_features,
+                          bias=lin.bias is not None)
+
+    def _norm_out_fwd(self, hidden_states, temb, timestep_indices):
+        shift, scale = self.linear(
+            temb.to(self.linear.weight.dtype)).chunk(2, dim=-1)
+        hidden_states = self.norm(hidden_states)
+        return (hidden_states
+                * (1.0 + scale.index_select(0, timestep_indices))
+                + shift.index_select(0, timestep_indices))
+
+    no.forward = types.MethodType(_norm_out_fwd, no)
+    print(f"[minimax-h3] adaln curves 模式启用（grid={grid} "
+          f"curve_dim={curve_dim}，pruned checkpoint）", flush=True)
 
 
 def _attach_lora(model, path, strength=1.0):
@@ -999,10 +1086,14 @@ def _build_references(references_json):
                 else:
                     v = store.get(rid, "VIDEO")["data"]
                     # gen 产物的内存形态：frames/fps/audio/sample_rate
+                # strip_audio（2026-11-24，Viggle-Animate）：finetune 训练时
+                # 视频参考不带音轨（ref_audio_t=0），默认跟随；显式
+                # {"strip_audio": false} 才保留（原生 ref2va 行为）。
+                _strip = bool(item.get("strip_audio", True))
                 refs.append(MiniMaxH3VideoReference(
                     frames=v["frames"], fps=float(v.get("fps") or 24.0),
-                    audio=v.get("audio"),
-                    sample_rate=v.get("sample_rate")))
+                    audio=None if _strip else v.get("audio"),
+                    sample_rate=None if _strip else v.get("sample_rate")))
             elif rtype == "audio":
                 a = store.get(rid, "AUDIO")["data"]
                 refs.append(MiniMaxH3AudioReference(

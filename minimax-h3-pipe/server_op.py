@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "dde32a5ed69e"
+OP_VERSION = "a578b7e03cc9"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -2524,13 +2524,65 @@ def register(registry):
                     pixels = ((pixels.to(torch.bfloat16).div(255.0)
                                - pixel_mean.to(torch.bfloat16))
                               / pixel_std.to(torch.bfloat16))
-                    posterior = vae.encode(pixels, return_dict=False)[0]
-                    latents = posterior.sample(
-                        generator=torch.Generator().manual_seed(encode_seed))
+                    print(f"[minimax-h3] ref encode 输入 "
+                          f"{tuple(pixels.shape)} {pixels.dtype}，编码前 "
+                          f"alloc={torch.cuda.memory_allocated() / 2**30:.2f}G "
+                          f"reserved={torch.cuda.memory_reserved() / 2**30:.2f}G",
+                          flush=True)
+                    with torch.no_grad():
+                        # exec 2056 实锤：缺 no_grad 时逐 chunk 中间激活
+                        # 被梯度图挂住累积 → 15G 平台 → 尾 chunk OOM
+                        posterior = vae.encode(pixels, return_dict=False)[0]
+                        latents = posterior.sample(
+                            generator=torch.Generator().manual_seed(
+                                encode_seed))
                     latents = latents.to(torch.float16).float().cpu()
                     return (latents - latents_mean) / latents_std
 
                 _h3_enc_mod.encode_vae_condition = _evc_bf16
+                # 参考编码步外包 empty_cache（exec 2054 实锤：pipe 内
+                # 参考编码撞上碎片化 reserved 池，23.3G OOM——inpaint 的
+                # 同款编码在 empty_cache 后 6.5G 基线可过）
+                from diffusers.modular_pipelines.minimax_h3.encoders import (
+                    MiniMaxH3Ref2VAReferenceEncoderStep)
+                _orig_refenc_call = (
+                    MiniMaxH3Ref2VAReferenceEncoderStep.__call__)
+
+                def _refenc_call_cached(self, components, state):
+                    torch.cuda.empty_cache()
+                    try:
+                        return _orig_refenc_call(self, components, state)
+                    finally:
+                        torch.cuda.empty_cache()
+
+                MiniMaxH3Ref2VAReferenceEncoderStep.__call__ = (
+                    _refenc_call_cached)
+                # **画布口径对齐 Viggle 训练布局**（exec 2049~2057 连串
+                # OOM 的总根因）：diffusers setup 把参考视频归一到**发布
+                # 画布**（短边 768 / max_pixels 768×1344；图 2048 短边），
+                # 768×1344×124 帧的 VAE encode 在 24G 卡结构性必爆。
+                # Viggle（ComfyUI）训练时参考嵌在**目标画布短边**上——
+                # 按目标尺寸覆盖三配置，显存与训练分布双赢。
+                _th, _tw = int(height or 0), int(width or 0)
+                _cfg_backup = {}
+                if _th and _tw:
+                    _se = min(_th, _tw)
+                    for _ck, _cv in (
+                            ("canvas_short_edge", _se),
+                            ("canvas_max_pixels", _th * _tw),
+                            ("reference_image_short_edge", _se)):
+                        try:
+                            _cfg_backup[_ck] = pipe.config.get(_ck)
+                        except Exception:
+                            _cfg_backup[_ck] = getattr(pipe.config, _ck, None)
+                        # FrozenDict 双重存储（dict 项 + 实例属性），
+                        # setup 走的是属性访问——两处都必须直接绕过
+                        # __setitem__/__setattr__ 的 frozen 检查写
+                        import collections as _cl
+                        _cl.OrderedDict.__setitem__(pipe.config, _ck, _cv)
+                        object.__setattr__(pipe.config, _ck, _cv)
+                    print(f"[minimax-h3] 参考画布对齐目标：短边 {_se} "
+                          f"max_pixels {_th * _tw}（Viggle 布局）", flush=True)
                 print(f"[minimax-h3] gen 用冻结文本 cond（tokens="
                       f"{cond.get('num_text_tokens')}，TE/呈现全跳过，"
                       f"参考 VAE 编码 bf16）", flush=True)
@@ -2685,6 +2737,14 @@ def register(registry):
                     from diffusers.modular_pipelines.minimax_h3 import (
                         encoders as _h3_enc_mod2)
                     _h3_enc_mod2.encode_vae_condition = _orig_evc
+                    MiniMaxH3Ref2VAReferenceEncoderStep.__call__ = (
+                        _orig_refenc_call)
+                    import collections as _cl2
+                    for _ck, _cv in _cfg_backup.items():
+                        if _cv is None:
+                            continue
+                        _cl2.OrderedDict.__setitem__(pipe.config, _ck, _cv)
+                        object.__setattr__(pipe.config, _ck, _cv)
                 except Exception:
                     pass
             if anc is not None:

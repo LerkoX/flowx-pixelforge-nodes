@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "504476817395"
+OP_VERSION = "dde32a5ed69e"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -2073,7 +2073,11 @@ def register(registry):
                 def _frozen_step_call(self, components, state,
                                       _e=_fz_emb, _t=_fz_tag):
                     bs = self.get_block_state(state)
-                    bs.prompt_embeds = _e
+                    # 与正常路径同口径：embeds 搬到执行设备 + conditioner
+                    # dtype（exec 2046 的 mat1 cpu/cuda 冲突教训）
+                    _dev = getattr(components, "_execution_device", "cpu")
+                    _dt = components.text_encoder.dtype
+                    bs.prompt_embeds = _e.to(device=_dev, dtype=_dt)
                     bs.text_token_tags = (
                         _t if _t is not None else
                         torch.ones(_e.shape[-2], dtype=torch.long))
@@ -2081,9 +2085,37 @@ def register(registry):
                     return components, state
 
                 MiniMaxH3Ref2VATextEncoderStep.__call__ = _frozen_step_call
+                # 参考 VAE 编码的官方 fp32 路径在长视频参考下必 OOM
+                # （exec 2049：124 帧驱动视频 encode_vae_condition 峰值
+                # ~13G+）。换 bf16 变体——与 inpaint 的 exec 1953 同款
+                # 修复：官方收尾本就 round fp16，数值口径不变。
+                from diffusers.modular_pipelines.minimax_h3 import (
+                    encoders as _h3_enc_mod)
+                _orig_evc = _h3_enc_mod.encode_vae_condition
+
+                def _evc_bf16(vae, pixels, pixel_mean, pixel_std,
+                              encode_seed=42):
+                    latents_mean = torch.tensor(
+                        vae.config.latents_mean).view(1, -1, 1, 1, 1)
+                    latents_std = torch.tensor(
+                        vae.config.latents_std).view(1, -1, 1, 1, 1)
+                    pixel_mean = torch.tensor(
+                        pixel_mean, device=pixels.device).view(1, -1, 1, 1, 1)
+                    pixel_std = torch.tensor(
+                        pixel_std, device=pixels.device).view(1, -1, 1, 1, 1)
+                    pixels = ((pixels.to(torch.bfloat16).div(255.0)
+                               - pixel_mean.to(torch.bfloat16))
+                              / pixel_std.to(torch.bfloat16))
+                    posterior = vae.encode(pixels, return_dict=False)[0]
+                    latents = posterior.sample(
+                        generator=torch.Generator().manual_seed(encode_seed))
+                    latents = latents.to(torch.float16).float().cpu()
+                    return (latents - latents_mean) / latents_std
+
+                _h3_enc_mod.encode_vae_condition = _evc_bf16
                 print(f"[minimax-h3] gen 用冻结文本 cond（tokens="
-                      f"{cond.get('num_text_tokens')}，TE/呈现全跳过）",
-                      flush=True)
+                      f"{cond.get('num_text_tokens')}，TE/呈现全跳过，"
+                      f"参考 VAE 编码 bf16）", flush=True)
             else:
                 pipe.text_encoder = _PrecomputedTextEncoder(
                     cond["prompt_embeds"])
@@ -2232,6 +2264,9 @@ def register(registry):
                     from diffusers.modular_pipelines.minimax_h3.encoders import (
                         MiniMaxH3Ref2VATextEncoderStep)
                     MiniMaxH3Ref2VATextEncoderStep.__call__ = _orig_step_call
+                    from diffusers.modular_pipelines.minimax_h3 import (
+                        encoders as _h3_enc_mod2)
+                    _h3_enc_mod2.encode_vae_condition = _orig_evc
                 except Exception:
                     pass
             if anc is not None:

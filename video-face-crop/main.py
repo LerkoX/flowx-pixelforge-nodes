@@ -52,9 +52,12 @@ def main():
           flush=True)
     if crop_id:
         emit_result_preview(pbase, crop_id, tok, kind="videos")
-    emit(crop=crop_id, mask_white=mask_id, boxes=boxes,
+    # crop 放最后：emit() 会对所有对象输出自动上报预览（replace 式
+    # 覆盖，后发的赢）——mask_white 是设计即全白的重绘遮罩，若它最后
+    # 发，画布物化的"裁片预览"就是全白 mask（2012 误判根因）。
+    emit(mask_white=mask_id, boxes=boxes,
          boxes_file=boxes_file, face_ref=face_ref_id,
-         num_frames=n, fps=fps, face_h_max=fh)
+         num_frames=n, fps=fps, face_h_max=fh, crop=crop_id)
 
 
 if __name__ == "__main__":

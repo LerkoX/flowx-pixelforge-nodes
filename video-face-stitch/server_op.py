@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "aea74d31e093"
+OP_VERSION = "68a6f263782c"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -96,10 +96,23 @@ def _mask_bbox(mask_img):
         n_lab, _lab, stats, _cent = cv2.connectedComponentsWithStats(
             m.astype(np.uint8), connectivity=8)
         if n_lab > 1:
-            # stats[:, 4] = area；跳过背景（label 0）取最大
-            k = 1 + int(np.argmax(stats[1:, 4]))
-            x, y, w, h = (int(v) for v in stats[k, :4])
-            return (x, y, w, h)
+            # stats[:, 4] = area；跳过背景（label 0）按面积降序逐个过滤
+            fh, fw = m.shape
+            order = 1 + np.argsort(stats[1:, 4])[::-1]
+            for k in order:
+                x, y, w, h = (int(v) for v in stats[k, :4])
+                # **边缘细长条伪影过滤**（2012 根因）：SAM3 追踪会
+                # 产出贴帧边缘的贯穿性竖带/横带（高宽比极端且贴边），
+                # 面积可以超过脸 → 最大连通域直接选中它 → bbox 爆炸
+                #（face_h 116→435，裁窗冲到 (0,0) 768²）。脸 bbox 长宽
+                # 比 ~1:1，极端长宽比 + 贴边双条件不误伤真脸。
+                ar = max(w, h) / max(1, min(w, h))
+                touches_edge = (x <= 1 or y <= 1
+                                or x + w >= fw - 1 or y + h >= fh - 1)
+                if ar > 3.0 and touches_edge:
+                    continue
+                return (x, y, w, h)
+            return None
     except ImportError:
         pass
     rows = np.where(m.any(axis=1))[0]
@@ -196,6 +209,18 @@ def register(registry):
         # 偏离 [0.55×, 1.8×] 的帧判为检测失败 → 走缺口插值。
         hs = np.array([r[3] if r else np.nan for r in raw])
         valid = ~np.isnan(hs)
+        # **全局中位数闸门**（2012 根因修复）：rolling 窗口对**持续性**
+        # 爆炸结构性失效——爆炸连占 8 帧时窗口内 8/9 都是爆炸值，
+        # rolling 中位数被拖进爆炸区自我合法化（435 < 1.8×432 放行）。
+        # 全局中位数对少数派污染免疫（8/141 拉不动 116）——先用宽闸
+        # [0.4×, 2.2×] 剔掉全局离群，rolling 再处理局部缓变（变焦）。
+        if valid.any():
+            gmed = float(np.nanmedian(hs[valid]))
+            for i in range(n):
+                if valid[i] and (hs[i] < 0.4 * gmed
+                                 or hs[i] > 2.2 * gmed):
+                    raw[i] = None
+                    valid[i] = False
         win = 9
         for i in range(n):
             if not valid[i]:

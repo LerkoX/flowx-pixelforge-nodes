@@ -73,6 +73,13 @@
       "default": ""
     },
     {
+      "name": "text_cond_file",
+      "type": "string",
+      "description": "冻结文本条件 safetensors 路径（可选；Viggle-Animate 专用，给了它完全替代 TE：fixed_embed_fwd_anyframe，参考不经 VLM 只走 VAE latent 行）",
+      "required": false,
+      "default": ""
+    },
+    {
       "name": "height",
       "type": "integer",
       "description": "目标高度（0=自动；与 gen 必须一致，否则 keyframe vision token 数会变）",

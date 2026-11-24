@@ -38,6 +38,9 @@ def main():
     refs = param("references", "")
     if refs.strip():
         inputs["references"] = refs.strip()
+    tcf = param("text_cond_file", "")
+    if tcf.strip():
+        inputs["text_cond_file"] = tcf.strip()
 
     mode = ("ref2va" if inputs.get("references")
             else "fl2va" if ("image" in inputs or "last_image" in inputs)

@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "72ceefea8f8e"
+OP_VERSION = "61c22f3fd04e"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -2208,7 +2208,8 @@ def register(registry):
         "minimax.h3.encode",
         inputs={"model": "MODEL", "prompt": "STRING",
                 "image": "IMAGE", "last_image": "IMAGE",
-                "references": "STRING", "height": "INT", "width": "INT"},
+                "references": "STRING", "height": "INT", "width": "INT",
+                "text_cond_file": "STRING"},
         outputs={"cond": "COND", "image": "IMAGE", "last_image": "IMAGE"},
         description="H3 文本编码（prompt → COND）：按 image/last_image/references "
                     "自动分派 t2va / fl2va / ref2va 三种呈现方式，输出 "
@@ -2217,8 +2218,40 @@ def register(registry):
                     "同一 prompt 多次生成可复用同一 cond，省掉重复编码。"
                     "开投影 TE 后本算子产出近似条件（不能逐字节验证）")
     def _op_encode(model, prompt="", image=None, last_image=None,
-                   references="", height=0, width=0):
+                   references="", height=0, width=0, text_cond_file=""):
         from diffusers.modular_pipelines import PipelineState
+
+        if text_cond_file:
+            # **Viggle-Animate 冻结文本条件**（2026-11-24）：
+            # fixed_embed_fwd_anyframe.safetensors = 训练时固定 prompt 经
+            # Qwen3-VL 预编码的 362 token。Viggle finetune 全程用它替代
+            # 文本编码器——参考不经 VLM 呈现，只以 VAE latent 行进入
+            # transformer（与 finetune 的训练分布一致；ComfyUI 插件
+            # ViggleTextCondLoader 同款）。给了它就不再跑 before_encode +
+            # text_encoder，TE 完全不参与。
+            from safetensors import safe_open
+            path = text_cond_file
+            if not os.path.isabs(path):
+                path = os.path.join(H3_DIR, path)
+            if not os.path.isfile(path):
+                raise ValueError(
+                    f"minimax.h3.encode: text_cond_file 不存在: {path}")
+            with safe_open(path, framework="pt", device="cpu") as f:
+                embeds = f.get_tensor("prompt_embeds")
+                tags = f.get_tensor("text_token_tags")
+            if embeds is None or tags is None:
+                raise ValueError(
+                    "minimax.h3.encode: text_cond_file 缺 prompt_embeds / "
+                    "text_token_tags 张量")
+            cond = {"kind": "h3", "mode": "ref2va",
+                    "prompt": prompt or "<viggle frozen text>",
+                    "prompt_embeds": embeds,
+                    "text_token_tags": tags,
+                    "num_text_tokens": int(embeds.shape[-2]),
+                    "height": int(height or 0), "width": int(width or 0)}
+            print(f"[minimax-h3] encode VIGGLE 冻结文本 "
+                  f"tokens={cond['num_text_tokens']}（TE 未参与）", flush=True)
+            return {"cond": cond, "image": image, "last_image": last_image}
 
         _ensure_exec_device_robust()
         pipe = model

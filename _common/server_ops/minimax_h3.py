@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "4a382be61b99"
+OP_VERSION = "471cbf8d1f0c"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1085,7 +1085,11 @@ def _build_references(references_json):
                     v = _decode_video_reference(path)
                 else:
                     v = store.get(rid, "VIDEO")["data"]
-                    # gen 产物的内存形态：frames/fps/audio/sample_rate
+                    if isinstance(v, dict) and v.get("path"):
+                        # VIDEO 对象仓契约（app/video.py）：{"path","fps",
+                        # "num_frames"}，帧本体在落盘 mp4 → 按路径解码
+                        v = _decode_video_reference(v["path"])
+                    # 否则为 gen 产物的内存形态：frames/fps/audio/sample_rate
                 # strip_audio（2026-11-24，Viggle-Animate）：finetune 训练时
                 # 视频参考不带音轨（ref_audio_t=0），默认跟随；显式
                 # {"strip_audio": false} 才保留（原生 ref2va 行为）。

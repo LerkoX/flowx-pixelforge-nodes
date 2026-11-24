@@ -61,7 +61,7 @@ Comfy-Org 发布时已固定，ComfyUI 原生即此路径）；
 同 seed 逐字节一致验证，只能用 PSNR + 人眼 + 锐度/闪烁对比。
 """
 
-OP_VERSION = "5f6d0b34c865"
+OP_VERSION = "72ceefea8f8e"
 OP_FAMILY = "minimax_h3"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -1500,7 +1500,7 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
                      cond_aug=0.999, mask_schedule="linear",
                      window_start=0.0, window_end=1.0,
                      mask_threshold=0.5, mask_smooth=3, mask_feather=0,
-                     native=0):
+                     native=0, init_strength=1.0):
     """源视频 latent + 遮罩 → packed 混合上下文（人物替换等局部编辑）。
 
     机制（对齐 Relay/Comfy denoise-mask 语义）：denoise 每步后把遮罩外
@@ -1658,7 +1658,8 @@ def _prepare_inpaint(pipe, inpaint_video, inpaint_mask, *,
             "mask_threshold": float(mask_threshold),
             "mask_smooth": int(mask_smooth),
             "mask_feather": int(mask_feather),
-            "native": int(native)}
+            "native": int(native),
+            "init_strength": float(init_strength)}
 
 
 def _sched_value(ctx, step_i):
@@ -1751,13 +1752,25 @@ class _InpaintHook:
                 # ② 保留行速度置零（out *= denoise_mask）——永不更新，
                 #    无需每步回拉；
                 # ③ 初始值 = aug·src+(1-aug)·noise（与钉住值语义一致）。
+                init_s = float(ctx.get("init_strength", 1.0))
                 if i == 0:
                     aug = float(ctx.get("cond_aug", 0.999))
                     injected = (aug * ctx["_gpu_src"]
                                 + (1.0 - aug) * ctx["noise_eps"])
                     cur = block_state.latents[n_cond:]
+                    if init_s >= 1.0:
+                        gen_init = cur  # 纯噪声（默认）
+                    else:
+                        # **掩码背景初始化**（Wan-Animate replace 语义，
+                        # exec 1945 机制移植）：生成区从「带人形黑洞/
+                        # 马赛克的背景 latent」部分加噪起步，而不是纯
+                        # 噪声——模型看得见"被遮住的人形"，洞形引导
+                        # 姿态、马赛克块带原人物色彩统计作锚。配
+                        # inpaint_video 接 video.bg_erase(black/mosaic)。
+                        gen_init = ((1.0 - init_s) * ctx["_gpu_src"]
+                                    + init_s * ctx["noise_eps"])
                     block_state.latents[n_cond:] = (
-                        cur * mask_t + injected * (1.0 - mask_t))
+                        gen_init * mask_t + injected * (1.0 - mask_t))
                 # 步前快照：step 后按行恢复（见下方"恢复"注释）
                 pre_rows = block_state.latents[n_cond:].clone()
                 # 逐行时间戳：改写本步 row_timestep_plan
@@ -1773,6 +1786,14 @@ class _InpaintHook:
                 # pin 与 before_denoise 的 cond 行表达式逐字一致：
                 # max(float(t), keyframe_noise_aug=0.999)
                 row_t[gen_pos[preserved]] = max(float(t), 0.999)
+                if init_s < 1.0:
+                    # 生成行诚实标签（ComfyUI 连续 mask 语义："mask
+                    # value m puts a row at sigma = m * sigma_stream,
+                    # label = 1 - m·σ"）：行内容噪声是 init_s·σ_stream
+                    # （timesteps=1-σ 约定 → σ_stream=1-t），标签如实
+                    # 反映，避免"内容比标签干净"的分布外错配。
+                    row_t[gen_pos[~preserved]] = (
+                        1.0 - init_s * (1.0 - float(t)))
                 new_unique, new_idx = torch.unique(
                     row_t, sorted=True, return_inverse=True)
                 block_state.row_timestep_plan[i] = (new_unique, new_idx)
@@ -2258,6 +2279,7 @@ def register(registry):
                 "inpaint_video": "VIDEO", "inpaint_mask": "VIDEO",
                 "inpaint_soft": "FLOAT", "inpaint_lock": "FLOAT",
                 "inpaint_aug": "FLOAT", "inpaint_native": "INT",
+                "inpaint_init": "FLOAT",
                 "mask_schedule": "STRING",
                 "window_start": "FLOAT", "window_end": "FLOAT",
                 "mask_threshold": "FLOAT", "mask_smooth": "INT",
@@ -2281,7 +2303,7 @@ def register(registry):
                 seed=-1, steps=4, preview_every=0, references="",
                 height=0, width=0, inpaint_video=None, inpaint_mask=None,
                 inpaint_soft=1.0, inpaint_lock=0.0, inpaint_aug=0.999,
-                inpaint_native=0,
+                inpaint_native=0, inpaint_init=1.0,
                 mask_schedule="linear", window_start=0.0, window_end=1.0,
                 mask_threshold=0.5, mask_smooth=3, mask_feather=0,
                 sampler="euler", eta=1.0):
@@ -2395,7 +2417,7 @@ def register(registry):
                 mask_schedule=mask_schedule, window_start=window_start,
                 window_end=window_end, mask_threshold=mask_threshold,
                 mask_smooth=mask_smooth, mask_feather=mask_feather,
-                native=inpaint_native)
+                native=inpaint_native, init_strength=inpaint_init)
 
         seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         gen = torch.Generator(device="cpu").manual_seed(seed)

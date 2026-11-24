@@ -135,6 +135,13 @@
       "description": "原生 inpaint（ComfyUI denoise_mask 移植）：保留行时间戳钉 0.999 + 速度置零，替代每步回拉钩子——治遮罩内分布外碎裂纹理。1=开（人物替换推荐），0=旧回拉（脸部修复等已定版链路保持）"
     },
     {
+      "name": "inpaint_init",
+      "type": "float",
+      "required": false,
+      "default": 1.0,
+      "description": "掩码背景初始化强度（仅 inpaint_native=1）：1.0=纯噪声起步（默认）；0.7~0.9=生成区从带黑洞/马赛克背景的 latent 部分加噪起步（Wan-Animate replace 语义，配 video-bg-erase 喂 inpaint_video），洞形导姿态、马赛克块带色彩锚"
+    },
+    {
       "name": "mask_schedule",
       "type": "string",
       "required": false,

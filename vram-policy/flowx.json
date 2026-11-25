@@ -1,0 +1,95 @@
+{
+  "name": "vram-policy",
+  "displayName": "显存策略",
+  "description": "显存策略数据节点（纯本地，不占 GPU）：把 transformer/文本塔的 offload 策略作为数据输出给下游 loader 节点统一引用，画布上一处调参全流水线生效。预设：turbo=tr group×4 + te group×2（~12GB 显存，最快）；balanced=tr group×2 + te sequential（~7GB）；saver=双 sequential（~3GB，最省最慢）；custom=完全自定义（下方四个字段生效）。group=块级分组流式 offload（num_blocks_per_group 个 block 驻留显存，异步流重叠搬运与计算）；sequential=逐层 swap（省显存但每步全模型往返 PCIe）；cuda=全量上卡；none=CPU。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "config",
+    "vram"
+  ],
+  "icon": "🎛️",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "preset",
+      "type": "string",
+      "required": false,
+      "default": "turbo",
+      "description": "预设：turbo / balanced / saver / custom（custom 时下方四字段生效，其余预设忽略四字段）"
+    },
+    {
+      "name": "tr_offload",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "transformer offload 策略（仅 custom）：group / sequential / cuda / none"
+    },
+    {
+      "name": "tr_group_blocks",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "transformer 每组驻留 block 数（仅 custom + tr_offload=group；越大越快越占显存）"
+    },
+    {
+      "name": "te_offload",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "文本塔 offload 策略（仅 custom）：group / sequential / cuda / none"
+    },
+    {
+      "name": "te_group_blocks",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "文本塔每组驻留 block 数（仅 custom + te_offload=group）"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "tr_offload",
+      "type": "string",
+      "description": "transformer offload 策略（接 loader 的 offload 参数）"
+    },
+    {
+      "name": "tr_group_blocks",
+      "type": "integer",
+      "description": "transformer group blocks 数（接 loader 的 group_blocks 参数）"
+    },
+    {
+      "name": "te_offload",
+      "type": "string",
+      "description": "文本塔 offload 策略（接 loader 的 offload 参数）"
+    },
+    {
+      "name": "te_group_blocks",
+      "type": "integer",
+      "description": "文本塔 group blocks 数（接 loader 的 group_blocks 参数）"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "description": "策略摘要文本（日志/标注用）"
+    }
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 200,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

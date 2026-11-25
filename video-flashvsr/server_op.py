@@ -29,7 +29,7 @@ import os
 import time
 
 # --- F1 族版本化（dev-plan §47）：算子身份 = 实现内容 ------------------------
-OP_VERSION = "213c6eccb1a3"
+OP_VERSION = "97a649a18fc3"
 OP_FAMILY = "flashvsr"  # 必须等于本文件 stem（gate J 校验）
 
 class _VersionedRegistry:
@@ -113,13 +113,22 @@ def _load_pipe():
     import torch
     if FLASHVSR_REPO not in sys.path:
         sys.path.insert(0, FLASHVSR_REPO)
+    # 稀疏注意力两条路：优先官方 block_sparse_attn（CUDA，需编译）；其次
+    # sparse_sageattn（lihaoyun6 易安装变体移植的 jt-zhang Sparse_SageAttention，
+    # 纯 triton 免编译，已内置于 diffsynth/models/sparse_sage/ + 换用其 dit）。
+    # 不做 dense 降级（官方实测无 LCSA 质量明显下降，且 4× 下显存不可行）。
     try:
         import block_sparse_attn  # noqa: F401
-    except ImportError as e:
-        raise ImportError(
-            "video.flashvsr: 缺 block_sparse_attn（LCSA 必需，官方实测无它"
-            "质量明显下降；dense 降级在 4× 输出下显存不可行）——装 wheel 或"
-            "编译 mit-han-lab/Block-Sparse-Attention") from e
+        _attn_backend = "block_sparse_attn"
+    except ImportError:
+        try:
+            from diffsynth.models.sparse_sage.core import sparse_sageattn  # noqa
+            _attn_backend = "sparse_sageattn"
+        except ImportError as e:
+            raise ImportError(
+                "video.flashvsr: 缺稀疏注意力后端——装 block_sparse_attn "
+                "(mit-han-lab) 或 sparse_sage（lihaoyun6 变体，纯 triton 免编译）"
+                ) from e
     t0 = time.time()
     from diffsynth import ModelManager, FlashVSRTinyLongPipeline
     from utils.utils import Causal_LQ4x_Proj
@@ -157,7 +166,7 @@ def _load_pipe():
         models._archs[key] = "flashvsr"
         models._sizes[key] = est
         models._last_used[key] = time.time()
-    print(f"[flashvsr] pipe loaded {time.time()-t0:.1f}s "
+    print(f"[flashvsr] pipe loaded {time.time()-t0:.1f}s 稀疏注意力后端={_attn_backend} "
           f"est={est/1e9:.1f}GB", flush=True)
     return models.get(key)
 

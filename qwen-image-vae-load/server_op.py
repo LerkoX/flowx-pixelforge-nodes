@@ -470,7 +470,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "b0ba6935ec76"
+OP_VERSION = "1a7724225b0d"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -748,6 +748,18 @@ def _load_loras(pipe, spec, default_scale):
         items.append((name, strength))
     if not items:
         return pipe
+    # 组件缓存复用时必须先清旧 adapter（exec 2071 教训：上一轮 Pipe 在
+    # set_adapters 处失败，lora0/lora1 已注入缓存 transformer，重跑同名
+    # adapter 冲突报 "Adapter name lora0 already in use"）。幂等重挂。
+    try:
+        _exist = pipe.get_list_adapters()
+        _old = sorted({a for ads in (_exist.values() if isinstance(_exist, dict)
+                                     else []) for a in ads})
+        if _old:
+            pipe.delete_adapters(_old)
+            print(f"[qwen-image] 清理缓存组件上的旧 adapter: {_old}", flush=True)
+    except Exception as _e:
+        print(f"[qwen-image] adapter 清理跳过（{_e}）", flush=True)
     names, scales = [], []
     for i, (name, strength) in enumerate(items):
         path = _resolve("loras", name)

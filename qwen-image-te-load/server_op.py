@@ -470,7 +470,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "7c578947d636"
+OP_VERSION = "b0ba6935ec76"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -759,10 +759,15 @@ def _load_loras(pipe, spec, default_scale):
         names.append(ad)
         scales.append(strength)
         print(f"[qwen-image] LoRA 挂载 {name}@{strength}", flush=True)
+    # set_adapters 权重参数名随 diffusers 版本漂移：0.42 叫 adapter_weights，
+    # 部分旧版叫 weights（真机教训：exec 2070 双 LoRA 首次走多挂路径即炸）。
+    import inspect as _inspect
+    _wkey = ("adapter_weights" if "adapter_weights" in
+             _inspect.signature(pipe.set_adapters).parameters else "weights")
     if len(names) > 1:
-        pipe.set_adapters(names, weights=scales)
+        pipe.set_adapters(names, **{_wkey: scales})
     elif scales[0] != 1.0:
-        pipe.set_adapters(names, weights=scales)
+        pipe.set_adapters(names, **{_wkey: scales})
     # **LoRA 参数必须钉在 GPU（真机教训）**：组件在加载时已挂
     # _sequential_offload hook，PEFT 后注入的 lora_A/lora_B 子模块没有 hook
     # → 留在 CPU；forward 时基础权重被 hook 搬上卡、LoRA 在 CPU →

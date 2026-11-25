@@ -29,7 +29,7 @@ import os
 import time
 
 # --- F1 族版本化（dev-plan §47）：算子身份 = 实现内容 ------------------------
-OP_VERSION = "4244153ee9d4"
+OP_VERSION = "8f726b61107e"
 OP_FAMILY = "flashvsr"  # 必须等于本文件 stem（gate J 校验）
 
 class _VersionedRegistry:
@@ -48,8 +48,8 @@ FLASHVSR_REPO = os.environ.get("FLASHVSR_REPO", "/opt/flashvsr")
 
 
 def _models():
-    from app import model_manager
-    return model_manager
+    from app.main import models  # 全局模型管理器（与 video_mask 等族同款）
+    return models
 
 
 def _video_to_frames(video_data, max_frames=0):

@@ -1,0 +1,34 @@
+{
+  "name": "video-flashvsr",
+  "version": "1.0.0",
+  "displayName": "FlashVSR 视频超分",
+  "description": "FlashVSR v1.1 一步蒸馏流式视频超分（官方推荐 4×，480×832→1920×3328）。基于 Wan2.1 VAE/DiT 的专用视频 SR，时序一致性优于逐帧 RealESRGAN。需要 block_sparse_attn 与权重五件套（见 README）",
+  "category": "video",
+  "language": "python",
+  "inputs": [],
+  "outputs": [
+    { "name": "video", "type": "VIDEO", "description": "超分后视频" },
+    { "name": "fps", "type": "int", "description": "帧率" },
+    { "name": "num_frames", "type": "int", "description": "帧数" },
+    { "name": "width", "type": "int", "description": "帧宽" },
+    { "name": "height", "type": "int", "description": "帧高" }
+  ],
+  "parameters": [
+    { "name": "service_url", "type": "string", "required": true, "description": "推理服务地址" },
+    { "name": "service_url_host", "type": "string", "required": false, "description": "Studio 宿主机侧可达地址（留空同 service_url）" },
+    { "name": "video", "type": "string", "required": true, "description": "源视频对象 ID（如 Gen.video / LoadVideo.video）" },
+    { "name": "scale", "type": "float", "default": 4.0, "description": "放大倍率（官方推荐 4.0；输出向下取 128 倍数）" },
+    { "name": "sparse_ratio", "type": "float", "default": 2.0, "description": "稀疏注意力比例（1.5=更快，2.0=更稳）" },
+    { "name": "local_range", "type": "integer", "default": 11, "description": "局部注意力窗口（9=细节更锐，11=更稳）" },
+    { "name": "seed", "type": "integer", "default": 0, "description": "随机种子" },
+    { "name": "color_fix", "type": "integer", "default": 1, "description": "wavelet/adain 颜色校正（1 开 0 关）" },
+    { "name": "max_frames", "type": "integer", "default": 0, "description": "最多处理帧数（0=全片；冒烟测试用）" },
+    { "name": "service_token", "type": "string", "required": false, "description": "推理服务访问令牌" },
+    { "name": "job_timeout", "type": "integer", "default": 1800, "description": "任务超时秒数" },
+    { "name": "poll_interval", "type": "integer", "default": 5, "description": "轮询间隔秒数" }
+  ],
+  "executor": { "supportedTypes": ["local", "docker"], "preferredType": "local", "bundled": true },
+  "entry": "main.py",
+  "files": ["flowx_client.py", "server_op.py"],
+  "ui": { "entry": "ui/node-widget.js", "width": 320, "height": 420, "collapsed": false, "apiVersion": 1 }
+}

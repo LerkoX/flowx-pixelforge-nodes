@@ -98,6 +98,7 @@ OP_FAMILIES = {
     # 同内容 ⇒ hash 命中不重传
     "preprocess.py": ["preprocess-canny", "preprocess-depth",
                       "preprocess-openpose"],
+    "flashvsr.py": ["video-flashvsr"],
     # G7 预处理器族（7 算子）：独立文件 ⇒ 上传名 preprocess_<op>.py 不与三算子族撞车
     "preprocess_g7.py": ["preprocess-anyline", "preprocess-lineart",
                          "preprocess-softedge", "preprocess-scribble",

@@ -29,7 +29,7 @@ import os
 import time
 
 # --- F1 族版本化（dev-plan §47）：算子身份 = 实现内容 ------------------------
-OP_VERSION = "97a649a18fc3"
+OP_VERSION = "545087aecce8"
 OP_FAMILY = "flashvsr"  # 必须等于本文件 stem（gate J 校验）
 
 class _VersionedRegistry:
@@ -111,8 +111,10 @@ def _load_pipe():
     _check_weights()
     import sys
     import torch
-    if FLASHVSR_REPO not in sys.path:
-        sys.path.insert(0, FLASHVSR_REPO)
+    for _p in (os.path.join(FLASHVSR_REPO, "examples", "WanVSR"),
+               FLASHVSR_REPO):
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
     # 稀疏注意力两条路：优先官方 block_sparse_attn（CUDA，需编译）；其次
     # sparse_sageattn（lihaoyun6 易安装变体移植的 jt-zhang Sparse_SageAttention，
     # 纯 triton 免编译，已内置于 diffsynth/models/sparse_sage/ + 换用其 dit）。
@@ -134,8 +136,13 @@ def _load_pipe():
     from utils.utils import Causal_LQ4x_Proj
     from utils.TCDecoder import build_tcdecoder
     mm = ModelManager(torch_dtype=torch.bfloat16, device="cpu")
-    mm.load_models([os.path.join(
-        FLASHVSR_DIR, "diffusion_pytorch_model_streaming_dmd.safetensors")])
+    # DiT 单文件只含 wan_video_dit；VAE 必须显式一起加载（ModelManager 按
+    # key 特征自动识别 wan_video_vae）——否则 fetch 不到、VAE 为 None。
+    mm.load_models([
+        os.path.join(FLASHVSR_DIR,
+                     "diffusion_pytorch_model_streaming_dmd.safetensors"),
+        os.path.join(FLASHVSR_DIR, "Wan2.1_VAE.pth"),
+    ])
     pipe = FlashVSRTinyLongPipeline.from_model_manager(mm, device="cuda")
     dit = pipe.denoising_model()
     dit.LQ_proj_in = Causal_LQ4x_Proj(
@@ -201,13 +208,14 @@ def register(registry):
         print(f"[flashvsr] {n0} 帧 {w0}x{h0} → x{scale} {sW}x{sH} "
               f"→ 128倍数 {tW}x{tH}", flush=True)
 
-        # 帧契约 8n+1（尾帧 pad 4 后 largest_8n1_leq）
-        idx = list(range(n0)) + [n0 - 1] * 4
-        F = _largest_8n1_leq(len(idx))
-        if F == 0:
-            raise ValueError(f"帧数不足（{n0} 帧）")
-        idx = idx[:F]
-        print(f"[flashvsr] 帧契约 {n0}→{F}（8n+1）", flush=True)
+        # 帧契约：流式管线输出 = 输入帧数 - 4（前 4 帧作 warmup 消耗）。
+        # 向上 pad 尾帧到最小的 8k+1 且 ≥ n0+4（官方是 pad 4 后向下截断
+        # largest_8n1_leq——会丢最多 7 帧，124→117；我们向上 pad 保帧数）。
+        F = n0 + 4
+        F = ((F - 1 + 7) // 8) * 8 + 1   # 最小 8k+1 ≥ n0+4
+        idx = list(range(n0)) + [n0 - 1] * (F - n0)
+        print(f"[flashvsr] 帧契约 {n0}→{F}（8k+1，输出 {F-4} 帧裁回 {n0}）",
+              flush=True)
 
         # LQ 输入：bicubic 放大到 scale× 后 center-crop 到 128 倍数
         #（官方 prepare_input_tensor 同款语义）
@@ -246,7 +254,8 @@ def register(registry):
         arr = rearrange(out, "C T H W -> T H W C")
         arr = ((arr.float() + 1) * 127.5).clip(0, 255).cpu().numpy().astype(
             np.uint8)
-        out_frames = [Image.fromarray(arr[i]) for i in range(arr.shape[0])]
+        out_frames = [Image.fromarray(arr[i]) for i in
+                      range(min(arr.shape[0], n0))]
         print(f"[flashvsr] done {time.time()-t0:.1f}s: {n0} 帧 "
               f"{w0}x{h0} → {len(out_frames)} 帧 {out_frames[0].size}",
               flush=True)

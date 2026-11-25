@@ -29,7 +29,7 @@ import os
 import time
 
 # --- F1 族版本化（dev-plan §47）：算子身份 = 实现内容 ------------------------
-OP_VERSION = "545087aecce8"
+OP_VERSION = "4244153ee9d4"
 OP_FAMILY = "flashvsr"  # 必须等于本文件 stem（gate J 校验）
 
 class _VersionedRegistry:
@@ -264,6 +264,9 @@ def register(registry):
                 "width": out_frames[0].size[0],
                 "height": out_frames[0].size[1]}
 
+    # ⚠️ register() 返回的是**装饰器**，必须应用到算子函数上——只调用不应用
+    # 会被服务端录制 shim 记录 claimed 但实际不入注册表（unknown op 灵异事件，
+    # 2026-11-25 踩坑实录）。
     registry.register(
         "video.flashvsr",
         {"video": "VIDEO", "scale": "FLOAT", "sparse_ratio": "FLOAT",
@@ -271,5 +274,7 @@ def register(registry):
          "max_frames": "INT"},
         {"video": "VIDEO", "fps": "INT", "num_frames": "INT",
          "width": "INT", "height": "INT"},
-        description="FlashVSR v1.1 视频超分（一步蒸馏流式 SR，官方推荐 4×；"
-                    "480×832→1920×3328。需 block_sparse_attn + 权重五件套）")
+        description="FlashVSR v1.1 视频超分（一步蒸馏流式 SR，Wan2.1 VAE 同源；"
+                    "24G 卡默认 x2（480×832→1664×1024 ~0.3s/帧），x4 需更大显存。"
+                    "稀疏注意力 sparse_sageattn/block_sparse_attn 二选一")(
+        _op_flashvsr)

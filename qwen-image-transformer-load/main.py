@@ -18,6 +18,7 @@ def main():
         "transformer": param("transformer", ""),
         "dtype": param("dtype", "bf16"),
         "offload": param("offload", "sequential"),
+        "group_blocks": param("group_blocks", 4, int),
     }
 
     t0 = time.time()

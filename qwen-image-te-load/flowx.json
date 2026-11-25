@@ -62,7 +62,7 @@
       "type": "string",
       "required": false,
       "default": "sequential",
-      "description": "offload 策略：sequential=逐层 swap / cuda=全量上卡 / none"
+      "description": "offload 策略：sequential=逐层 swap（省显存但慢）/ group=块级分组流式（group_blocks 个 block 驻留，显存 ~10GB 换数倍提速，推荐）/ cuda=全量上卡 / none"
     },
     {
       "name": "service_token",
@@ -84,6 +84,13 @@
       "required": false,
       "default": 5,
       "description": "轮询间隔秒数"
+    },
+    {
+      "name": "group_blocks",
+      "type": "integer",
+      "required": false,
+      "default": 2,
+      "description": "offload=group 时每组驻留显存的 block 数（越大越快越占显存）"
     }
   ],
   "outputs": [

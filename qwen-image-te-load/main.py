@@ -17,6 +17,7 @@ def main():
         "model": param("model", "Qwen-Image-2512"),
         "dtype": param("dtype", "bf16"),
         "offload": param("offload", "sequential"),
+        "group_blocks": param("group_blocks", 2, int),
     }
 
     t0 = time.time()

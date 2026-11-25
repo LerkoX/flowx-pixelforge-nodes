@@ -48,7 +48,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "1a7724225b0d"
+OP_VERSION = "47f8fb8c94fc"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -145,8 +145,8 @@ def _dtype(dtype, default="bf16"):
     raise ValueError(f"qwen_image: dtype 须为 bf16/fp16/fp32，得 {dtype}")
 
 
-def _offload(module, device, offload, name):
-    """逐层 offload + _execution_device sentinel（与 H3/Wan 同款）。
+def _offload(module, device, offload, name, group_blocks=4):
+    """逐层/块级分组 offload + _execution_device sentinel（与 H3/Wan 同款）。
 
     sentinel 必要性：diffusers 靠组件 _hf_hook.execution_device 推断执行
     设备；没有它会回落 cpu → 输入留 cpu 撞已上卡权重。
@@ -162,6 +162,33 @@ def _offload(module, device, offload, name):
             print(f"[qwen-image] {name} 全量上卡失败({type(e).__name__}) → "
                   f"退回 sequential", flush=True)
             module = _sequential_offload(module, device, name)
+        return module
+    if mode == "group":
+        # 块级分组 offload（方案1，2026-11-26）：num_blocks_per_group 个
+        # block 一组驻留显存，use_stream 异步流重叠搬运与计算——不再像
+        # sequential 每步把全模型在 PCIe 上往返一遍（采样期显存从 2~4GB
+        # 升到 ~10GB 但单步快数倍；Wan-Animate 14B 同款已真机验证）。
+        from diffusers.hooks import apply_group_offloading
+        if getattr(module, "_flowx_offload_armed", None):
+            print(f"[qwen-image] {name} 已挂 offload，跳过重挂（防死锁）",
+                  flush=True)
+            return module
+        try:
+            npg = max(1, int(group_blocks or 4))
+        except (TypeError, ValueError):
+            npg = 4
+        apply_group_offloading(
+            module, onload_device=device,
+            offload_device=torch.device("cpu"),
+            offload_type="block_level", num_blocks_per_group=npg,
+            use_stream=True, low_cpu_mem_usage=True)
+        module._flowx_offload_armed = f"group:{npg}"
+        print(f"[qwen-image] {name} group offload（blocks={npg}, stream, "
+              f"low_cpu_mem）", flush=True)
+
+        class _ExecDeviceSentinel:
+            execution_device = "cuda"
+        module._hf_hook = _ExecDeviceSentinel()
         return module
     if mode != "sequential":
         return module  # none：不挂假 sentinel（Wan animate2 教训）
@@ -392,16 +419,19 @@ def register(registry):
     @registry.register(
         "qwen_image.transformer_load",
         inputs={"model": "STRING", "transformer": "STRING",
-                "dtype": "STRING", "offload": "STRING"},
+                "dtype": "STRING", "offload": "STRING",
+                "group_blocks": "INT"},
         outputs={"transformer": "TRANSFORMER"},
         description="Qwen-Image transformer 组件加载（20B MMDiT）。官方 "
                     "Diffusers 目录（model 参数）或 Comfy 单文件（transformer "
-                    "参数）。bf16 ≈39GB 走逐层 offload。")
+                    "参数）。bf16 ≈39GB 走逐层 offload；offload=group 时块级 "
+                    "分组流式（group_blocks 个 block 一组驻留显存，快数倍）。")
     def _op_transformer_load(model="Qwen-Image-2512", transformer="",
-                             dtype="bf16", offload="sequential"):
+                             dtype="bf16", offload="sequential",
+                             group_blocks=4):
         import torch
 
-        key = f"qwen-image:tr:{model}|{transformer}|{dtype}|{offload}"
+        key = f"qwen-image:tr:{model}|{transformer}|{dtype}|{offload}|{group_blocks}"
         models = _models()
         with models._lock:
             if key in models._pipes:
@@ -410,7 +440,8 @@ def register(registry):
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         tr, src = _build_transformer(model, transformer, dtype)
-        tr = _offload(tr, device, offload, "transformer")
+        tr = _offload(tr, device, offload, "transformer",
+                      group_blocks=group_blocks)
         _budget_mode = "sequential" if str(offload).lower() in ("none", "") \
             else offload
         return {"transformer": _register(
@@ -419,15 +450,16 @@ def register(registry):
 
     @registry.register(
         "qwen_image.te_load",
-        inputs={"model": "STRING", "dtype": "STRING", "offload": "STRING"},
+        inputs={"model": "STRING", "dtype": "STRING", "offload": "STRING",
+                "group_blocks": "INT"},
         outputs={"text_encoder": "TEXT_ENCODER"},
         description="Qwen-Image 文本编码器（Qwen2.5-VL-7B，bf16 ≈16.5GB）"
                     "组件加载 + Qwen2Tokenizer。")
     def _op_te_load(model="Qwen-Image-2512", dtype="bf16",
-                    offload="sequential"):
+                    offload="sequential", group_blocks=2):
         import torch
 
-        key = f"qwen-image:te:{model}|{dtype}|{offload}"
+        key = f"qwen-image:te:{model}|{dtype}|{offload}|{group_blocks}"
         models = _models()
         with models._lock:
             if key in models._pipes:
@@ -436,7 +468,8 @@ def register(registry):
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         te, tokenizer, processor, src = _build_text_encoder(model, dtype)
-        te = _offload(te, device, offload, "text_encoder")
+        te = _offload(te, device, offload, "text_encoder",
+                      group_blocks=group_blocks)
         _budget_mode = "sequential" if str(offload).lower() in ("none", "") \
             else offload
         return {"text_encoder": _register(
@@ -687,8 +720,23 @@ def register(registry):
         else:
             w, h = img.size
             print(f"[qwen-image] 宽高跟随输入图 {w}x{h}", flush=True)
+        # 分段计时（2026-11-26 显存策略调优配套）：首步含 TE encode/
+        # 预热，后续步均值反映真实采样速度——offload 模式对比一目了然。
+        _step_ts = []
+        import inspect as _insp
+        if "callback_on_step_end" in _insp.signature(pipe.__call__).parameters:
+            def _qwen_cb(_p, _i, _t, cb_kw):
+                _step_ts.append(time.time())
+                return cb_kw
+            kwargs["callback_on_step_end"] = _qwen_cb
         t0 = time.time()
         out = pipe(**kwargs)
+        if len(_step_ts) >= 2:
+            _first = _step_ts[0] - t0
+            _per = (_step_ts[-1] - _step_ts[0]) / (len(_step_ts) - 1)
+            print(f"[qwen-image] 计时: 首步(含TE/预热) {_first:.1f}s, "
+                  f"后续 {_per:.2f}s/it × {len(_step_ts)-1}, "
+                  f"总计 {time.time()-t0:.1f}s", flush=True)
         if kwargs["output_type"] == "pil":
             images = list(out.images)  # crop 贴回模式直接是 PIL
         else:

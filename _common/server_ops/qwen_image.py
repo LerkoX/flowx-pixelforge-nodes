@@ -48,7 +48,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "4f558dd78c6e"
+OP_VERSION = "73480a4bb9e0"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -177,14 +177,28 @@ def _offload(module, device, offload, name, group_blocks=4):
             npg = max(1, int(group_blocks or 4))
         except (TypeError, ValueError):
             npg = 4
-        apply_group_offloading(
-            module, onload_device=device,
-            offload_device=torch.device("cpu"),
-            offload_type="block_level", num_blocks_per_group=npg,
-            use_stream=True, low_cpu_mem_usage=True)
-        module._flowx_offload_armed = f"group:{npg}"
-        print(f"[qwen-image] {name} group offload（blocks={npg}, stream, "
-              f"low_cpu_mem）", flush=True)
+        try:
+            apply_group_offloading(
+                module, onload_device=device,
+                offload_device=torch.device("cpu"),
+                offload_type="block_level", num_blocks_per_group=npg,
+                use_stream=True, low_cpu_mem_usage=True)
+            module._flowx_offload_armed = f"group:{npg}"
+            print(f"[qwen-image] {name} group offload（blocks={npg}, stream, "
+                  f"low_cpu_mem）", flush=True)
+        except (TypeError, RuntimeError) as e:
+            # fp8/torchao 量化张量不能 pin memory（'cannot pin
+            # CUDAFloat8_e4m3fnType'，真机实证）→ 退回无 stream/pinned 的
+            # 同步块级搬运
+            print(f"[qwen-image] {name} group stream/pinned 失败"
+                  f"({type(e).__name__}) → 退回同步块级", flush=True)
+            apply_group_offloading(
+                module, onload_device=device,
+                offload_device=torch.device("cpu"),
+                offload_type="block_level", num_blocks_per_group=npg)
+            module._flowx_offload_armed = f"group-sync:{npg}"
+            print(f"[qwen-image] {name} group offload（blocks={npg}, 同步）",
+                  flush=True)
 
         class _ExecDeviceSentinel:
             execution_device = "cuda"

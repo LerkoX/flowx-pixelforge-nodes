@@ -48,7 +48,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "ca550fded051"
+OP_VERSION = "505fb4161f26"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -225,7 +225,9 @@ def _build_transformer(model, transformer, dtype, quant=""):
     qc = None
     if str(quant or "").lower() == "fp8":
         from diffusers import TorchAoConfig
-        qc = TorchAoConfig("float8_weight_only")
+        from torchao.quantization import Float8WeightOnlyConfig
+        # torchao 0.18 起 quant_type 必须传 AOBaseConfig 对象（字符串报错）
+        qc = TorchAoConfig(Float8WeightOnlyConfig())
     if transformer:
         path = _resolve("diffusion_models", transformer)
         _require_file(path, "transformer")

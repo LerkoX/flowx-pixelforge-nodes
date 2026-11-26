@@ -48,7 +48,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "505fb4161f26"
+OP_VERSION = "4f558dd78c6e"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -455,8 +455,14 @@ def register(registry):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         tr, src = _build_transformer(model, transformer, dtype, q)
         if q == "fp8":
-            # fp8 ~20GB 全量驻留（上卡失败 _offload 自动退回 sequential）
-            tr = _offload(tr, device, "cuda", "transformer")
+            # fp8 ~20GB：默认块级驻留（group blocks=4 ≈ 15GB 常驻 + 5GB 轮换，
+            # 给 TE/VAE/激活留余量；全量上卡 20GB+3.5GB 余量在 832×1488
+            # 采样期 OOM——真机实证）。显式 offload=cuda 仍可强制全驻留。
+            fp8_mode = str(offload or "").lower()
+            if fp8_mode in ("", "sequential"):
+                fp8_mode = "group"
+            tr = _offload(tr, device, fp8_mode, "transformer",
+                          group_blocks=group_blocks)
         else:
             tr = _offload(tr, device, offload, "transformer",
                           group_blocks=group_blocks)

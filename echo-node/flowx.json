@@ -1,0 +1,66 @@
+{
+  "name": "echo-node",
+  "displayName": "回声",
+  "description": "测试用回声节点：透传 text 输出（可拼接上游输出），支持 fail 注入失败、sleep 模拟耗时、marker 写执行标记文件（验证重跑次数）。用于引擎 ResetFromNode / continue 等多场景测试。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": ["test", "debug"],
+  "icon": "📣",
+  "language": "python",
+  "entry": "main.py",
+  "files": ["flowx_client.py"],
+  "executor": {
+    "supportedTypes": ["local"],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "parameters": [
+    {
+      "name": "text",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "输出文本；可引用上游输出（如 {{ EchoA.text }}）验证数据流"
+    },
+    {
+      "name": "fail",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "1=注入失败（测试 failed 节点重置重跑）"
+    },
+    {
+      "name": "sleep",
+      "type": "float",
+      "required": false,
+      "default": 0,
+      "description": "模拟执行耗时（秒）"
+    },
+    {
+      "name": "marker",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "执行标记文件路径：每执行一次追加一行（验证节点是否被重跑/重跑几次）"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "text",
+      "type": "string",
+      "description": "透传的文本"
+    },
+    {
+      "name": "run_at",
+      "type": "string",
+      "description": "本次执行时间戳（重置重跑后会变化，验证确实重新执行）"
+    }
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 260,
+    "collapsed": false,
+    "apiVersion": 1
+  }
+}

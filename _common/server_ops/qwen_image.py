@@ -48,7 +48,7 @@ import time
 from comfy_quant import (_sequential_offload)
 # --- 内联点结束 ---
 
-OP_VERSION = "73480a4bb9e0"
+OP_VERSION = "cd3d75bb2695"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -145,7 +145,7 @@ def _dtype(dtype, default="bf16"):
     raise ValueError(f"qwen_image: dtype 须为 bf16/fp16/fp32，得 {dtype}")
 
 
-def _offload(module, device, offload, name, group_blocks=4):
+def _offload(module, device, offload, name, group_blocks=4, stream=True):
     """逐层/块级分组 offload + _execution_device sentinel（与 H3/Wan 同款）。
 
     sentinel 必要性：diffusers 靠组件 _hf_hook.execution_device 推断执行
@@ -177,7 +177,10 @@ def _offload(module, device, offload, name, group_blocks=4):
             npg = max(1, int(group_blocks or 4))
         except (TypeError, ValueError):
             npg = 4
-        try:
+        # fp8/torchao 量化张量不能 pin memory（'cannot pin
+        # CUDAFloat8_e4m3fnType'）且错误在**首次搬运时**才炸（apply 不炸，
+        # try/except 包不住）→ 由调用方按 quant 显式传 stream=False
+        if stream:
             apply_group_offloading(
                 module, onload_device=device,
                 offload_device=torch.device("cpu"),
@@ -186,19 +189,14 @@ def _offload(module, device, offload, name, group_blocks=4):
             module._flowx_offload_armed = f"group:{npg}"
             print(f"[qwen-image] {name} group offload（blocks={npg}, stream, "
                   f"low_cpu_mem）", flush=True)
-        except (TypeError, RuntimeError) as e:
-            # fp8/torchao 量化张量不能 pin memory（'cannot pin
-            # CUDAFloat8_e4m3fnType'，真机实证）→ 退回无 stream/pinned 的
-            # 同步块级搬运
-            print(f"[qwen-image] {name} group stream/pinned 失败"
-                  f"({type(e).__name__}) → 退回同步块级", flush=True)
+        else:
             apply_group_offloading(
                 module, onload_device=device,
                 offload_device=torch.device("cpu"),
                 offload_type="block_level", num_blocks_per_group=npg)
             module._flowx_offload_armed = f"group-sync:{npg}"
-            print(f"[qwen-image] {name} group offload（blocks={npg}, 同步）",
-                  flush=True)
+            print(f"[qwen-image] {name} group offload（blocks={npg}, 同步，"
+                  f"量化张量不可 pin）", flush=True)
 
         class _ExecDeviceSentinel:
             execution_device = "cuda"
@@ -476,7 +474,7 @@ def register(registry):
             if fp8_mode in ("", "sequential"):
                 fp8_mode = "group"
             tr = _offload(tr, device, fp8_mode, "transformer",
-                          group_blocks=group_blocks)
+                          group_blocks=group_blocks, stream=False)
         else:
             tr = _offload(tr, device, offload, "transformer",
                           group_blocks=group_blocks)

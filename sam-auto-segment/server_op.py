@@ -28,14 +28,7 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "48eaf06dd3d2"
-
-# SAM3 图像版（2026-11-26）：与视频版共用 /models/sam3-video 权重——
-# transformers 5.22.2 的 Sam3Model 直接读 sam3_video config 零 missing/unexpected
-# （真机验证 1468 params meta=0），一次装载 ~5s，文本→像素级蒙版。
-SAM3_IMG_DIR = os.environ.get(
-    "SAM3_IMG_DIR", "/var/lib/flowx-inference/models/sam3-video")
-_SAM3_IMG_PROC = None
+OP_VERSION = "30b3fe76c7bf"
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -525,6 +518,14 @@ def sam(image, model="sam:vit_l", points="", box="", multimask=True, pick=0,
     return {"mask": mask_pil, "candidates": _dumps(cands),
             "score": float(scores[idx]), "annotated": ann,
             "width": image.size[0], "height": image.size[1]}
+
+
+# SAM3 图像版（2026-11-26）：与视频版共用 /models/sam3-video 权重——
+# transformers 5.22.2 的 Sam3Model 直接读 sam3_video config 零 missing/unexpected
+# （真机验证 1468 params meta=0），一次装载 ~5s，文本→像素级蒙版。
+SAM3_IMG_DIR = os.environ.get(
+    "SAM3_IMG_DIR", "/var/lib/flowx-inference/models/sam3-video")
+_SAM3_IMG_PROC = None
 
 
 def _load_sam3_image(op_name):

@@ -1,7 +1,12 @@
-"""vram-policy mock：不读预设，直接吐 turbo 固定值。"""
+"""vram-policy Mock。"""
 from flowx_client import emit
 
-print("[vram-policy][mock] turbo: tr=group(blocks=4), te=group(blocks=2)")
-emit(tr_offload="group", tr_group_blocks=4,
-     te_offload="group", te_group_blocks=2,
-     policy="turbo: tr=group(blocks=4), te=group(blocks=2)")
+
+def main():
+    emit(tr_offload="sequential", tr_group_blocks=0,
+         te_offload="sequential", te_group_blocks=0,
+         policy="saver(mock)")
+
+
+if __name__ == "__main__":
+    main()

@@ -96,5 +96,14 @@
     "flowx_client.py",
     "executor_base.py",
     "server_op.py"
-  ]
+  ],
+  "entry": "main.py",
+  "author": "flowx-team",
+  "icon": "🎯",
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "timeout": 600,
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
 }

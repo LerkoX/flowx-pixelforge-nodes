@@ -470,7 +470,7 @@ def _sequential_offload(module, device, name):
 # --- 内联结束 ---
 
 
-OP_VERSION = "47f8fb8c94fc"
+OP_VERSION = "ca550fded051"
 OP_FAMILY = "qwen_image"  # 必须等于本文件 stem（gate J 校验）
 
 QWEN_DIR = os.environ.get("QWEN_IMAGE_DIR", "/models/qwen-image")
@@ -626,8 +626,14 @@ def _offload(module, device, offload, name, group_blocks=4):
 # 组件构建
 # ---------------------------------------------------------------------------
 
-def _build_transformer(model, transformer, dtype):
+def _build_transformer(model, transformer, dtype, quant=""):
     """transformer 加载：官方 Diffusers 目录优先；Comfy 单文件尽力转换。
+
+    quant="fp8"：torchao float8_weight_only 加载时量化（diffusers
+    TorchAoConfig）——39GB bf16 → ~20GB，3090 24GB 可全量驻留，
+    采样零 PCIe 搬运（sequential 每步倒 39GB 的带宽瓶颈消除）。
+    仅目录路线；LoRA 在 pipe 装配时照常注入（PEFT 的 lora_A/B
+    是独立 Linear 子模块，不依赖基底权重格式）。
 
     - 目录（<QWEN_DIR>/<model>/transformer）：from_pretrained（bf16 官方
       9 分片，39GB）——**主路线，已验证布局**。
@@ -638,12 +644,16 @@ def _build_transformer(model, transformer, dtype):
     from diffusers import QwenImageTransformer2DModel
 
     dt = _dtype(dtype)
+    qc = None
+    if str(quant or "").lower() == "fp8":
+        from diffusers import TorchAoConfig
+        qc = TorchAoConfig("float8_weight_only")
     if transformer:
         path = _resolve("diffusion_models", transformer)
         _require_file(path, "transformer")
         if os.path.isdir(path):
             tr = QwenImageTransformer2DModel.from_pretrained(
-                path, torch_dtype=dt)
+                path, torch_dtype=dt, quantization_config=qc)
         else:
             cfg_dir = os.path.join(_model_root(model), "transformer")
             cfg = cfg_dir if os.path.isdir(cfg_dir) else None
@@ -659,8 +669,8 @@ def _build_transformer(model, transformer, dtype):
     else:
         tr_dir = os.path.join(_model_root(model), "transformer")
         _require_file(tr_dir, f"transformer 目录（model={model}）")
-        tr = QwenImageTransformer2DModel.from_pretrained(tr_dir,
-                                                         torch_dtype=dt)
+        tr = QwenImageTransformer2DModel.from_pretrained(
+            tr_dir, torch_dtype=dt, quantization_config=qc)
         src = tr_dir
     n_meta = sum(1 for p in tr.parameters() if p.device.type == "meta")
     if n_meta:
@@ -842,7 +852,7 @@ def register(registry):
         "qwen_image.transformer_load",
         inputs={"model": "STRING", "transformer": "STRING",
                 "dtype": "STRING", "offload": "STRING",
-                "group_blocks": "INT"},
+                "group_blocks": "INT", "quant": "STRING"},
         outputs={"transformer": "TRANSFORMER"},
         description="Qwen-Image transformer 组件加载（20B MMDiT）。官方 "
                     "Diffusers 目录（model 参数）或 Comfy 单文件（transformer "
@@ -850,10 +860,12 @@ def register(registry):
                     "分组流式（group_blocks 个 block 一组驻留显存，快数倍）。")
     def _op_transformer_load(model="Qwen-Image-2512", transformer="",
                              dtype="bf16", offload="sequential",
-                             group_blocks=4):
+                             group_blocks=4, quant=""):
         import torch
 
-        key = f"qwen-image:tr:{model}|{transformer}|{dtype}|{offload}|{group_blocks}"
+        q = str(quant or "").lower()
+        key = (f"qwen-image:tr:{model}|{transformer}|{dtype}|{offload}"
+               f"|{group_blocks}|{q}")
         models = _models()
         with models._lock:
             if key in models._pipes:
@@ -861,9 +873,13 @@ def register(registry):
                 return {"transformer": models._pipes[key]}
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        tr, src = _build_transformer(model, transformer, dtype)
-        tr = _offload(tr, device, offload, "transformer",
-                      group_blocks=group_blocks)
+        tr, src = _build_transformer(model, transformer, dtype, q)
+        if q == "fp8":
+            # fp8 ~20GB 全量驻留（上卡失败 _offload 自动退回 sequential）
+            tr = _offload(tr, device, "cuda", "transformer")
+        else:
+            tr = _offload(tr, device, offload, "transformer",
+                          group_blocks=group_blocks)
         _budget_mode = "sequential" if str(offload).lower() in ("none", "") \
             else offload
         return {"transformer": _register(

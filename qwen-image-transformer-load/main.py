@@ -19,6 +19,7 @@ def main():
         "dtype": param("dtype", "bf16"),
         "offload": param("offload", "sequential"),
         "group_blocks": param("group_blocks", 4, int),
+        "quant": param("quant", ""),
     }
 
     t0 = time.time()

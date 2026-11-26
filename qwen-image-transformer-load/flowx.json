@@ -98,6 +98,13 @@
       "required": false,
       "default": 4,
       "description": "offload=group 时每组驻留显存的 block 数（越大越快越占显存）"
+    },
+    {
+      "name": "quant",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "权重量化：fp8=torchao float8_weight_only（39GB→20GB，24GB 卡全量驻留，采样零搬运）。留空=不量化"
     }
   ],
   "outputs": [

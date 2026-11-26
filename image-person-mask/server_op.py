@@ -28,7 +28,7 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "34bfa9a137f4"
+OP_VERSION = "4453e46484e7"
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -599,7 +599,9 @@ def sam3_mask(image, prompt="person", obj_pick="all", threshold=0.5,
         #（真机实证）——孔洞是全包围区域，洪泛填充背景后取反即得。
         import cv2
         u8 = mask_np.astype(np.uint8)
-        bg = np.pad((1 - u8) * 255, 1)          # 1px 边框保证种子点是背景
+        bg = np.pad((1 - u8) * 255, 1, constant_values=255)
+        # ⚠ 边框必须填 255（背景色）：默认填 0 会让边框与 mask 连通，
+        # 洪泛把 mask 区吃掉 → holes 误判成全背景 → 覆盖率 100%（真机实证）
         ff_mask = np.zeros((bg.shape[0] + 2, bg.shape[1] + 2), np.uint8)
         cv2.floodFill(bg, ff_mask, (0, 0), 128)  # 外背景 → 128
         holes = (bg == 255)[1:-1, 1:-1]           # 未触及的 255 = 内部孔洞

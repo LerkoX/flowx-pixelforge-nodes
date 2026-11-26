@@ -33,6 +33,22 @@
     {
       "name": "height",
       "type": "integer"
+    },
+    {
+      "name": "bbox_x",
+      "type": "integer"
+    },
+    {
+      "name": "bbox_y",
+      "type": "integer"
+    },
+    {
+      "name": "bbox_w",
+      "type": "integer"
+    },
+    {
+      "name": "bbox_h",
+      "type": "integer"
     }
   ],
   "parameters": [
@@ -78,6 +94,13 @@
       "required": false,
       "default": 0,
       "description": "外扩像素（抠头填白建议 6~10）"
+    },
+    {
+      "name": "pad",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "bbox 外扩像素（bbox 输出用；裁剪特写建议 30~60）"
     }
   ],
   "executor": {

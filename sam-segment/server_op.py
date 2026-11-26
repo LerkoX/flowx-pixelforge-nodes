@@ -28,7 +28,7 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "30b3fe76c7bf"
+OP_VERSION = "4bc56c6d8723"
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -554,7 +554,8 @@ def _sam3_image_proc():
     return _SAM3_IMG_PROC
 
 
-def sam3_mask(image, prompt="person", obj_pick="all", threshold=0.5, dilate=0):
+def sam3_mask(image, prompt="person", obj_pick="all", threshold=0.5,
+              dilate=0, pad=0):
     """SAM3 文本提示图像分割：IMAGE + prompt → 灰度蒙版（0/255）。
 
     - prompt：英文名词短语（'person' / 'the head and hair' / 'face' …）
@@ -598,10 +599,22 @@ def sam3_mask(image, prompt="person", obj_pick="all", threshold=0.5, dilate=0):
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * d + 1,) * 2)
         mask_np = cv2.dilate(mask_np.astype(np.uint8), k) > 0
     coverage = float(mask_np.mean())
+    # bbox（mask 外接矩形 + pad 像素，clip 到图内）：供下游 image-crop
+    # 直接接线（脸部特写裁剪框自动跟随人物位置，免手调固定坐标）
+    p = max(0, int(pad or 0))
+    if mask_np.any():
+        ys, xs = np.nonzero(mask_np)
+        bx = max(0, int(xs.min()) - p); by = max(0, int(ys.min()) - p)
+        bw = min(w, int(xs.max()) + 1 + p) - bx
+        bh = min(h, int(ys.max()) + 1 + p) - by
+    else:
+        bx = by = 0; bw, bh = w, h
     print(f"[{op_name}] prompt={prompt!r} 检出={n} pick={obj_pick} "
-          f"cover={coverage * 100:.1f}% {time.time() - t0:.2f}s", flush=True)
+          f"cover={coverage * 100:.1f}% bbox=({bx},{by},{bw}x{bh}) "
+          f"{time.time() - t0:.2f}s", flush=True)
     return {"mask": Image.fromarray(mask_np.astype("uint8") * 255, "L"),
-            "count": n, "coverage": coverage, "width": w, "height": h}
+            "count": n, "coverage": coverage, "width": w, "height": h,
+            "bbox_x": bx, "bbox_y": by, "bbox_w": bw, "bbox_h": bh}
 
 
 def scores_or(sc):
@@ -1034,9 +1047,11 @@ def register(registry):
     registry.register(
         "seg.sam3",
         inputs={"image": "IMAGE", "prompt": "STRING", "obj_pick": "STRING",
-                "threshold": "FLOAT", "dilate": "INT"},
+                "threshold": "FLOAT", "dilate": "INT", "pad": "INT"},
         outputs={"mask": "IMAGE", "count": "INT", "coverage": "FLOAT",
-                 "width": "INT", "height": "INT"},
+                 "width": "INT", "height": "INT",
+                 "bbox_x": "INT", "bbox_y": "INT",
+                 "bbox_w": "INT", "bbox_h": "INT"},
         description="SAM3 文本提示图像分割（2026-11-26）：prompt='the head and "
                     "hair'/'person' → 像素级灰度蒙版。权重复用 sam3-video 目录"
                     "（Sam3Model 直读零 missing）。obj_pick=all 并集 / best 最高分；"

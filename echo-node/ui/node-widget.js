@@ -2825,18 +2825,15 @@ createNodeWidget.simplifyPoints = simplifyPoints
 
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
-  icon: '🎚️',
-  title: '亮度对比度伽马锐度',
+  icon: '📣',
+  title: '回声',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
-    { key: 'image', label: '输入图像对象 ID（image）', kind: 'text', mono: true },
-    { key: 'brightness', label: '亮度', kind: 'slider', min: 0, max: 2, step: 0.05, default: 1.0 },
-    { key: 'contrast', label: '对比度', kind: 'slider', min: 0, max: 2, step: 0.05, default: 1.0 },
-    { key: 'gamma', label: '伽马', kind: 'slider', min: 0.1, max: 3, step: 0.05, default: 1.0 },
-    { key: 'sharpness', label: '锐度', kind: 'slider', min: 0, max: 3, step: 0.05, default: 1.0 },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
+    { key: 'text', label: 'text（可引用上游输出）', kind: 'text', mono: true, default: '' },
+    { key: 'fail', label: 'fail（1=注入失败）', kind: 'select', options: ['0', '1'], default: '0' },
+    { key: 'sleep', label: 'sleep 秒', kind: 'slider', min: 0, max: 10, step: 0.5, default: 0 },
+    { key: 'marker', label: 'marker 标记文件路径', kind: 'text', mono: true, default: '' },
   ],
-  compareInput: 'image',
+  note: '测试节点：marker 行数=执行次数；fail 注入失败；验证重置重跑',
 }
 
 export default createNodeWidget(WIDGET_SPEC)

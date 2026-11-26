@@ -1,47 +1,46 @@
-"""image-upscale：图像放大（hires.fix 前置），图像对象引用 → 放大后的图像对象引用。
+"""image-upscale：图片放大（纯节点侧 PIL，对标 ComfyUI ImageUpscale）。
 
-为什么走任务式（/jobs+轮询）而不是同步 /op：算子本身秒级，但 GPU 串行队列
-（EXEC_LOCK+FIFO）里可能排在数十分钟~数小时的任务之后——同步 /op 等待期零字节，
-隧道必掐断（exec 743 实测本节点同步超时失败）；任务式把等待变成短轮询，
-且带 job 标记 ⇒ Studio 取消时可定向中断，不留孤儿任务。"""
-import time
+历史：旧版走服务端 ops.image_upscale（不存在该算子 + 裸名 403 守卫双杀）。
+PIL resize 足以覆盖角色卡裁剪放大的用途，改为纯客户端（对齐 image-crop）。
+"""
+from flowx_client import emit_input_media, emit, emit_result_preview, param, token
+from image_io import get_pimg, post_pimg
 
-from flowx_client import (emit, emit_input_media, emit_preview, ensure_plugin,
-                          host_base, param, ref, submit_job, token, wait_job)
+
+def _resample(name):
+    from PIL import Image as _I
+    table = {"lanczos": _I.LANCZOS, "bicubic": _I.BICUBIC, "bilinear": _I.BILINEAR,
+             "nearest": _I.NEAREST, "area": _I.BOX}
+    return table.get(str(name or "lanczos").lower(), _I.LANCZOS)
 
 
 def main():
     url = param("service_url").rstrip("/")
-    pbase = host_base(url)   # Studio 侧可达（job 标记用）
     tok = token()
-    # 输入原图物化：画布对比控件的「原图」侧（推理服务对象 GC/TTL 后
-    # 必然 404，必须在执行当时落一份到 Studio 媒体缓存）
     emit_input_media(url, param("image"), tok)
-    ensure_plugin(url, "image.upscale", tok=tok)
-    scale = param("scale", 2.0, cast=float)
-    width = param("width", 0, cast=int)
-    height = param("height", 0, cast=int)
-    method = param("method", "lanczos")
+    im = get_pimg(url, param("image"), tok, mode="RGB")
 
-    t0 = time.time()
-    jid = submit_job(url, {
-        "name": "image.upscale",
-        "inputs": {"image": ref(param("image")),
-                   "scale": scale, "width": width, "height": height,
-                   "method": method},
-    }, tok)
-    # job 标记：Studio 取消/超时据此**定向转发** /interrupt（信号一旦输给
-    # 执行器杀进程，远程任务就变孤儿；实测概率约 1/3）
-    emit_preview(f"{pbase}/preview/{jid}", 0.0, tok, base=pbase, job_id=jid)
-    result = wait_job(url, jid, tok,
-                      timeout=param("job_timeout", 1800, int),
-                      poll=param("poll_interval", 5, int))
-    out = {k: m.get("id", m.get("value"))
-           for k, m in result.get("outputs", {}).items()}
-    print(f"[upscale] image={param('image')} scale={scale} "
-          f"target={width}x{height} method={method} -> image={out['image']}",
-          flush=True)
-    emit(image=out["image"])
+    w, h = param("width", 0, cast=int), param("height", 0, cast=int)
+    scale = param("scale", 2.0, cast=float)
+    keep_aspect = str(param("keep_aspect", True)).lower() in ("1", "true", "yes")
+
+    if w > 0 and h > 0:
+        target = (w, h)
+        if keep_aspect:
+            im2 = im.copy()
+            im2.thumbnail(target, _resample(param("algorithm", "lanczos")))
+            target = im2.size
+            im = im2
+        else:
+            im = im.resize(target, _resample(param("algorithm", "lanczos")))
+    else:
+        target = (max(1, round(im.width * scale)), max(1, round(im.height * scale)))
+        im = im.resize(target, _resample(param("algorithm", "lanczos")))
+
+    oid = post_pimg(url, im, tok)
+    print(f"[image-upscale] {param('image')} {target[0]}x{target[1]} -> {oid}", flush=True)
+    emit(image=oid, width=im.width, height=im.height)
+    emit_result_preview(url, oid, tok)
 
 
 if __name__ == "__main__":

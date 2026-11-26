@@ -1,0 +1,100 @@
+{
+  "name": "image-person-mask",
+  "displayName": "SAM3 图像分割",
+  "description": "SAM3 文本提示图像分割：prompt='the head and hair'/'person' → 像素级灰度蒙版（白=选中）。精准抠头填白/清背景的场景比矩形擦除干净得多。权重复用服务端 sam3-video 目录。",
+  "category": "mask",
+  "version": "1.0.0",
+  "language": "python",
+  "tags": [
+    "mask",
+    "sam3",
+    "segment",
+    "text-prompt",
+    "image"
+  ],
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "mask",
+      "type": "IMAGE"
+    },
+    {
+      "name": "count",
+      "type": "integer"
+    },
+    {
+      "name": "coverage",
+      "type": "float"
+    },
+    {
+      "name": "width",
+      "type": "integer"
+    },
+    {
+      "name": "height",
+      "type": "integer"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "prompt",
+      "type": "string",
+      "required": false,
+      "default": "person",
+      "description": "英文名词短语：person / the head and hair / face …"
+    },
+    {
+      "name": "obj_pick",
+      "type": "string",
+      "required": false,
+      "default": "all",
+      "description": "all=所有检出并集 / best=仅最高分"
+    },
+    {
+      "name": "threshold",
+      "type": "float",
+      "required": false,
+      "default": 0.5
+    },
+    {
+      "name": "dilate",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "外扩像素（抠头填白建议 6~10）"
+    }
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 320
+  },
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ]
+}

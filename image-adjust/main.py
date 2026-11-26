@@ -15,7 +15,7 @@ def main():
     # 必然 404，必须在执行当时落一份到 Studio 媒体缓存）
     emit_input_media(url, param("image"), tok)
     im = get_pimg(url, param("image"), tok, mode="RGB")
-    out = adjust(im, brightness=param("brightness", 1.0, cast=float), contrast=param("contrast", 1.0, cast=float), gamma=param("gamma", 1.0, cast=float), sharpness=param("sharpness", 1.0, cast=float))
+    out = adjust(im, brightness=param("brightness", 1.0, cast=float), contrast=param("contrast", 1.0, cast=float), gamma=param("gamma", 1.0, cast=float), sharpness=param("sharpness", 1.0, cast=float), white_point=param("white_point", 0, cast=int))
     oid = post_pimg(url, out, tok)
     print(f"[image-adjust] image={param('image')} -> image={oid}", flush=True)
     emit(image=oid, width=out.width, height=out.height)

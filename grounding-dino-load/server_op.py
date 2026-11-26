@@ -28,7 +28,14 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "72958921ed3b"
+OP_VERSION = "48eaf06dd3d2"
+
+# SAM3 图像版（2026-11-26）：与视频版共用 /models/sam3-video 权重——
+# transformers 5.22.2 的 Sam3Model 直接读 sam3_video config 零 missing/unexpected
+# （真机验证 1468 params meta=0），一次装载 ~5s，文本→像素级蒙版。
+SAM3_IMG_DIR = os.environ.get(
+    "SAM3_IMG_DIR", "/var/lib/flowx-inference/models/sam3-video")
+_SAM3_IMG_PROC = None
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -520,6 +527,91 @@ def sam(image, model="sam:vit_l", points="", box="", multimask=True, pick=0,
             "width": image.size[0], "height": image.size[1]}
 
 
+def _load_sam3_image(op_name):
+    """装载 SAM3 图像分割（LRU 常驻，与 seg 族其它模型同一淘汰语义）。"""
+    key = "sam3-image:bf16"
+    mdl = _cached(key)
+    if mdl is not None:
+        return mdl
+    import torch
+    from transformers import Sam3Model
+    t0 = time.time()
+    mdl = Sam3Model.from_pretrained(SAM3_IMG_DIR, torch_dtype=torch.bfloat16)
+    est = sum(p.numel() * p.element_size() for p in mdl.parameters())
+    _register(key, mdl, est, "sam3-image", op_name)
+    mdl = _to_cuda(mdl, key, est, op_name)
+    print(f"[{op_name}] sam3-image loaded {time.time() - t0:.1f}s "
+          f"est={est / 1e9:.2f}GB", flush=True)
+    return mdl
+
+
+def _sam3_image_proc():
+    global _SAM3_IMG_PROC
+    if _SAM3_IMG_PROC is None:
+        from transformers import Sam3Processor
+        _SAM3_IMG_PROC = Sam3Processor.from_pretrained(SAM3_IMG_DIR)
+    return _SAM3_IMG_PROC
+
+
+def sam3_mask(image, prompt="person", obj_pick="all", threshold=0.5, dilate=0):
+    """SAM3 文本提示图像分割：IMAGE + prompt → 灰度蒙版（0/255）。
+
+    - prompt：英文名词短语（'person' / 'the head and hair' / 'face' …）
+    - obj_pick：all=所有检出取并集 / best=仅最高分
+    - dilate：外扩像素（椭圆核；抠头填白建议 6~10）
+    """
+    op_name = f"seg.sam3@{OP_VERSION}"
+    if not isinstance(image, Image.Image):
+        raise ValueError(f"{op_name}: image 需为 IMAGE 对象，got "
+                         f"{type(image).__name__}")
+    import numpy as np
+    import torch
+    mdl = _load_sam3_image(op_name)
+    proc = _sam3_image_proc()
+    w, h = image.size
+    t0 = time.time()
+    inputs = proc(images=image.convert("RGB"), text=str(prompt),
+                  return_tensors="pt").to("cuda")
+    with torch.no_grad():
+        out = mdl(**inputs)
+    res = proc.post_process_instance_segmentation(
+        out, threshold=float(threshold), target_sizes=[(h, w)])[0]
+    masks = res.get("masks")
+    if masks is None or len(masks) == 0:
+        raise ValueError(f"{op_name}: 未检出任何目标 prompt={prompt!r} "
+                         f"threshold={threshold}")
+    n = int(masks.shape[0])
+    if str(obj_pick).lower() == "best":
+        sc = res.get("scores")
+        if sc is not None and len(scores_or(sc)) == n:
+            m = masks[int(np.argmax(_np_scores(sc)))]
+        else:
+            m = masks[0]
+    else:
+        m = masks.any(0)
+    mask_np = m.cpu().numpy() if hasattr(m, "cpu") else np.asarray(m)
+    mask_np = mask_np.astype(bool)
+    d = int(dilate or 0)
+    if d > 0:
+        import cv2
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * d + 1,) * 2)
+        mask_np = cv2.dilate(mask_np.astype(np.uint8), k) > 0
+    coverage = float(mask_np.mean())
+    print(f"[{op_name}] prompt={prompt!r} 检出={n} pick={obj_pick} "
+          f"cover={coverage * 100:.1f}% {time.time() - t0:.2f}s", flush=True)
+    return {"mask": Image.fromarray(mask_np.astype("uint8") * 255, "L"),
+            "count": n, "coverage": coverage, "width": w, "height": h}
+
+
+def scores_or(sc):
+    return sc
+
+
+def _np_scores(sc):
+    return sc.cpu().numpy() if hasattr(sc, "cpu") else sc
+
+
+
 def _mask_iou(a, b):
     import numpy as np
     inter = np.logical_and(a, b).sum()
@@ -938,6 +1030,17 @@ def register(registry):
                     "negative_box_only=1 时负类只按矩形框扣除（不喂 SAM，防大目标"
                     "负类的 SAM 蒙版过度侵蚀正向区域）"
     )(grounding_detect)
+    registry.register(
+        "seg.sam3",
+        inputs={"image": "IMAGE", "prompt": "STRING", "obj_pick": "STRING",
+                "threshold": "FLOAT", "dilate": "INT"},
+        outputs={"mask": "IMAGE", "count": "INT", "coverage": "FLOAT",
+                 "width": "INT", "height": "INT"},
+        description="SAM3 文本提示图像分割（2026-11-26）：prompt='the head and "
+                    "hair'/'person' → 像素级灰度蒙版。权重复用 sam3-video 目录"
+                    "（Sam3Model 直读零 missing）。obj_pick=all 并集 / best 最高分；"
+                    "dilate 外扩像素"
+    )(sam3_mask)
     registry.register(
         "seg.mask_ops",
         inputs={"mask_a": "IMAGE", "mask_b": "IMAGE", "op": "STRING"},

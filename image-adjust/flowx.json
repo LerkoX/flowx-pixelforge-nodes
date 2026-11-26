@@ -1,8 +1,8 @@
 {
   "name": "image-adjust",
   "displayName": "亮度对比度伽马锐度",
-  "description": "传统图像调整（对标 ComfyUI Image Adjust / WAS 基础调节）：亮度 / 对比度 / 伽马 / 锐度，各参数 1.0 = 不变（gamma>1 变亮）。纯节点侧 PIL，不占显存。",
-  "version": "1.0.0",
+  "description": "传统图像调整（对标 ComfyUI Image Adjust / WAS 基础调节）：亮度 / 对比度 / 伽马 / 锐度，各参数 1.0 = 不变（gamma>1 变亮）。v1.1.0：white_point>0 时 min(R,G,B)>=阈值 的近白像素压纯白（清 Lightning 平涂区噪点，角色卡白底必备）。纯节点侧 PIL，不占显存。",
+  "version": "1.1.0",
   "author": "flowx-team",
   "tags": [
     "sd",
@@ -73,6 +73,13 @@
       "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
       "required": false,
       "default": ""
+    },
+    {
+      "name": "white_point",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "白点阈值：三通道同时>=该值的像素压纯白（0=关闭；清噪建议 230~245）"
     }
   ],
   "env": {

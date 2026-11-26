@@ -35,8 +35,14 @@ def _gamma_lut(gamma):
             for i in range(256)]
 
 
-def adjust(im, brightness=1.0, contrast=1.0, gamma=1.0, sharpness=1.0):
-    """亮度 / 对比度 / 伽马 / 锐度（1.0 = 不变）。"""
+def adjust(im, brightness=1.0, contrast=1.0, gamma=1.0, sharpness=1.0,
+           white_point=0):
+    """亮度 / 对比度 / 伽马 / 锐度（1.0 = 不变）+ 白点阈值。
+
+    white_point>0：min(R,G,B) 三通道同时 >= white_point 的像素压成纯白
+    （清 Lightning 少步采样在大面积平涂区留下的噪点斑块；纯 PIL，
+    ImageChops.darker 求 min 通道 → 阈值 mask → composite）。
+    """
     out = im
     if float(brightness) != 1.0:
         out = ImageEnhance.Brightness(out).enhance(float(brightness))
@@ -47,6 +53,14 @@ def adjust(im, brightness=1.0, contrast=1.0, gamma=1.0, sharpness=1.0):
         out = out.point(lut * len(out.getbands()))
     if float(sharpness) != 1.0:
         out = ImageEnhance.Sharpness(out).enhance(float(sharpness))
+    wp = int(white_point or 0)
+    if wp > 0 and out.mode == "RGB":
+        from PIL import ImageChops
+        r, g, b = out.split()
+        mn = ImageChops.darker(ImageChops.darker(r, g), b)
+        mask = mn.point(lambda v: 255 if v >= wp else 0)
+        white = Image.new("RGB", out.size, (255, 255, 255))
+        out = Image.composite(white, out, mask)
     return out
 
 

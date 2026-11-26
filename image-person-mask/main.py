@@ -11,6 +11,7 @@ def main():
         "threshold": float(param("threshold", "0.5")),
         "dilate": int(param("dilate", "0")),
         "pad": int(param("pad", "0")),
+        "fill_holes": int(param("fill_holes", "0")),
     }, emit_keys=["mask", "count", "coverage", "width", "height",
                    "bbox_x", "bbox_y", "bbox_w", "bbox_h"],
         input_media=("image",))

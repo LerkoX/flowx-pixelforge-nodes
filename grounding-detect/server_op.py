@@ -28,7 +28,7 @@
 # 注册名统一改写为 "<基名>@<OP_VERSION>"（族内 register() 调用不用改），
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
 # 改过实现的族 ⇒ 换名换文件 ⇒ 新旧版本在服务端并存、互不顶替（旧版顶不掉新版）。
-OP_VERSION = "4bc56c6d8723"
+OP_VERSION = "34bfa9a137f4"
 OP_FAMILY = "seg"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -555,7 +555,7 @@ def _sam3_image_proc():
 
 
 def sam3_mask(image, prompt="person", obj_pick="all", threshold=0.5,
-              dilate=0, pad=0):
+              dilate=0, pad=0, fill_holes=0):
     """SAM3 文本提示图像分割：IMAGE + prompt → 灰度蒙版（0/255）。
 
     - prompt：英文名词短语（'person' / 'the head and hair' / 'face' …）
@@ -593,6 +593,17 @@ def sam3_mask(image, prompt="person", obj_pick="all", threshold=0.5,
         m = masks.any(0)
     mask_np = m.cpu().numpy() if hasattr(m, "cpu") else np.asarray(m)
     mask_np = mask_np.astype(bool)
+    if int(fill_holes or 0):
+        # 内部孔洞填充（cv2 洪泛版，免 scipy 依赖）：SAM3 的
+        # "head and hair" 类 prompt 会把发丝选中而**漏掉被发丝包围的脸**
+        #（真机实证）——孔洞是全包围区域，洪泛填充背景后取反即得。
+        import cv2
+        u8 = mask_np.astype(np.uint8)
+        bg = np.pad((1 - u8) * 255, 1)          # 1px 边框保证种子点是背景
+        ff_mask = np.zeros((bg.shape[0] + 2, bg.shape[1] + 2), np.uint8)
+        cv2.floodFill(bg, ff_mask, (0, 0), 128)  # 外背景 → 128
+        holes = (bg == 255)[1:-1, 1:-1]           # 未触及的 255 = 内部孔洞
+        mask_np = mask_np | holes
     d = int(dilate or 0)
     if d > 0:
         import cv2
@@ -1047,7 +1058,8 @@ def register(registry):
     registry.register(
         "seg.sam3",
         inputs={"image": "IMAGE", "prompt": "STRING", "obj_pick": "STRING",
-                "threshold": "FLOAT", "dilate": "INT", "pad": "INT"},
+                "threshold": "FLOAT", "dilate": "INT", "pad": "INT",
+                "fill_holes": "INT"},
         outputs={"mask": "IMAGE", "count": "INT", "coverage": "FLOAT",
                  "width": "INT", "height": "INT",
                  "bbox_x": "INT", "bbox_y": "INT",

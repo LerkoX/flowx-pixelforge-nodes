@@ -101,6 +101,13 @@
       "required": false,
       "default": 0,
       "description": "bbox 外扩像素（bbox 输出用；裁剪特写建议 30~60）"
+    },
+    {
+      "name": "fill_holes",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "内部孔洞填充（0/1）：抠头/头发时开——SAM3 会选中发丝但漏掉被包围的脸"
     }
   ],
   "executor": {

@@ -120,7 +120,10 @@
   },
   "ui": {
     "entry": "ui/node-widget.js",
-    "width": 320
+    "width": 340,
+    "height": 460,
+    "collapsed": false,
+    "apiVersion": 1
   },
   "files": [
     "flowx_client.py",

@@ -23,7 +23,7 @@ import time
 
 # --- F1 族版本化（与其他族同规）：算子身份 = 实现内容 ------------------------
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "68a6f263782c"
+OP_VERSION = "b4a5b4f7c420"
 OP_FAMILY = "video_face"  # 必须等于本文件 stem（gate J 校验）；落盘名 <OP_FAMILY>_<OP_VERSION>.py
 
 
@@ -163,7 +163,7 @@ def register(registry):
         outputs={"crop": "VIDEO", "mask_white": "VIDEO", "boxes": "STRING",
                  "boxes": "STRING", "boxes_file": "STRING",
                  "face_ref": "IMAGE", "num_frames": "INT", "fps": "INT",
-                 "face_h_max": "INT"},
+                 "face_h_max": "INT", "soft_auto": "FLOAT"},
         description="脸部追踪裁切（PixelAI FaceFix 第一段）：遮罩逐帧出脸部"
                     "包围盒（最大连通白区），EMA 平滑防抖，按 crop_factor "
                     "（脸高倍数，社区默认 2.5）取方形盒裁切并放大到 "
@@ -310,13 +310,25 @@ def register(registry):
         with open(boxes_path, "w") as f:
             f.write(boxes_json)
         boxes_b64 = base64.b64encode(boxes_json.encode()).decode()
+        # 自适应降噪强度（社区指南「小脸多修、大脸少修」的固化）：
+        # 源视频里脸越小、真实信息越少，重绘比例就该越高（soft 越大 =
+        # 越少保留糊脸源）。按过滤后有效框的【中位脸高】（源像素）线性映射：
+        #   45px → 0.80（小脸多修）| 120px → 0.66 | 240px → 0.45（大脸少修）
+        # 夹在 [0.40, 0.85]：>0.85 身份全丢，<0.4 糊脸保留太多（2110 教训：
+        # 45px 糊脸配 soft=0.5 = 糊被原样保留）。
+        hs = sorted(h for h in raw_face_h if h > 0)
+        h_med = hs[len(hs) // 2] if hs else float(face_h_max)
+        soft_auto = min(0.85, max(0.40, 0.88 - h_med * 0.0018))
+        print(f"[video-face] soft_auto={soft_auto:.3f}"
+              f"（中位脸高 {h_med:.0f}px）", flush=True)
         return {"crop": {"frames": crops, "fps": fps},
                 "mask_white": {"frames": mask_white, "fps": fps},
                 "boxes": boxes_b64,
                 "boxes_file": boxes_path,
                 "face_ref": face_ref,
                 "num_frames": n, "fps": int(round(fps)),
-                "face_h_max": int(face_h_max)}
+                "face_h_max": int(face_h_max),
+                "soft_auto": round(soft_auto, 3)}
 
     @registry.register(
         "video.face_stitch",

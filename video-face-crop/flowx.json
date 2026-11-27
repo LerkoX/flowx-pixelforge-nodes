@@ -46,6 +46,11 @@
       "name": "face_h_max",
       "type": "int",
       "description": "全片最大脸高（px，face-size fade 参考）"
+    },
+    {
+      "name": "soft_auto",
+      "type": "float",
+      "description": "自适应降噪强度（按中位脸高：小脸多修/大脸少修），接 minimax-h3-gen 的 inpaint_soft"
     }
   ],
   "parameters": [

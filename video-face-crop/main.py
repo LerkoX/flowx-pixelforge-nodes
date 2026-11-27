@@ -47,6 +47,8 @@ def main():
     n = outs["num_frames"].get("value")
     fps = outs["fps"].get("value")
     fh = outs["face_h_max"].get("value")
+    # 兼容服务端旧插件（无 soft_auto 输出）：回退历史定版 0.5
+    sa = (outs.get("soft_auto") or {}).get("value") or 0.5
     print(f"[video-face-crop] done in {time.time()-t0:.1f}s "
           f"-> crop={crop_id} frames={n} fps={fps} face_h_max={fh}",
           flush=True)
@@ -57,7 +59,7 @@ def main():
     # 发，画布物化的"裁片预览"就是全白 mask（2012 误判根因）。
     emit(mask_white=mask_id, boxes=boxes,
          boxes_file=boxes_file, face_ref=face_ref_id,
-         num_frames=n, fps=fps, face_h_max=fh, crop=crop_id)
+         num_frames=n, fps=fps, face_h_max=fh, soft_auto=sa, crop=crop_id)
 
 
 if __name__ == "__main__":

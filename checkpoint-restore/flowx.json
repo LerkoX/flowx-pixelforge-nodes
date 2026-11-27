@@ -1,0 +1,24 @@
+{
+  "name": "checkpoint-restore",
+  "displayName": "存档恢复",
+  "description": "从命名存档物化出新的活对象（服务端 POST /checkpoints/{name}/materialize）。回退/续跑/分叉实验的入口：输出是普通对象 id，下游节点零感知。",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": ["system", "checkpoint"],
+  "icon": "📦",
+  "language": "python",
+  "entry": "main.py",
+  "files": ["flowx_client.py"],
+  "executor": {"supportedTypes": ["local"], "preferredType": "local", "bundled": true},
+  "parameters": [
+    {"name": "name", "type": "string", "required": true, "default": "", "description": "存档名"},
+    {"name": "service_url", "type": "string", "required": true, "default": "", "description": "推理服务地址"},
+    {"name": "service_token", "type": "string", "required": true, "default": "", "description": "服务令牌"}
+  ],
+  "outputs": [
+    {"name": "object", "type": "string", "description": "物化出的新对象 id"},
+    {"name": "kind", "type": "string", "description": "对象类型"},
+    {"name": "size_bytes", "type": "integer", "description": "存档体积"}
+  ],
+  "ui": {"entry": "ui/node-widget.js", "width": 260, "height": 220, "collapsed": false, "apiVersion": 1}
+}

@@ -31,7 +31,7 @@ pose_start_percent / pose_end_percent / reference_image_strength 四个旋钮。
 
 import time
 
-from flowx_client import (emit, param, ref, submit_job,
+from flowx_client import (emit, param, ref, resolve_op, submit_job,
                           wait_job, token)
 
 
@@ -46,6 +46,11 @@ def _run(url, tok, payload, timeout):
 def main():
     url = param("service_url").rstrip("/")
     tok = token()
+
+    # F1 之后算子名带版本戳，纯编排节点用 resolve_op 查实际名（不自注册）
+    op_tf = resolve_op(url, "video.to_frames", tok)
+    op_enc = resolve_op(url, "video.encode", tok)
+    op_pp = resolve_op(url, "preprocess.openpose", tok)
 
 
     video_id = param("video", "")

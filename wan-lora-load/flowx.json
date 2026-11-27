@@ -30,6 +30,13 @@
       "default": ""
     },
     {
+      "name": "model",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "上游 MODEL 对象引用（可选锚点）；绑定后随 lora_config 一起传给下游装配"
+    },
+    {
       "name": "lora_scale",
       "type": "float",
       "description": "默认强度（项内未写强度时用）",

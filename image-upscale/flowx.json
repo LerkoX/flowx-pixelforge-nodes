@@ -76,6 +76,13 @@
       "default": "lanczos"
     },
     {
+      "name": "keep_aspect",
+      "type": "string",
+      "description": "保持宽高比（true=thumbnail 缩进目标框内，默认 true；false=强制拉伸到 width×height）；仅 width/height 均 >0 时生效",
+      "required": false,
+      "default": "true"
+    },
+    {
       "name": "job_timeout",
       "type": "integer",
       "required": false,

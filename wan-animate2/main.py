@@ -37,8 +37,6 @@ def main():
 
     # replace 模式（人物替换）：给 background_video + mask_video 即启用，
     # 保留原视频背景只换人（bg×(1-mask) 抹除在服务端算子里做）
-    if model_id:
-        inputs["model"] = ref(model_id)
     bg_id = param("background_video", "")
     mask_id = param("mask_video", "")
     inputs = {
@@ -81,6 +79,8 @@ def main():
         "guidance_scale": param("guidance_scale", 1.0, float),
         "seed": param("seed", -1, int),
     }
+    if model_id:
+        inputs["model"] = ref(model_id)
     _pb = param("pullback_mask", "")
     if _pb:
         inputs["pullback_mask"] = ref(_pb)

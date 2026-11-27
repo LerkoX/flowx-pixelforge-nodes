@@ -21,7 +21,7 @@ GFPGAN（video.enhance）能修清晰度，但 face_weight 调高就变通用网
 - controlnet：MODELS_DIR 下 controlnet（如 control_v11f1e_sd15_tile_fp16），空串关闭
 """
 # OP_VERSION 由 nodes/_tools/sync-common.py 依本文件内容自动改写（幂等），禁止手改。
-OP_VERSION = "7ee3f4e27480"
+OP_VERSION = "91dabede7400"
 OP_FAMILY = "sd_face"  # 必须等于本文件 stem（gate J）
 
 
@@ -279,4 +279,4 @@ def register(registry):
         description="视频级 SD 修脸（ADetailer/FaceDetailer 式）：逐帧 YOLO 检测→"
                     "裁剪放大→低 denoise img2img→羽化贴回。检测框 EMA 时序平滑 + "
                     "固定 seed 抑制帧间跳变。controlnet（tile）可选，用裁剪自身作 hint "
-                    "锁轮廓，治「修成另一个人」")
+                    "锁轮廓，治「修成另一个人」")(video_face_detail)

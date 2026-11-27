@@ -28,14 +28,14 @@ def main():
         target = (w, h)
         if keep_aspect:
             im2 = im.copy()
-            im2.thumbnail(target, _resample(param("algorithm", "lanczos")))
+            im2.thumbnail(target, _resample(param("method", "lanczos")))
             target = im2.size
             im = im2
         else:
-            im = im.resize(target, _resample(param("algorithm", "lanczos")))
+            im = im.resize(target, _resample(param("method", "lanczos")))
     else:
         target = (max(1, round(im.width * scale)), max(1, round(im.height * scale)))
-        im = im.resize(target, _resample(param("algorithm", "lanczos")))
+        im = im.resize(target, _resample(param("method", "lanczos")))
 
     oid = post_pimg(url, im, tok)
     print(f"[image-upscale] {param('image')} {target[0]}x{target[1]} -> {oid}", flush=True)

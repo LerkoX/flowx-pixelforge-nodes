@@ -83,6 +83,20 @@
       "required": false,
       "default": 8,
       "description": "median 方法的时序半窗帧数：每帧取 ±W 未遮挡像素中位数（动态背景可跟踪、零幻觉、无闪烁）"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 1800,
+      "description": "任务超时（秒）；排队+计算总预算（要盖住最长任务的排队时间）"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "任务轮询间隔（秒）"
     }
   ],
   "outputs": [

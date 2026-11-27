@@ -15,8 +15,7 @@
   "language": "python",
   "entry": "main.py",
   "files": [
-    "flowx_client.py",
-    "server_op.py"
+    "flowx_client.py"
   ],
   "parameters": [
     {

@@ -64,6 +64,20 @@
       "type": "integer",
       "default": 0,
       "description": "马赛克块化边（0=关）：AREA 降到 1/N 再最近邻放大，块边对齐 latent 网格。H3 建议 16，Wan 建议 8"
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "required": false,
+      "default": 1800,
+      "description": "任务超时（秒）；排队+计算总预算（要盖住最长任务的排队时间）"
+    },
+    {
+      "name": "poll_interval",
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "description": "任务轮询间隔（秒）"
     }
   ],
   "outputs": [

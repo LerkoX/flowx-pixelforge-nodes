@@ -138,36 +138,82 @@ def resolve_kwarg_keys(node: ast.AST, scope: ast.FunctionDef, tree: ast.Module):
 def parse_ops(path: pathlib.Path) -> dict[str, dict]:
     """解析一个服务端算子文件 → {算子名: 契约}。
 
-    两种注册形态都认（历史上并存，vton.py docstring 记过"写成平铺一行就注册不上"）：
+    三种注册形态都认（历史上并存，vton.py docstring 记过"写成平铺一行就注册不上"）：
       @registry.register("op", inputs={...})        # 装饰器
       registry.register("op", inputs={...})(fn)     # 手动应用
+      registry.register("op", {...}, {...})(fn)     # inputs/outputs 位置参数（flashvsr）
+    手动应用的目标允许一层包装器：`(...)(_batch(fn))`（preprocess 族）。
+    算子名允许 f-string 拼接模块级字符串常量：`f"model.unload@{OP_VERSION}"`。
     """
     tree = ast.parse(path.read_text())
     fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    # 模块级字符串常量（f"op@{OP_VERSION}" 解析用）
+    consts: dict[str, str] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 \
+                and isinstance(n.targets[0], ast.Name) \
+                and isinstance(n.value, ast.Constant) \
+                and isinstance(n.value.value, str):
+            consts[n.targets[0].id] = n.value.value
     ops: dict[str, dict] = {}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call)
                 and getattr(node.func, "attr", "") == "register"):
             continue
-        # 过滤 _VersionedRegistry.register 内部的 f-string 转发调用
-        if not node.args or not isinstance(node.args[0], ast.Constant) \
-                or not isinstance(node.args[0].value, str) \
-                or "." not in node.args[0].value:
+        # 算子名：字符串字面量，或 f-string + 模块级常量（如 f"model.unload@{OP_VERSION}"）
+        arg0 = node.args[0] if node.args else None
+        if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+            name = arg0.value
+        elif isinstance(arg0, ast.JoinedStr):
+            parts: list[str] = []
+            ok = True
+            for v in arg0.values:
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    parts.append(v.value)
+                elif isinstance(v, ast.FormattedValue) \
+                        and isinstance(v.value, ast.Name) \
+                        and v.value.id in consts:
+                    parts.append(consts[v.value.id])
+                else:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            name = "".join(parts)
+        else:
             continue
-        name = node.args[0].value
+        # 过滤 _VersionedRegistry.register 内部的 f-string 转发调用
+        if "." not in name:
+            continue
         kw = {k.arg: k.value for k in node.keywords}
+
+        def _dict_arg(idx: int, key: str):
+            """inputs/outputs：优先关键字参数，退回位置参数（args[1]/args[2]）。"""
+            v = kw.get(key)
+            if isinstance(v, ast.Dict):
+                return v
+            if len(node.args) > idx and isinstance(node.args[idx], ast.Dict):
+                return node.args[idx]
+            return None
+
         target = None
-        for parent in ast.walk(tree):  # 手动应用：(…)(fn)
+        for parent in ast.walk(tree):  # 手动应用：(…)(fn) 或 (…)(_batch(fn))
             if isinstance(parent, ast.Call) and parent.func is node:
                 for a in parent.args:
                     if isinstance(a, ast.Name):
                         target = a.id
                         break
+                    # 一层包装器：_batch(fn) → 取内层函数名
+                    if isinstance(a, ast.Call) and isinstance(a.func, ast.Name):
+                        inner = [x.id for x in a.args if isinstance(x, ast.Name)]
+                        if inner:
+                            target = inner[0]
+                            break
         for fn_def in fns.values():    # 装饰器位置
             if any(d is node for d in fn_def.decorator_list):
                 target = fn_def.name
-        info = {"inputs": kw.get("inputs") if isinstance(kw.get("inputs"), ast.Dict) else None,
-                "outputs": kw.get("outputs") if isinstance(kw.get("outputs"), ast.Dict) else None,
+        info = {"inputs": _dict_arg(1, "inputs"),
+                "outputs": _dict_arg(2, "outputs"),
                 "fn": target, "lineno": node.lineno, "file": path}
         if target in fns:
             params, required, has_kwargs = sig_of(fns[target])

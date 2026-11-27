@@ -2825,20 +2825,15 @@ createNodeWidget.simplifyPoints = simplifyPoints
 
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
-  icon: '🧠',
-  title: 'Checkpoint 加载',
+  icon: '🎛️',
+  title: '显存策略',
   fields: [
-    { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true , advanced: true},
-    { key: 'service_url_host', label: '画布侧服务地址（service_url_host）', kind: 'text', mono: true , advanced: true},
-    { key: 'ckpt_name', label: '模型文件名（ckpt_name）', kind: 'model', modelType: 'checkpoint' },
-    { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true , advanced: true},
-    { key: 'dtype', label: '计算精度旋钮：auto（dtype）', kind: 'text', default: 'auto' },
-    { key: 'offload', label: '显存治理旋钮：auto（offload）', kind: 'text', default: 'auto' },
-    { key: 'use_t5', label: 'SD3 T5-XXL 文本编码器开关：auto（use_t5）', kind: 'text', default: 'auto' },
-    { key: 'job_timeout', label: 'job_timeout（秒）', kind: 'text', default: 1800 },
-    { key: 'poll_interval', label: 'poll_interval（秒）', kind: 'text', default: 5 },
+    { key: 'preset', label: '策略', kind: 'select', options: [
+      { value: 'saver', label: 'saver · 逐层offload（省显存，实测最快）' },
+      { value: 'balanced', label: 'balanced · 块级驻留（实验）' },
+      { value: 'turbo', label: 'turbo · 双块级驻留（实验）' }], default: 'saver' },
   ],
-  note: '将指定 checkpoint',
-}
+  note: '输出 tr/te offload 配置，loader 节点用 {{ VramPolicy.tr_offload }} 引用；一处调参全流水线生效',
+};
 
 export default createNodeWidget(WIDGET_SPEC)

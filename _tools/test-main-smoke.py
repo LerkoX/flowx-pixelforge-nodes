@@ -69,8 +69,8 @@ _OP_KEYS = ("model", "clip", "clip2", "vae", "cond", "uncond", "latent", "image"
 
 # 数值型输出键（其余一律给字符串，模拟 Studio 的 string 端口）
 _NUM_KEYS = {"width", "height", "count", "params_mb", "vram_mb", "seed", "steps",
-             "current", "total", "size", "batch", "index", "id_num", "sha",
-             "union_area", "crop_width", "crop_height", "kept"}
+             "current", "total", "size", "size_bytes", "batch", "index", "id_num",
+             "sha", "union_area", "crop_width", "crop_height", "kept"}
 
 # 以 **JSON 文本**形态跨端口传递的结构化输出：节点侧 json.loads(...) 解析，
 # 桩给合法 JSON 才不会在桩里假报 JSONDecodeError（真实服务就是这么传的）。
@@ -178,6 +178,10 @@ class StubRaw(dict):
             return "success"
         if key in self._LISTS:
             return []
+        if key in _NUM_KEYS:
+            # 数值型键（如 /checkpoints 的 size_bytes）：返回 int，节点做
+            # 位移/算术时不会拿到 StubMeta 假报 TypeError（checkpoint-save 踩到）
+            return 1
         return StubMeta(self._keys)
 
 

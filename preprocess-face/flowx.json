@@ -1,0 +1,111 @@
+{
+  "name": "preprocess-face",
+  "displayName": "人脸裁剪",
+  "description": "人脸裁剪（Wan-Animate face_video 契约）：逐帧检测最大人脸 → 按 pad 外扩成方形 → 裁到 out_size²（默认 512）。IMAGE 批次输入时逐帧处理，输出可直接给 wan-animate 的 face_video；不给 face_video 时 wan-animate 算子内部用全黑帧。算子 preprocess.face 的服务端实现以 plugins 族文件 preprocess.py 为唯一来源，本节点包随包自注册（ensure_plugin，hash 幂等），权重复用 /models/insightface（antelopev2 目录）",
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "tags": [
+    "sd",
+    "preprocess",
+    "wan"
+  ],
+  "icon": "👤",
+  "language": "python",
+  "entry": "main.py",
+  "files": [
+    "flowx_client.py",
+    "executor_base.py",
+    "server_op.py"
+  ],
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "parameters": [
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务地址，如 http://192.168.1.100:8100",
+      "required": true,
+      "source": {
+        "nodeRef": "inference-ensure",
+        "output": "service_url",
+        "description": "推荐由健康检查节点输出提供"
+      }
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "Studio 宿主机侧（画布）可达的服务地址：模型列表查询、预览帧/重放/中断中转都由 Studio 发请求，用的是 Studio 的网络视角。docker 节点的 service_url 只能填容器内网地址（如 http://172.17.0.1:8100），Studio（手机/外网侧）取不到——此时把本参数绑成 Studio 可达地址（通常绑 {{ Param.service_url }} 公网隧道），否则画布上没有模型下拉数据、也看不到实时预览。留空则同 service_url",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "image",
+      "type": "string",
+      "description": "输入图像对象 ID（IMAGE 批次逐帧处理；视频帧序列可接 video-to-frames 的 frames 输出）",
+      "required": true,
+      "source": {
+        "nodeRef": "vae-decode",
+        "output": "image",
+        "description": "由 VAE 解码节点的 image 输出提供"
+      }
+    },
+    {
+      "name": "pad",
+      "type": "float",
+      "description": "人脸框外扩比例（默认 0.4）：以最长边为基准扩成方形；太小会切掉发际/下巴，太大会带入过多背景",
+      "required": false,
+      "default": 0.4
+    },
+    {
+      "name": "out_size",
+      "type": "integer",
+      "description": "输出正方形边长（默认 512，Wan-Animate face_video 契约尺寸）",
+      "required": false,
+      "default": 512
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "服务端 INFERENCE_TOKEN 鉴权令牌，未启用鉴权时留空",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "env": {
+    "SERVICE_URL": "{{ Param.service_url }}",
+    "SERVICE_URL_HOST": "{{ Param.service_url_host }}",
+    "IMAGE": "{{ Param.image }}",
+    "PAD": "{{ Param.pad }}",
+    "OUT_SIZE": "{{ Param.out_size }}",
+    "SERVICE_TOKEN": "{{ Param.service_token }}"
+  },
+  "outputs": [
+    {
+      "name": "image",
+      "type": "string",
+      "description": "人脸裁剪结果的对象 ID（out_size² RGB；批次输入则逐帧），供 wan-animate 的 face_video 或下游 frames-to-video"
+    }
+  ],
+  "extract": {
+    "type": "codec-block"
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  },
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 560,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "timeout": 600,
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "docker",
+    "bundled": true
+  }
+}

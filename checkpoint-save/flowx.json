@@ -4,25 +4,95 @@
   "description": "系统级存档：把媒体对象钉到命名存档（服务端 /checkpoints，跨重启/跨执行可回滚，不受对象仓库 TTL/GC/磁盘缓存配额影响）。原对象透传输出，串联进链零侵入。",
   "version": "1.0.0",
   "author": "flowx-team",
-  "tags": ["system", "checkpoint"],
+  "tags": [
+    "system",
+    "checkpoint"
+  ],
   "icon": "💾",
   "language": "python",
   "entry": "main.py",
-  "files": ["flowx_client.py"],
-  "executor": {"supportedTypes": ["local"], "preferredType": "local", "bundled": true},
+  "files": [
+    "flowx_client.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
   "parameters": [
-    {"name": "media", "type": "string", "required": true, "default": "", "description": "要存档的媒体对象 id（接上游 image/video 输出，如 {{ CompPants.image }}）"},
-    {"name": "name", "type": "string", "required": true, "default": "", "description": "存档名（字母/数字/_.-，全局唯一；同名需 overwrite=1）"},
-    {"name": "note", "type": "string", "required": false, "default": "", "description": "备注（存档列表里展示）"},
-    {"name": "overwrite", "type": "integer", "required": false, "default": 0, "description": "1=同名覆盖"},
-    {"name": "service_url", "type": "string", "required": true, "default": "", "description": "推理服务地址"},
-    {"name": "service_token", "type": "string", "required": true, "default": "", "description": "服务令牌"}
+    {
+      "name": "media",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "要存档的媒体对象 id（接上游 image/video 输出，如 {{ CompPants.image }}）"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "存档名（字母/数字/_.-，全局唯一；同名需 overwrite=1）"
+    },
+    {
+      "name": "note",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "备注（存档列表里展示）"
+    },
+    {
+      "name": "overwrite",
+      "type": "integer",
+      "required": false,
+      "default": 0,
+      "description": "1=同名覆盖"
+    },
+    {
+      "name": "service_url",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "推理服务地址"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": true,
+      "default": "",
+      "description": "服务令牌"
+    }
   ],
   "outputs": [
-    {"name": "object", "type": "string", "description": "原对象 id 透传（下游照常接）"},
-    {"name": "checkpoint", "type": "string", "description": "存档名"},
-    {"name": "kind", "type": "string", "description": "对象类型（IMAGE/VIDEO/AUDIO）"},
-    {"name": "size_bytes", "type": "integer", "description": "存档体积"}
+    {
+      "name": "object",
+      "type": "string",
+      "description": "原对象 id 透传（下游照常接）"
+    },
+    {
+      "name": "checkpoint",
+      "type": "string",
+      "description": "存档名"
+    },
+    {
+      "name": "kind",
+      "type": "string",
+      "description": "对象类型（IMAGE/VIDEO/AUDIO）"
+    },
+    {
+      "name": "size_bytes",
+      "type": "integer",
+      "description": "存档体积"
+    }
   ],
-  "ui": {"entry": "ui/node-widget.js", "width": 280, "height": 300, "collapsed": false, "apiVersion": 1}
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 280,
+    "height": 300,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
 }

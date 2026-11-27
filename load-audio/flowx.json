@@ -8,17 +8,73 @@
   "entry": "main.py",
   "inputs": [],
   "outputs": [
-    { "name": "audio", "type": "AUDIO", "description": "音频对象 ID（可接 references）" },
-    { "name": "seconds", "type": "float", "description": "时长（秒）" },
-    { "name": "sample_rate", "type": "int", "description": "采样率" }
+    {
+      "name": "audio",
+      "type": "AUDIO",
+      "description": "音频对象 ID（可接 references）"
+    },
+    {
+      "name": "seconds",
+      "type": "float",
+      "description": "时长（秒）"
+    },
+    {
+      "name": "sample_rate",
+      "type": "int",
+      "description": "采样率"
+    }
   ],
   "parameters": [
-    { "name": "service_url", "type": "string", "description": "推理服务 service_url", "required": true },
-    { "name": "audio_path", "type": "string", "description": "本地音频路径（wav/mp3/ogg/m4a）", "required": true },
-    { "name": "service_url_host", "type": "string", "description": "容器内回退地址（可空）", "required": false, "default": "" },
-    { "name": "service_token", "type": "string", "description": "service_token（可空）", "required": false, "default": "" }
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "audio_path",
+      "type": "string",
+      "description": "本地音频路径（wav/mp3/ogg/m4a）",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "容器内回退地址（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    }
   ],
-  "files": ["flowx_client.py"],
-  "ui": { "entry": "ui/node-widget.js", "width": 260, "height": 240, "collapsed": false, "apiVersion": 1 },
-  "executor": { "supportedTypes": ["local"], "preferredType": "local" }
+  "files": [
+    "flowx_client.py"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 260,
+    "height": 240,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "author": "flowx-team",
+  "icon": "🎵",
+  "tags": [
+    "audio",
+    "inference",
+    "io"
+  ]
 }

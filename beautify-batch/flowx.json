@@ -115,7 +115,7 @@
     {
       "name": "slim",
       "type": "float",
-      "default": 0.10,
+      "default": 0.1,
       "description": "瘦脸强度 0~0.4（下颌内推幅度 × 脸宽；0.05~0.15 最自然，0=关）"
     },
     {
@@ -196,6 +196,8 @@
     "supportedTypes": [
       "local"
     ],
-    "preferredType": "local"
-  }
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
 }

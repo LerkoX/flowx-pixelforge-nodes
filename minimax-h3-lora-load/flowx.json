@@ -79,5 +79,15 @@
     "height": 420,
     "collapsed": false,
     "apiVersion": 1
-  }
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "timeout": 2100,
+  "version": "1.0.0",
+  "author": "flowx-team",
+  "icon": "🧩",
+  "tags": [
+    "minimax",
+    "h3",
+    "lora"
+  ]
 }

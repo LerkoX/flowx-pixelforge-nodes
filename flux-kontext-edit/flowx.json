@@ -122,5 +122,14 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "timeout": 2100,
+  "author": "flowx-team",
+  "icon": "🎨",
+  "tags": [
+    "flux",
+    "edit",
+    "inference"
+  ]
 }

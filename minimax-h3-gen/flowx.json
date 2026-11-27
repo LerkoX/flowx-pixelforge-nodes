@@ -280,5 +280,6 @@
     "height": 560,
     "collapsed": false,
     "apiVersion": 1
-  }
+  },
+  "timeout": 7500
 }

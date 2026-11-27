@@ -8,18 +8,88 @@
   "entry": "main.py",
   "inputs": [],
   "outputs": [
-    { "name": "text_encoder", "type": "TEXT_ENCODER", "description": "文本塔组件对象（含 tokenizer/processor）" }
+    {
+      "name": "text_encoder",
+      "type": "TEXT_ENCODER",
+      "description": "文本塔组件对象（含 tokenizer/processor）"
+    }
   ],
   "parameters": [
-    { "name": "service_url", "type": "string", "description": "推理服务 service_url", "required": true },
-    { "name": "service_url_host", "type": "string", "description": "容器内回退地址（可空）", "required": false, "default": "" },
-    { "name": "text_encoder", "type": "string", "description": "Qwen3VL 文本塔 int8 文件名", "required": false, "default": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors" },
-    { "name": "dtype", "type": "string", "description": "计算精度（bf16/fp16/fp32）", "required": false, "default": "bf16" },
-    { "name": "offload", "type": "string", "description": "offload 策略（sequential/none）", "required": false, "default": "sequential" },
-    { "name": "service_token", "type": "string", "description": "service_token（可空）", "required": false, "default": "" },
-    { "name": "job_timeout", "type": "integer", "description": "job 超时（秒）", "required": false, "default": 3600 }
+    {
+      "name": "service_url",
+      "type": "string",
+      "description": "推理服务 service_url",
+      "required": true
+    },
+    {
+      "name": "service_url_host",
+      "type": "string",
+      "description": "容器内回退地址（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "text_encoder",
+      "type": "string",
+      "description": "Qwen3VL 文本塔 int8 文件名",
+      "required": false,
+      "default": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+    },
+    {
+      "name": "dtype",
+      "type": "string",
+      "description": "计算精度（bf16/fp16/fp32）",
+      "required": false,
+      "default": "bf16"
+    },
+    {
+      "name": "offload",
+      "type": "string",
+      "description": "offload 策略（sequential/none）",
+      "required": false,
+      "default": "sequential"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "description": "service_token（可空）",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "job_timeout",
+      "type": "integer",
+      "description": "job 超时（秒）",
+      "required": false,
+      "default": 3600
+    }
   ],
-  "files": ["flowx_client.py", "server_op.py"],
-  "ui": { "entry": "ui/node-widget.js", "width": 300, "height": 340, "collapsed": false, "apiVersion": 1 },
-  "executor": { "supportedTypes": ["local", "docker"], "preferredType": "local", "bundled": true }
+  "files": [
+    "flowx_client.py",
+    "server_op.py"
+  ],
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 300,
+    "height": 340,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "executor": {
+    "supportedTypes": [
+      "local",
+      "docker"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "timeout": 3900,
+  "author": "flowx-team",
+  "icon": "📝",
+  "tags": [
+    "minimax",
+    "h3",
+    "inference"
+  ]
 }

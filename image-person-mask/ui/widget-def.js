@@ -3,6 +3,7 @@ const WIDGET_SPEC = {
   title: 'SAM3 图像分割',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'service_url_host', label: '画布可达地址 service_url_host（docker 用）', kind: 'text', mono: true, advanced: true },
     { key: 'image', label: '输入图像对象 ID（image）', kind: 'text', mono: true },
     { key: 'prompt', label: '提示词（head / person / the head and hair）', kind: 'text', default: 'person' },
     { key: 'obj_pick', label: '目标选择', kind: 'select', options: ['all', 'best'], default: 'all' },

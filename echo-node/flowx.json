@@ -4,13 +4,20 @@
   "description": "测试用回声节点：透传 text 输出（可拼接上游输出），支持 fail 注入失败、sleep 模拟耗时、marker 写执行标记文件（验证重跑次数）。用于引擎 ResetFromNode / continue 等多场景测试。",
   "version": "1.0.0",
   "author": "flowx-team",
-  "tags": ["test", "debug"],
+  "tags": [
+    "test",
+    "debug"
+  ],
   "icon": "📣",
   "language": "python",
   "entry": "main.py",
-  "files": ["flowx_client.py"],
+  "files": [
+    "flowx_client.py"
+  ],
   "executor": {
-    "supportedTypes": ["local"],
+    "supportedTypes": [
+      "local"
+    ],
     "preferredType": "local",
     "bundled": true
   },
@@ -62,5 +69,6 @@
     "height": 260,
     "collapsed": false,
     "apiVersion": 1
-  }
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
 }

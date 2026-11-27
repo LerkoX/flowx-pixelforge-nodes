@@ -2829,6 +2829,7 @@ const WIDGET_SPEC = {
   title: 'Video Face Detail（视频级 SD 修脸）',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'service_url_host', label: '画布可达地址 service_url_host（docker 用）', kind: 'text', mono: true, advanced: true },
     { key: 'video', label: '输入视频对象 ID（video）', kind: 'text', mono: true },
     { key: 'ckpt', label: 'SD checkpoint（ckpt）', kind: 'text', default: 'Realistic_Vision_V5.1' },
     { key: 'prompt', label: '正向提示词：描述目标脸特征（prompt）', kind: 'text', mono: true, default: 'close-up portrait of a beautiful young asian woman, symmetrical face, clear eyes, detailed skin, natural expression, soft studio light, photorealistic' },

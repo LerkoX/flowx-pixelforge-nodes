@@ -79,7 +79,16 @@
     "supportedTypes": [
       "local"
     ],
-    "preferredType": "local"
+    "preferredType": "local",
+    "bundled": true
   },
-  "entry": "main.py"
+  "entry": "main.py",
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "author": "flowx-team",
+  "icon": "🧩",
+  "tags": [
+    "video",
+    "inference",
+    "io"
+  ]
 }

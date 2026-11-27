@@ -4,18 +4,51 @@
   "description": "把 FLOWX_PARAM_* / SERVICE_TOKEN 等关键环境变量落盘到指定文件，用于排查参数注入。一次性调试节点。",
   "version": "1.0.0",
   "author": "flowx-team",
-  "tags": ["debug"],
+  "tags": [
+    "debug"
+  ],
   "icon": "🔍",
   "language": "python",
   "entry": "main.py",
-  "files": ["flowx_client.py"],
-  "executor": {"supportedTypes": ["local"], "preferredType": "local", "bundled": true},
+  "files": [
+    "flowx_client.py"
+  ],
+  "executor": {
+    "supportedTypes": [
+      "local"
+    ],
+    "preferredType": "local",
+    "bundled": true
+  },
   "parameters": [
-    {"name": "out_file", "type": "string", "required": true, "default": "/data/data/com.termux/files/home/.flowx-probe/envdump.txt", "description": "输出文件（节点执行机本地路径）"},
-    {"name": "service_token", "type": "string", "required": false, "default": "", "description": "服务令牌（测试注入）"}
+    {
+      "name": "out_file",
+      "type": "string",
+      "required": true,
+      "default": "/data/data/com.termux/files/home/.flowx-probe/envdump.txt",
+      "description": "输出文件（节点执行机本地路径）"
+    },
+    {
+      "name": "service_token",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "服务令牌（测试注入）"
+    }
   ],
   "outputs": [
-    {"name": "ok", "type": "string", "description": "done"}
+    {
+      "name": "ok",
+      "type": "string",
+      "description": "done"
+    }
   ],
-  "ui": {"entry": "ui/node-widget.js", "width": 240, "height": 160, "collapsed": false, "apiVersion": 1}
+  "ui": {
+    "entry": "ui/node-widget.js",
+    "width": 240,
+    "height": 160,
+    "collapsed": false,
+    "apiVersion": 1
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2"
 }

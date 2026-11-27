@@ -2825,22 +2825,22 @@ createNodeWidget.simplifyPoints = simplifyPoints
 
 // ---- 节点专属定义（widget-def.js，由 build-widget.py 拼接，请勿直接编辑本文件）----
 const WIDGET_SPEC = {
-  icon: '🖱️',
-  title: 'SAM 点/框选分割',
+  icon: '🎯',
+  title: 'SAM3 图像分割',
   fields: [
     { key: 'service_url', label: '推理服务 service_url', kind: 'text', mono: true, advanced: true },
+    { key: 'service_url_host', label: '画布可达地址 service_url_host（docker 用）', kind: 'text', mono: true, advanced: true },
     { key: 'image', label: '输入图像对象 ID（image）', kind: 'text', mono: true },
-    { key: 'model', label: 'SAM 模型键', kind: 'text', default: "sam:vit_l", mono: true },
-    { key: 'points', label: '点提示（画布点选写入）', kind: 'text', mono: true, advanced: true },
-    { key: 'box', label: '框提示（画布框选写入）', kind: 'text', mono: true, advanced: true },
-    { key: 'multimask', label: '输出 3 个候选', kind: 'check', default: true },
-    { key: 'pick', label: '候选下标（0/1/2）', kind: 'slider', default: 0, min: 0, max: 2, step: 1 },
-    { key: 'overlay', label: '蒙版叠加透明度', kind: 'slider', default: 0.5, min: 0, max: 1, step: 0.05 },
+    { key: 'prompt', label: '提示词（head / person / the head and hair）', kind: 'text', default: 'person' },
+    { key: 'obj_pick', label: '目标选择', kind: 'select', options: ['all', 'best'], default: 'all' },
+    { key: 'threshold', label: '置信阈值', kind: 'slider', min: 0.1, max: 0.9, step: 0.05, default: 0.5 },
+    { key: 'dilate', label: '外扩 dilate（px）', kind: 'slider', min: 0, max: 40, step: 1, default: 0 },
+    { key: 'pad', label: 'bbox 外扩 pad（px）', kind: 'slider', min: 0, max: 100, step: 5, default: 0 },
+    { key: 'fill_holes', label: '孔洞填充 fill_holes（0/1）', kind: 'select', options: ['0', '1'], default: '0' },
     { key: 'service_token', label: 'service_token（可空）', kind: 'text', mono: true, advanced: true },
   ],
-  pointSelect: { pointsKey: 'points', boxKey: 'box', baseImage: 'image' },
   compareInput: 'image',
-  note: '画布点选：点=正样本、Shift/右键点=负样本、拖拽=框选；「▶ 预览」重放分割结果',
+  note: '抠头/头发：prompt=head + fill_holes=1（SAM3 会选中发丝但漏掉被包围的脸）；bbox 输出可接线给 image-crop 自动取景',
 };
 
 export default createNodeWidget(WIDGET_SPEC)

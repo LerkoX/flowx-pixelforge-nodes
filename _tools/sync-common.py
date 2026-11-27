@@ -94,10 +94,10 @@ OP_FAMILIES = {
                        "latent-composite", "latent-set-noise-mask",
                        "latent-upscale", "cond-timestep-range",
                        "cond-pack", "cond-concat"],
-    # 三算子族（canny/depth/openpose）：与历史服务端已上传的 preprocess_canny.py
+    # 四算子族（canny/depth/openpose/face）：与历史服务端已上传的 preprocess_canny.py
     # 同内容 ⇒ hash 命中不重传
     "preprocess.py": ["preprocess-canny", "preprocess-depth",
-                      "preprocess-openpose"],
+                      "preprocess-openpose", "preprocess-face"],
     "flashvsr.py": ["video-flashvsr"],
     # G7 预处理器族（7 算子）：独立文件 ⇒ 上传名 preprocess_<op>.py 不与三算子族撞车
     "preprocess_g7.py": ["preprocess-anyline", "preprocess-lineart",

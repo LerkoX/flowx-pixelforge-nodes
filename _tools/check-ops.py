@@ -34,6 +34,10 @@ WRAP_RE = re.compile(r'_VersionedRegistry\(registry,\s*OP_VERSION\)')
 import ast
 # 节点侧声明算子的三种写法（executor_base.run_op / 自包含节点的
 # ensure_plugin + call_op）：取并集，正常每节点恰好 1 个算子
+# 共享算子族（多成员共用一个算子，豁免一对一校验）
+_SHARED_OP_FAMILIES = {"beautify.py"}
+
+
 OP_PATTERNS = (
     re.compile(r'run_op\(\s*[\'"]([\w\.]+)[\'"]'),
     re.compile(r'call_op\(\s*[\w\.]+,\s*[\'"]([\w\.]+)[\'"]'),
@@ -155,6 +159,17 @@ def main() -> int:
             body = mp.read_text()
             calls = sorted({m for pat in OP_PATTERNS for m in pat.findall(body)})
             if not calls:
+                # 模块级常量引用：`OP = "beautify.auto"` + `call_op(url, OP, ...)` /
+                # `ensure_plugin(url, OP, ...)`（beautify-batch/grid-picker 写法）
+                consts = dict(re.findall(
+                    r'^\s*([A-Za-z_]\w*)\s*=\s*[\'"]([\w]+\.[\w\.]+)[\'"]\s*(?:#.*)?$',
+                    body, re.M))  # 锚定行尾：排除 `op_name = "a" if c else "b"` 条件赋值
+                var_refs = set()
+                for vpat in (re.compile(r'call_op\(\s*[\w\.]+,\s*([A-Za-z_]\w*)'),
+                             re.compile(r'ensure_plugin\(\s*[\w\.]+,\s*([A-Za-z_]\w*)')):
+                    var_refs.update(vpat.findall(body))
+                calls = sorted({consts[v] for v in var_refs if v in consts})
+            if not calls:
                 # 条件选算子（如 video-gen: op_name = "video.sample_latent"
                 # if output_mode == "latent" else "video.sample"）
                 m = re.search(r'op_name\s*=\s*(.+)', body)
@@ -163,7 +178,7 @@ def main() -> int:
                     calls = sorted(set(re.findall(
                         r'[\'"]([\w]+\.[\w\.]+)[\'"]', m.group(1))))
             if not calls:
-                problems.append(f"{member}/main.py: 认不出声明的算子（三种写法都没有）")
+                problems.append(f"{member}/main.py: 认不出声明的算子（四种写法都没有）")
                 continue
             used.update(calls)
             for op in calls:
@@ -175,7 +190,9 @@ def main() -> int:
                 problems.append(f"{member}/main.py: 声明算子 {calls}（多于 1 个，需确认）")
         for orphan in sorted(ops - used):
             problems.append(f"{fam}: 算子 {orphan} 没有成员节点在用（孤儿算子）")
-        if len(members) != len(ops):
+        # 共享算子族豁免：多个编排成员共用同一算子是有意设计（如 beautify.py
+        # 的 beautify-batch 与 grid-picker 都消费 beautify.auto，见 OP_FAMILIES 注释）
+        if len(members) != len(ops) and fam not in _SHARED_OP_FAMILIES:
             problems.append(f"{fam}: 成员节点 {len(members)} 个 vs 注册算子 "
                             f"{len(ops)} 个（一对一关系被破坏）")
 

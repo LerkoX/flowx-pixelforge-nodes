@@ -99,5 +99,7 @@
     "height": 340,
     "collapsed": false,
     "apiVersion": 1
-  }
+  },
+  "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
+  "timeout": 3900
 }

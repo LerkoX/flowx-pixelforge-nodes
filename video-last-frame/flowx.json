@@ -83,5 +83,9 @@
     "video",
     "inference",
     "io"
-  ]
+  ],
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  }
 }

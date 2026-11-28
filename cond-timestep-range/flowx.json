@@ -104,5 +104,9 @@
     "apiVersion": 1
   },
   "image": "lerkobba/flowx-pixelforge-nodes:v1.20.2",
-  "timeout": 600
+  "timeout": 600,
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  }
 }

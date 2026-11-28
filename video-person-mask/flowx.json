@@ -204,5 +204,9 @@
     "video",
     "inference",
     "mask"
-  ]
+  ],
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  }
 }

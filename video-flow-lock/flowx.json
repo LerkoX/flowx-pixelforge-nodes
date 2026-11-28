@@ -107,5 +107,9 @@
     "video",
     "inference",
     "facefix"
-  ]
+  ],
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  }
 }

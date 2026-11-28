@@ -281,5 +281,9 @@
     "collapsed": false,
     "apiVersion": 1
   },
-  "timeout": 7500
+  "timeout": 7500,
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  }
 }

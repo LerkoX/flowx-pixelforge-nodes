@@ -102,5 +102,9 @@
     "minimax",
     "h3",
     "inference"
-  ]
+  ],
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
+  }
 }

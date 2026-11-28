@@ -142,5 +142,9 @@
     ],
     "preferredType": "local",
     "bundled": true
+  },
+  "mock": {
+    "enabled": true,
+    "entry": "mock.py"
   }
 }
